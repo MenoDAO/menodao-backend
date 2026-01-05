@@ -1,0 +1,213 @@
+// MenoDAO Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Member/User model
+model Member {
+  id              String   @id @default(uuid())
+  phoneNumber     String   @unique
+  fullName        String?
+  location        String?
+  walletAddress   String?  @unique
+  isVerified      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  subscription    Subscription?
+  contributions   Contribution[]
+  claims          Claim[]
+  nfts            NFT[]
+  otpCodes        OTPCode[]
+  transactions    BlockchainTransaction[]
+}
+
+// OTP codes for SMS authentication
+model OTPCode {
+  id          String   @id @default(uuid())
+  code        String
+  phoneNumber String
+  expiresAt   DateTime
+  isUsed      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  member      Member?  @relation(fields: [memberId], references: [id])
+  memberId    String?
+
+  @@index([phoneNumber, code])
+}
+
+// Package tiers
+enum PackageTier {
+  BRONZE
+  SILVER
+  GOLD
+}
+
+// Member subscription
+model Subscription {
+  id            String      @id @default(uuid())
+  tier          PackageTier
+  monthlyAmount Int         // Amount in KES
+  startDate     DateTime    @default(now())
+  endDate       DateTime?
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  member        Member      @relation(fields: [memberId], references: [id])
+  memberId      String      @unique
+}
+
+// Contribution/Payment record
+model Contribution {
+  id              String   @id @default(uuid())
+  amount          Int      // Amount in KES
+  month           DateTime // The month this contribution covers
+  paymentMethod   String   // mpesa, card, crypto
+  paymentRef      String?  // External payment reference
+  txHash          String?  // Blockchain transaction hash
+  status          PaymentStatus @default(PENDING)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  member          Member   @relation(fields: [memberId], references: [id])
+  memberId        String
+
+  @@index([memberId, month])
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// Claim/Treatment record
+model Claim {
+  id              String      @id @default(uuid())
+  claimType       ClaimType
+  description     String
+  amount          Int         // Amount in KES
+  status          ClaimStatus @default(PENDING)
+  txHash          String?     // Blockchain transaction hash for disbursement
+  campId          String?
+  processedAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  member          Member      @relation(fields: [memberId], references: [id])
+  memberId        String
+  camp            Camp?       @relation(fields: [campId], references: [id])
+}
+
+enum ClaimType {
+  DENTAL_CHECKUP
+  DENTAL_CLEANING
+  DENTAL_FILLING
+  DENTAL_EXTRACTION
+  ROOT_CANAL
+  OTHER
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  DISBURSED
+  REJECTED
+}
+
+// NFT minted for members
+model NFT {
+  id            String      @id @default(uuid())
+  tokenId       String      @unique
+  tier          PackageTier
+  contractAddress String
+  txHash        String
+  mintedAt      DateTime    @default(now())
+  metadata      Json?
+
+  member        Member      @relation(fields: [memberId], references: [id])
+  memberId      String
+}
+
+// Dental camps
+model Camp {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  venue       String
+  address     String
+  latitude    Float
+  longitude   Float
+  startDate   DateTime
+  endDate     DateTime
+  capacity    Int      @default(100)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  claims      Claim[]
+  registrations CampRegistration[]
+}
+
+// Camp registrations
+model CampRegistration {
+  id          String   @id @default(uuid())
+  status      RegistrationStatus @default(REGISTERED)
+  createdAt   DateTime @default(now())
+
+  campId      String
+  memberId    String
+  camp        Camp     @relation(fields: [campId], references: [id])
+
+  @@unique([campId, memberId])
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  ATTENDED
+  NO_SHOW
+  CANCELLED
+}
+
+// Blockchain transaction log for auditability
+model BlockchainTransaction {
+  id            String          @id @default(uuid())
+  txHash        String          @unique
+  txType        TransactionType
+  fromAddress   String
+  toAddress     String
+  amount        String?         // In wei or token units
+  tokenId       String?         // For NFT transactions
+  network       String          @default("polygon")
+  status        TxStatus        @default(PENDING)
+  blockNumber   Int?
+  gasUsed       String?
+  createdAt     DateTime        @default(now())
+  confirmedAt   DateTime?
+
+  member        Member?         @relation(fields: [memberId], references: [id])
+  memberId      String?
+}
+
+enum TransactionType {
+  NFT_MINT
+  CONTRIBUTION
+  CLAIM_DISBURSEMENT
+  UPGRADE
+}
+
+enum TxStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
