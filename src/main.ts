@@ -8,7 +8,12 @@ async function bootstrap() {
 
   // Enable CORS
   app.enableCors({
-    origin: ['http://localhost:3000', 'https://menodao.org'],
+    origin: [
+      'http://localhost:3000',
+      'https://menodao.org',
+      'https://app.menodao.org',
+      'https://stg.menodao.org',
+    ],
     credentials: true,
   });
 
