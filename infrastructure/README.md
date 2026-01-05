@@ -12,7 +12,7 @@ This directory contains the Terraform configuration for deploying MenoDAO to AWS
                                              │
     ┌────────────────────────────────────────┼────────────────────────────────────────┐
     │                                        │                                        │
-    │         PRODUCTION                     │              STAGING                   │
+    │         PRODUCTION                     │                 DEV                    │
     │                                        │                                        │
     │  ┌─────────────────────────┐           │    ┌─────────────────────────┐         │
     │  │   app.menodao.org       │           │    │   stg.menodao.org       │         │
@@ -73,7 +73,7 @@ aws dynamodb create-table \
   --region us-east-1
 ```
 
-### 3. Deploy Staging
+### 3. Deploy Dev
 
 ```bash
 cd infrastructure/terraform
@@ -81,11 +81,11 @@ cd infrastructure/terraform
 # Initialize Terraform
 terraform init
 
-# Create staging workspace
-terraform workspace new staging || terraform workspace select staging
+# Create dev workspace
+terraform workspace new dev || terraform workspace select dev
 
 # Plan deployment
-terraform plan -var-file=staging.tfvars \
+terraform plan -var-file=dev.tfvars \
   -var="db_password=YOUR_SECURE_PASSWORD" \
   -var="jwt_secret=YOUR_JWT_SECRET" \
   -var="blockchain_private_key=YOUR_PRIVATE_KEY" \
@@ -93,7 +93,7 @@ terraform plan -var-file=staging.tfvars \
   -var="sms_username=YOUR_SMS_USERNAME"
 
 # Apply
-terraform apply -var-file=staging.tfvars \
+terraform apply -var-file=dev.tfvars \
   -var="db_password=YOUR_SECURE_PASSWORD" \
   -var="jwt_secret=YOUR_JWT_SECRET" \
   -var="blockchain_private_key=YOUR_PRIVATE_KEY" \
@@ -135,10 +135,10 @@ aws amplify create-branch \
   --stage PRODUCTION \
   --environment-variables "NEXT_PUBLIC_API_URL=https://api.menodao.org"
 
-# Staging branch
+# Dev branch
 aws amplify create-branch \
   --app-id YOUR_APP_ID \
-  --branch-name staging \
+  --branch-name dev \
   --stage DEVELOPMENT \
   --environment-variables "NEXT_PUBLIC_API_URL=https://stg-api.menodao.org"
 ```
@@ -152,11 +152,11 @@ aws amplify create-domain-association \
   --domain-name menodao.org \
   --sub-domain-settings prefix=app,branchName=main
 
-# Staging domain
+# Dev domain
 aws amplify create-domain-association \
   --app-id YOUR_APP_ID \
   --domain-name menodao.org \
-  --sub-domain-settings prefix=stg,branchName=staging
+  --sub-domain-settings prefix=stg,branchName=dev
 ```
 
 ## GitHub Secrets Required
@@ -182,13 +182,13 @@ Add these secrets to your GitHub repositories:
 | Branch | Environment | URL |
 |--------|-------------|-----|
 | `main` | Production | app.menodao.org / api.menodao.org |
-| `staging` | Staging | stg.menodao.org / stg-api.menodao.org |
+| `dev` | Dev | stg.menodao.org / stg-api.menodao.org |
 
-### Manual Staging Deployment
+### Manual Dev Deployment
 
-Comment on any PR to deploy to staging:
+Comment on any PR to deploy to dev:
 ```
-/deploy staging
+/deploy dev
 ```
 
 ## Database Migrations
@@ -197,15 +197,15 @@ Migrations run automatically during deployment. For manual migration:
 
 ```bash
 aws ecs run-task \
-  --cluster menodao-staging \
-  --task-definition menodao-backend-staging-migrate \
+  --cluster menodao-dev \
+  --task-definition menodao-backend-dev-migrate \
   --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx]}" \
   --launch-type FARGATE
 ```
 
 ## Monitoring
 
-- **CloudWatch Logs**: `/ecs/menodao-production` and `/ecs/menodao-staging`
+- **CloudWatch Logs**: `/ecs/menodao-production` and `/ecs/menodao-dev`
 - **Container Insights**: Enabled for production
 - **Health checks**: `/health` endpoint on port 3000
 

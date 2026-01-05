@@ -54,7 +54,7 @@ module "vpc" {
   public_subnets  = var.environment == "production" ? ["10.0.101.0/24", "10.0.102.0/24"] : ["10.1.101.0/24", "10.1.102.0/24"]
 
   enable_nat_gateway     = true
-  single_nat_gateway     = var.environment != "production"  # Cost optimization: single NAT for staging
+  single_nat_gateway     = var.environment != "production"  # Cost optimization: single NAT for dev
   enable_dns_hostnames   = true
   enable_dns_support     = true
 
@@ -425,7 +425,7 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "menodao-backend"
-      image = "${aws_ecr_repository.backend.repository_url}:${var.environment == "production" ? "prod-latest" : "staging-latest"}"
+      image = "${aws_ecr_repository.backend.repository_url}:${var.environment == "production" ? "prod-latest" : "dev-latest"}"
       
       portMappings = [
         {

@@ -4,11 +4,11 @@ on:
   push:
     branches:
       - main
-      - staging
+      - dev
   pull_request:
     branches:
       - main
-      - staging
+      - dev
   issue_comment:
     types: [created]
 
@@ -16,9 +16,9 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: menodao-backend
   ECS_CLUSTER_PROD: menodao-prod
-  ECS_CLUSTER_STAGING: menodao-staging
+  ECS_CLUSTER_DEV: menodao-dev
   ECS_SERVICE_PROD: menodao-backend-prod
-  ECS_SERVICE_STAGING: menodao-backend-staging
+  ECS_SERVICE_DEV: menodao-backend-dev
   CONTAINER_NAME: menodao-backend
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       - name: Check for deploy command
         id: check
         run: |
-          if [[ "${{ github.event.comment.body }}" == "/deploy staging" ]]; then
+          if [[ "${{ github.event.comment.body }}" == "/deploy dev" ]]; then
             echo "should_deploy=true" >> $GITHUB_OUTPUT
           else
             echo "should_deploy=false" >> $GITHUB_OUTPUT
@@ -100,19 +100,19 @@ jobs:
             docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
           else
-            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:staging-latest
+            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:dev-latest
+            docker push $ECR_REGISTRY/$ECR_REPOSITORY:dev-latest
           fi
           
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-  # Deploy to staging
-  deploy-staging:
+  # Deploy to dev
+  deploy-dev:
     needs: docker-build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
     environment:
-      name: staging
+      name: dev
       url: https://stg-api.menodao.org
     steps:
       - name: Checkout code
@@ -128,7 +128,7 @@ jobs:
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_SERVICE_STAGING }} \
+            --task-definition ${{ env.ECS_SERVICE_DEV }} \
             --query taskDefinition > task-definition.json
 
       - name: Fill in the new image ID in the Amazon ECS task definition
@@ -143,15 +143,15 @@ jobs:
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_STAGING }}
-          cluster: ${{ env.ECS_CLUSTER_STAGING }}
+          service: ${{ env.ECS_SERVICE_DEV }}
+          cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
 
       - name: Run database migrations
         run: |
           aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER_STAGING }} \
-            --task-definition ${{ env.ECS_SERVICE_STAGING }}-migrate \
+            --cluster ${{ env.ECS_CLUSTER_DEV }} \
+            --task-definition ${{ env.ECS_SERVICE_DEV }}-migrate \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
             --launch-type FARGATE || true
 
@@ -163,16 +163,16 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               commit_sha: context.sha,
-              body: '🚀 Backend deployed to staging: https://stg-api.menodao.org'
+              body: '🚀 Backend deployed to dev: https://stg-api.menodao.org'
             })
 
-  # Deploy to staging via PR comment
-  deploy-staging-pr:
+  # Deploy to dev via PR comment
+  deploy-dev-pr:
     needs: check-deploy-command
     runs-on: ubuntu-latest
     if: needs.check-deploy-command.outputs.should_deploy == 'true'
     environment:
-      name: staging
+      name: dev
       url: https://stg-api.menodao.org
     steps:
       - name: Get PR branch
@@ -217,7 +217,7 @@ jobs:
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_SERVICE_STAGING }} \
+            --task-definition ${{ env.ECS_SERVICE_DEV }} \
             --query taskDefinition > task-definition.json
 
       - name: Fill in the new image ID
@@ -232,8 +232,8 @@ jobs:
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_STAGING }}
-          cluster: ${{ env.ECS_CLUSTER_STAGING }}
+          service: ${{ env.ECS_SERVICE_DEV }}
+          cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
 
       - name: Comment on PR
@@ -244,7 +244,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '✅ Backend deployed to staging!\n\n🔗 API: https://stg-api.menodao.org\n\nThis deployment was triggered by `/deploy staging` command.'
+              body: '✅ Backend deployed to dev!\n\n🔗 API: https://stg-api.menodao.org\n\nThis deployment was triggered by `/deploy dev` command.'
             })
 
   # Deploy to production

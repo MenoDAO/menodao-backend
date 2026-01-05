@@ -1,5 +1,5 @@
-# Staging Environment Configuration
-environment = "staging"
+# Dev Environment Configuration
+environment = "dev"
 aws_region  = "us-east-1"
 
 # These should be set via environment variables or CI/CD secrets:
