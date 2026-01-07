@@ -1,7 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { PaymentService, PaymentCallbackData } from '../payments/payment.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { PaymentStatus } from '@prisma/client';
 
 @Injectable()
@@ -12,6 +13,8 @@ export class ContributionsService {
     private prisma: PrismaService,
     private blockchainService: BlockchainService,
     private paymentService: PaymentService,
+    @Inject(forwardRef(() => SubscriptionsService))
+    private subscriptionsService: SubscriptionsService,
   ) {}
 
   /**
@@ -161,7 +164,7 @@ export class ContributionsService {
     
     const result = await this.paymentService.processCallback(payload);
 
-    // If payment was successful, try to record on blockchain
+    // If payment was successful, activate subscription and record on blockchain
     if (result.success && payload.ResultCode === '0' && payload.Paid) {
       try {
         // Find the completed contribution
@@ -171,9 +174,17 @@ export class ContributionsService {
             status: PaymentStatus.COMPLETED,
           },
           orderBy: { updatedAt: 'desc' },
+          include: { member: { include: { subscription: true } } },
         });
 
         if (contribution) {
+          // Activate subscription if not already active
+          if (contribution.member?.subscription && !contribution.member.subscription.isActive) {
+            await this.subscriptionsService.activateSubscription(contribution.memberId);
+            this.logger.log(`Subscription activated for member ${contribution.memberId}`);
+          }
+
+          // Record on blockchain
           const txHash = await this.blockchainService.recordContribution(
             contribution.memberId,
             contribution.amount,
@@ -188,7 +199,7 @@ export class ContributionsService {
           }
         }
       } catch (error) {
-        this.logger.error(`Blockchain recording failed: ${error.message}`);
+        this.logger.error(`Post-payment processing failed: ${error.message}`);
       }
     }
 
