@@ -1,27 +1,50 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { PaymentService, PaymentCallbackData } from '../payments/payment.service';
 import { PaymentStatus } from '@prisma/client';
 
 @Injectable()
 export class ContributionsService {
+  private readonly logger = new Logger(ContributionsService.name);
+
   constructor(
     private prisma: PrismaService,
     private blockchainService: BlockchainService,
+    private paymentService: PaymentService,
   ) {}
 
   /**
-   * Initiate a contribution payment
-   * This would integrate with your onramp API (M-Pesa, card, etc.)
+   * Initiate a contribution payment via M-Pesa STK Push
    */
-  async initiatePayment(memberId: string, amount: number, paymentMethod: string) {
-    // Verify member has subscription
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { memberId },
+  async initiatePayment(memberId: string, amount: number, paymentMethod: string, phoneNumber?: string) {
+    // Verify member exists and has subscription
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      include: { subscription: true },
     });
 
-    if (!subscription) {
+    if (!member) {
+      throw new BadRequestException('Member not found');
+    }
+
+    if (!member.subscription) {
       throw new BadRequestException('Please subscribe to a package first');
+    }
+
+    // Use member's phone if not provided
+    const paymentPhone = phoneNumber || member.phoneNumber;
+    if (!paymentPhone) {
+      throw new BadRequestException('Phone number is required for M-Pesa payment');
+    }
+
+    // Validate amount
+    if (amount < 10) {
+      throw new BadRequestException('Minimum contribution is KES 10');
+    }
+
+    if (amount > 100000) {
+      throw new BadRequestException('Maximum contribution is KES 100,000');
     }
 
     // Create contribution record
@@ -30,21 +53,40 @@ export class ContributionsService {
         memberId,
         amount,
         month: new Date(),
-        paymentMethod,
+        paymentMethod: 'MPESA',
         status: PaymentStatus.PENDING,
       },
     });
 
-    // Here you would integrate with your onramp/payment API
-    // For example, M-Pesa STK push, card payment, etc.
-    // The payment callback would then call confirmPayment()
+    // Initiate M-Pesa STK Push
+    const paymentResult = await this.paymentService.initiateSTKPush(
+      memberId,
+      paymentPhone,
+      amount,
+      contribution.id,
+      `MenoDAO ${member.subscription.tier} Contribution`,
+    );
+
+    if (!paymentResult.success) {
+      // Update contribution to failed if STK push fails
+      await this.prisma.contribution.update({
+        where: { id: contribution.id },
+        data: { status: PaymentStatus.FAILED },
+      });
+
+      throw new BadRequestException(paymentResult.error || 'Payment initiation failed');
+    }
+
+    this.logger.log(`Payment initiated for member ${memberId}, contribution ${contribution.id}`);
 
     return {
       contributionId: contribution.id,
       amount,
-      paymentMethod,
+      paymentMethod: 'MPESA',
       status: 'PENDING',
-      // Return payment details from your provider (e.g., M-Pesa checkout URL)
+      reference: paymentResult.reference,
+      checkoutRequestId: paymentResult.checkoutRequestId,
+      message: 'Please check your phone and enter M-Pesa PIN to complete payment',
     };
   }
 
@@ -104,20 +146,82 @@ export class ContributionsService {
   }
 
   /**
-   * Webhook handler for payment provider callbacks
+   * Validate payment request (called before payment is processed)
+   */
+  async validatePayment(payload: PaymentCallbackData) {
+    this.logger.log('Payment validation request received');
+    return this.paymentService.validatePayment(payload);
+  }
+
+  /**
+   * Handle payment callback/confirmation
+   */
+  async handlePaymentCallback(payload: PaymentCallbackData) {
+    this.logger.log('Payment callback received');
+    
+    const result = await this.paymentService.processCallback(payload);
+
+    // If payment was successful, try to record on blockchain
+    if (result.success && payload.ResultCode === '0' && payload.Paid) {
+      try {
+        // Find the completed contribution
+        const contribution = await this.prisma.contribution.findFirst({
+          where: {
+            paymentRef: { startsWith: 'menodao_' },
+            status: PaymentStatus.COMPLETED,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+        if (contribution) {
+          const txHash = await this.blockchainService.recordContribution(
+            contribution.memberId,
+            contribution.amount,
+          );
+
+          if (txHash) {
+            await this.prisma.contribution.update({
+              where: { id: contribution.id },
+              data: { txHash },
+            });
+            this.logger.log(`Blockchain record created: ${txHash}`);
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Blockchain recording failed: ${error.message}`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Check payment status for a contribution
+   */
+  async checkPaymentStatus(contributionId: string, memberId: string) {
+    const contribution = await this.prisma.contribution.findFirst({
+      where: { id: contributionId, memberId },
+    });
+
+    if (!contribution) {
+      throw new NotFoundException('Contribution not found');
+    }
+
+    return {
+      contributionId: contribution.id,
+      status: contribution.status,
+      amount: contribution.amount,
+      paymentRef: contribution.paymentRef,
+      txHash: contribution.txHash,
+      createdAt: contribution.createdAt,
+      updatedAt: contribution.updatedAt,
+    };
+  }
+
+  /**
+   * Legacy webhook handler (kept for backward compatibility)
    */
   async handlePaymentWebhook(payload: any) {
-    // Parse webhook payload based on your payment provider
-    // This is a generic structure - customize based on your provider
-    const { contributionId, status, reference } = payload;
-
-    if (status === 'success') {
-      return this.confirmPayment(contributionId, reference);
-    } else {
-      return this.prisma.contribution.update({
-        where: { id: contributionId },
-        data: { status: PaymentStatus.FAILED },
-      });
-    }
+    return this.handlePaymentCallback(payload);
   }
 }

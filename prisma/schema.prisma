@@ -71,9 +71,10 @@ model Contribution {
   amount          Int      // Amount in KES
   month           DateTime // The month this contribution covers
   paymentMethod   String   // mpesa, card, crypto
-  paymentRef      String?  // External payment reference
+  paymentRef      String?  // External payment reference (menodao_xxxxx)
   txHash          String?  // Blockchain transaction hash
   status          PaymentStatus @default(PENDING)
+  metadata        Json?    // Payment provider response data
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -81,6 +82,7 @@ model Contribution {
   memberId        String
 
   @@index([memberId, month])
+  @@index([paymentRef])
 }
 
 enum PaymentStatus {
