@@ -1,0 +1,25 @@
+{
+  "name": "menodao-contracts",
+  "version": "1.0.0",
+  "description": "MenoDAO Smart Contracts",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:polygon-testnet": "hardhat run scripts/deploy.js --network polygonAmoy",
+    "deploy:base-testnet": "hardhat run scripts/deploy.js --network baseSepolia",
+    "deploy:celo-testnet": "hardhat run scripts/deploy.js --network celoAlfajores",
+    "deploy:all-testnets": "npm run deploy:polygon-testnet && npm run deploy:base-testnet && npm run deploy:celo-testnet",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+    "deploy:base": "hardhat run scripts/deploy.js --network base",
+    "deploy:celo": "hardhat run scripts/deploy.js --network celo",
+    "verify": "hardhat verify"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.0"
+  }
+}
