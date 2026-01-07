@@ -19,4 +19,30 @@ describe('AppController', () => {
       expect(appController.getHello()).toBe('Hello World!');
     });
   });
+
+  describe('health', () => {
+    it('should return health status', () => {
+      const result = appController.getHealth();
+
+      expect(result).toHaveProperty('status', 'ok');
+      expect(result).toHaveProperty('timestamp');
+    });
+
+    it('should return valid ISO timestamp', () => {
+      const result = appController.getHealth();
+
+      const timestamp = new Date(result.timestamp);
+      expect(timestamp.toISOString()).toBe(result.timestamp);
+    });
+
+    it('should return current time', () => {
+      const before = new Date();
+      const result = appController.getHealth();
+      const after = new Date();
+
+      const timestamp = new Date(result.timestamp);
+      expect(timestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
+      expect(timestamp.getTime()).toBeLessThanOrEqual(after.getTime());
+    });
+  });
 });

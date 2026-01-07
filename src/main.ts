@@ -6,15 +6,22 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS
+  // Enable CORS - environment-aware configuration
+  const defaultOrigins = [
+    'http://localhost:3000',
+    'https://menodao.org',
+    'https://app.menodao.org',
+    'https://stg.menodao.org',
+  ];
+  const allowedOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+    : defaultOrigins;
+
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'https://menodao.org',
-      'https://app.menodao.org',
-      'https://stg.menodao.org',
-    ],
+    origin: allowedOrigins,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   // Global validation pipe
@@ -36,7 +43,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  const port = process.env.PORT || 3001;
+  const port = process.env.PORT || 3000;
   await app.listen(port);
   console.log(`🚀 MenoDAO API running on http://localhost:${port}`);
   console.log(`📚 API Docs available at http://localhost:${port}/api/docs`);

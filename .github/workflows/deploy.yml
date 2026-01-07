@@ -22,20 +22,35 @@ env:
   CONTAINER_NAME: menodao-backend
 
 jobs:
-  # Check if this is a deploy command from PR comment
+  # Check if this is a command from PR comment
   check-deploy-command:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request
     runs-on: ubuntu-latest
     outputs:
-      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      should_deploy_dev: ${{ steps.check.outputs.should_deploy_dev }}
+      should_deploy_prod: ${{ steps.check.outputs.should_deploy_prod }}
+      should_provision: ${{ steps.check.outputs.should_provision }}
     steps:
-      - name: Check for deploy command
+      - name: Check for command
         id: check
         run: |
-          if [[ "${{ github.event.comment.body }}" == "/deploy dev" ]]; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          COMMENT="${{ github.event.comment.body }}"
+          if [[ "$COMMENT" == "/deploy dev" ]]; then
+            echo "should_deploy_dev=true" >> $GITHUB_OUTPUT
+            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
+            echo "should_provision=false" >> $GITHUB_OUTPUT
+          elif [[ "$COMMENT" == "/deploy prod" ]]; then
+            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
+            echo "should_deploy_prod=true" >> $GITHUB_OUTPUT
+            echo "should_provision=false" >> $GITHUB_OUTPUT
+          elif [[ "$COMMENT" == "/provision" ]]; then
+            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
+            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
+            echo "should_provision=true" >> $GITHUB_OUTPUT
           else
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
+            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
+            echo "should_provision=false" >> $GITHUB_OUTPUT
           fi
 
   # Build and test job
@@ -59,7 +74,7 @@ jobs:
         run: npm run lint || true
 
       - name: Run tests
-        run: npm run test || true
+        run: npm run test -- --coverage
 
       - name: Build application
         run: npm run build
@@ -166,11 +181,58 @@ jobs:
               body: '🚀 Backend deployed to dev: https://stg-api.menodao.org'
             })
 
+  # Provision ECS cluster via PR comment
+  provision-cluster:
+    needs: check-deploy-command
+    runs-on: ubuntu-latest
+    if: needs.check-deploy-command.outputs.should_provision == 'true'
+    steps:
+      - name: Get PR branch
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            return pr.data.head.ref;
+          result-encoding: string
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.result }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run provision script
+        run: |
+          chmod +x infrastructure/scripts/provision-cluster.sh
+          ./infrastructure/scripts/provision-cluster.sh
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '✅ ECS cluster provisioned!\n\n🏗️ Cluster: `menodao`\n\nThis provisioning was triggered by `/provision` command.'
+            })
+
   # Deploy to dev via PR comment
   deploy-dev-pr:
     needs: check-deploy-command
     runs-on: ubuntu-latest
-    if: needs.check-deploy-command.outputs.should_deploy == 'true'
+    if: needs.check-deploy-command.outputs.should_deploy_dev == 'true'
     environment:
       name: dev
       url: https://stg-api.menodao.org
@@ -245,6 +307,97 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: '✅ Backend deployed to dev!\n\n🔗 API: https://stg-api.menodao.org\n\nThis deployment was triggered by `/deploy dev` command.'
+            })
+
+  # Deploy to production via PR comment
+  deploy-prod-pr:
+    needs: check-deploy-command
+    runs-on: ubuntu-latest
+    if: needs.check-deploy-command.outputs.should_deploy_prod == 'true'
+    environment:
+      name: production
+      url: https://api.menodao.org
+    steps:
+      - name: Get PR branch
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            return pr.data.head.ref;
+          result-encoding: string
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.result }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_SERVICE_PROD }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Fill in the new image ID
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE_PROD }}
+          cluster: ${{ env.ECS_CLUSTER_PROD }}
+          wait-for-service-stability: true
+
+      - name: Run database migrations
+        run: |
+          aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER_PROD }} \
+            --task-definition ${{ env.ECS_SERVICE_PROD }}-migrate \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
+            --launch-type FARGATE || true
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '🎉 Backend deployed to production!\n\n🔗 API: https://api.menodao.org\n\nThis deployment was triggered by `/deploy prod` command.'
             })
 
   # Deploy to production
