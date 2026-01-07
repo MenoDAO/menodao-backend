@@ -3,7 +3,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { SmsService } from '../sms/sms.service';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, ServiceUnavailableException } from '@nestjs/common';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -59,7 +59,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       await service.requestOtp('0712345678');
 
@@ -74,7 +74,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       await service.requestOtp('254712345678');
 
@@ -90,7 +90,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       await service.requestOtp('+254712345678');
 
@@ -105,7 +105,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       await service.requestOtp('+254712345678');
 
@@ -126,7 +126,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       const beforeCall = Date.now();
       await service.requestOtp('+254712345678');
@@ -146,7 +146,7 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       await service.requestOtp('+254712345678');
 
@@ -162,11 +162,24 @@ describe('AuthService', () => {
         phoneNumber: '+254712345678',
       });
       mockPrismaService.oTPCode.create.mockResolvedValue({});
-      mockSmsService.sendOtp.mockResolvedValue(undefined);
+      mockSmsService.sendOtp.mockResolvedValue({ success: true, messageId: 'test-123' });
 
       const result = await service.requestOtp('+254712345678');
 
       expect(result).toEqual({ message: 'OTP sent successfully' });
+    });
+
+    it('should throw ServiceUnavailableException when SMS fails', async () => {
+      mockPrismaService.member.findUnique.mockResolvedValue({
+        id: '1',
+        phoneNumber: '+254712345678',
+      });
+      mockPrismaService.oTPCode.create.mockResolvedValue({});
+      mockSmsService.sendOtp.mockResolvedValue({ success: false, error: 'SMS service unavailable' });
+
+      await expect(service.requestOtp('+254712345678')).rejects.toThrow(
+        ServiceUnavailableException,
+      );
     });
   });
 

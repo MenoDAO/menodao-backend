@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
@@ -62,7 +62,17 @@ export class AuthService {
     });
 
     // Send OTP via SMS
-    await this.smsService.sendOtp(normalizedPhone, code);
+    const smsResult = await this.smsService.sendOtp(normalizedPhone, code);
+
+    if (!smsResult.success) {
+      // Log the error but don't expose internal details
+      console.error(`[AuthService] Failed to send OTP to ${normalizedPhone}: ${smsResult.error}`);
+      
+      // Throw appropriate error based on the failure type
+      throw new ServiceUnavailableException(
+        smsResult.error || 'Failed to send verification code. Please try again later.',
+      );
+    }
 
     return { message: 'OTP sent successfully' };
   }
