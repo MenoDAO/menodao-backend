@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from './subscriptions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
@@ -12,6 +13,7 @@ describe('SubscriptionsService', () => {
   const mockPrismaService = {
     subscription: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -21,12 +23,20 @@ describe('SubscriptionsService', () => {
     mintMembershipNFT: jest.fn(),
   };
 
+  const mockConfigService = {
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'NODE_ENV') return 'test';
+      return undefined;
+    }),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SubscriptionsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: BlockchainService, useValue: mockBlockchainService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 
@@ -45,7 +55,7 @@ describe('SubscriptionsService', () => {
       expect(packages.map(p => p.tier)).toEqual(['BRONZE', 'SILVER', 'GOLD']);
       
       const bronze = packages.find(p => p.tier === 'BRONZE');
-      expect(bronze?.monthlyPrice).toBe(300);
+      expect(bronze?.monthlyPrice).toBe(350);
       expect(bronze?.benefits).toContain('Annual dental checkup');
 
       const gold = packages.find(p => p.tier === 'GOLD');
@@ -55,28 +65,29 @@ describe('SubscriptionsService', () => {
   });
 
   describe('subscribe', () => {
-    it('should throw if member already has subscription', async () => {
+    it('should throw if member already has active subscription', async () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         id: 'sub-1',
         tier: 'BRONZE',
+        isActive: true,
       });
 
       await expect(service.subscribe('member-1', 'SILVER')).rejects.toThrow(
         BadRequestException,
       );
       await expect(service.subscribe('member-1', 'SILVER')).rejects.toThrow(
-        'Member already has a subscription',
+        'Member already has an active subscription',
       );
     });
 
-    it('should create subscription with correct tier and price', async () => {
+    it('should create inactive subscription requiring payment', async () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue(null);
       mockPrismaService.subscription.create.mockResolvedValue({
         id: 'sub-1',
         tier: 'SILVER',
-        monthlyAmount: 500,
+        monthlyAmount: 550,
+        isActive: false,
       });
-      mockBlockchainService.mintMembershipNFT.mockResolvedValue('0x123');
 
       const result = await service.subscribe('member-1', 'SILVER');
 
@@ -84,41 +95,31 @@ describe('SubscriptionsService', () => {
         data: {
           memberId: 'member-1',
           tier: 'SILVER',
-          monthlyAmount: 500,
+          monthlyAmount: 550,
+          isActive: false,
         },
       });
-      expect(result.tier).toBe('SILVER');
+      expect(result.paymentRequired).toBe(true);
+      expect(result.subscription.tier).toBe('SILVER');
     });
 
-    it('should mint NFT for new subscription', async () => {
-      mockPrismaService.subscription.findUnique.mockResolvedValue(null);
-      mockPrismaService.subscription.create.mockResolvedValue({
+    it('should update inactive subscription if it exists', async () => {
+      mockPrismaService.subscription.findUnique.mockResolvedValue({
+        id: 'sub-1',
+        tier: 'BRONZE',
+        isActive: false,
+      });
+      mockPrismaService.subscription.update.mockResolvedValue({
         id: 'sub-1',
         tier: 'GOLD',
         monthlyAmount: 700,
+        isActive: false,
       });
-      mockBlockchainService.mintMembershipNFT.mockResolvedValue('0x123');
 
-      await service.subscribe('member-1', 'GOLD');
+      const result = await service.subscribe('member-1', 'GOLD');
 
-      expect(mockBlockchainService.mintMembershipNFT).toHaveBeenCalledWith(
-        'member-1',
-        'GOLD',
-      );
-    });
-
-    it('should not fail if NFT minting fails', async () => {
-      mockPrismaService.subscription.findUnique.mockResolvedValue(null);
-      mockPrismaService.subscription.create.mockResolvedValue({
-        id: 'sub-1',
-        tier: 'BRONZE',
-        monthlyAmount: 300,
-      });
-      mockBlockchainService.mintMembershipNFT.mockRejectedValue(new Error('Blockchain error'));
-
-      // Should not throw
-      const result = await service.subscribe('member-1', 'BRONZE');
-      expect(result.tier).toBe('BRONZE');
+      expect(mockPrismaService.subscription.update).toHaveBeenCalled();
+      expect(result.paymentRequired).toBe(true);
     });
   });
 
@@ -131,10 +132,23 @@ describe('SubscriptionsService', () => {
       );
     });
 
+    it('should throw if subscription is not active', async () => {
+      mockPrismaService.subscription.findUnique.mockResolvedValue({
+        id: 'sub-1',
+        tier: 'BRONZE',
+        isActive: false,
+      });
+
+      await expect(service.upgrade('member-1', 'GOLD')).rejects.toThrow(
+        'Please activate your current subscription first',
+      );
+    });
+
     it('should throw if trying to upgrade to same or lower tier', async () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         id: 'sub-1',
         tier: 'SILVER',
+        isActive: true,
       });
 
       await expect(service.upgrade('member-1', 'BRONZE')).rejects.toThrow(
@@ -146,48 +160,18 @@ describe('SubscriptionsService', () => {
       );
     });
 
-    it('should upgrade subscription to higher tier', async () => {
+    it('should return payment required for upgrade', async () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         id: 'sub-1',
         tier: 'BRONZE',
+        isActive: true,
       });
-      mockPrismaService.subscription.update.mockResolvedValue({
-        id: 'sub-1',
-        tier: 'GOLD',
-        monthlyAmount: 700,
-      });
-      mockBlockchainService.mintMembershipNFT.mockResolvedValue('0x123');
 
       const result = await service.upgrade('member-1', 'GOLD');
 
-      expect(mockPrismaService.subscription.update).toHaveBeenCalledWith({
-        where: { memberId: 'member-1' },
-        data: {
-          tier: 'GOLD',
-          monthlyAmount: 700,
-        },
-      });
-      expect(result.tier).toBe('GOLD');
-    });
-
-    it('should mint new NFT for upgraded tier', async () => {
-      mockPrismaService.subscription.findUnique.mockResolvedValue({
-        id: 'sub-1',
-        tier: 'SILVER',
-      });
-      mockPrismaService.subscription.update.mockResolvedValue({
-        id: 'sub-1',
-        tier: 'GOLD',
-        monthlyAmount: 700,
-      });
-      mockBlockchainService.mintMembershipNFT.mockResolvedValue('0x123');
-
-      await service.upgrade('member-1', 'GOLD');
-
-      expect(mockBlockchainService.mintMembershipNFT).toHaveBeenCalledWith(
-        'member-1',
-        'GOLD',
-      );
+      expect(result.paymentRequired).toBe(true);
+      expect(result.currentTier).toBe('BRONZE');
+      expect(result.newTier).toBe('GOLD');
     });
   });
 
