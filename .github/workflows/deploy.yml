@@ -170,15 +170,20 @@ jobs:
             --launch-type FARGATE || true
 
       - name: Comment deployment status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: '🚀 Backend deployed to dev: https://dev-api.menodao.org'
-            })
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: '🚀 Backend deployed to dev: https://dev-api.menodao.org'
+              });
+            } catch (error) {
+              console.log('Could not create commit comment:', error.message);
+            }
 
   # Provision ECS cluster via PR comment
   provision-cluster:
@@ -449,12 +454,17 @@ jobs:
             --launch-type FARGATE || true
 
       - name: Comment deployment status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: '🎉 Backend deployed to production: https://api.menodao.org'
-            })
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: '🎉 Backend deployed to production: https://api.menodao.org'
+              });
+            } catch (error) {
+              console.log('Could not create commit comment:', error.message);
+            }
