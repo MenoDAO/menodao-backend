@@ -57,7 +57,7 @@ model Subscription {
   monthlyAmount Int         // Amount in KES
   startDate     DateTime    @default(now())
   endDate       DateTime?
-  isActive      Boolean     @default(true)
+  isActive      Boolean     @default(false) // Default inactive until payment
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 

@@ -41,31 +41,40 @@ export class ContributionsService {
       throw new BadRequestException('Phone number is required for M-Pesa payment');
     }
 
-    // Validate amount
-    if (amount < 10) {
-      throw new BadRequestException('Minimum contribution is KES 10');
+    // Get the actual charge amount from subscriptions service (uses dev pricing in dev environment)
+    const packages = this.subscriptionsService.getPackages();
+    const memberPackage = packages.find(p => p.tier === member.subscription?.tier);
+    
+    // Use the actual charge amount (dev pricing) instead of the frontend amount
+    const actualAmount = memberPackage?.actualCharge ?? amount;
+    
+    this.logger.log(`Payment for ${member.subscription.tier}: display=${amount}, actual=${actualAmount}`);
+
+    // Validate amount (use minimum 1 for dev environment)
+    if (actualAmount < 1) {
+      throw new BadRequestException('Minimum contribution is KES 1');
     }
 
-    if (amount > 100000) {
+    if (actualAmount > 100000) {
       throw new BadRequestException('Maximum contribution is KES 100,000');
     }
 
-    // Create contribution record
+    // Create contribution record (store original amount for display)
     const contribution = await this.prisma.contribution.create({
       data: {
         memberId,
-        amount,
+        amount, // Store display amount
         month: new Date(),
         paymentMethod: 'MPESA',
         status: PaymentStatus.PENDING,
       },
     });
 
-    // Initiate M-Pesa STK Push
+    // Initiate M-Pesa STK Push with actual charge amount
     const paymentResult = await this.paymentService.initiateSTKPush(
       memberId,
       paymentPhone,
-      amount,
+      actualAmount, // Use actual (dev) amount for payment
       contribution.id,
       `MenoDAO ${member.subscription.tier} Contribution`,
     );

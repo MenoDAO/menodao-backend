@@ -245,4 +245,53 @@ export class SubscriptionsService {
       benefits: PACKAGE_BENEFITS[subscription.tier],
     };
   }
+
+  /**
+   * Deactivate all subscriptions without completed payments
+   * Admin utility function
+   */
+  async deactivateUnpaidSubscriptions() {
+    // Get all active subscriptions
+    const activeSubscriptions = await this.prisma.subscription.findMany({
+      where: { isActive: true },
+      include: {
+        member: {
+          include: {
+            contributions: {
+              where: { status: 'COMPLETED' },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+    this.logger.log(`Found ${activeSubscriptions.length} active subscriptions`);
+
+    let deactivatedCount = 0;
+    const deactivatedMembers: string[] = [];
+
+    for (const subscription of activeSubscriptions) {
+      const hasCompletedPayment = subscription.member.contributions.length > 0;
+
+      if (!hasCompletedPayment) {
+        // Deactivate subscription without completed payment
+        await this.prisma.subscription.update({
+          where: { id: subscription.id },
+          data: { isActive: false },
+        });
+        deactivatedCount++;
+        deactivatedMembers.push(subscription.member.phoneNumber);
+        this.logger.log(`Deactivated subscription for ${subscription.member.phoneNumber}`);
+      }
+    }
+
+    return {
+      totalActive: activeSubscriptions.length,
+      deactivatedCount,
+      deactivatedMembers,
+      keptActiveCount: activeSubscriptions.length - deactivatedCount,
+    };
+  }
 }
