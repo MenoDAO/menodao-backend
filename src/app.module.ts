@@ -11,6 +11,8 @@ import { CampsModule } from './camps/camps.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SmsModule } from './sms/sms.module';
+import { AdminModule } from './admin/admin.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { SmsModule } from './sms/sms.module';
     ClaimsModule,
     CampsModule,
     BlockchainModule,
+    AdminModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

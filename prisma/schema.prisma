@@ -26,6 +26,7 @@ model Member {
   nfts            NFT[]
   otpCodes        OTPCode[]
   transactions    BlockchainTransaction[]
+  deviceTokens    DeviceToken[]
 }
 
 // OTP codes for SMS authentication
@@ -211,5 +212,59 @@ enum TransactionType {
 enum TxStatus {
   PENDING
   CONFIRMED
+  FAILED
+}
+
+// Admin user for dashboard access
+model AdminUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  lastLogin    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// Device tokens for push notifications
+model DeviceToken {
+  id        String   @id @default(uuid())
+  memberId  String
+  token     String   @unique
+  platform  String   // 'web' | 'android' | 'ios'
+  createdAt DateTime @default(now())
+
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+// Push notification history
+model Notification {
+  id        String   @id @default(uuid())
+  title     String
+  body      String
+  data      Json?
+  sentAt    DateTime @default(now())
+  sentTo    Int      // count of devices
+  sentBy    String   // admin username
+}
+
+// SMS log for tracking sent messages
+model SmsLog {
+  id          String    @id @default(uuid())
+  phoneNumber String
+  message     String
+  status      SmsStatus @default(PENDING)
+  provider    String    @default("textsms")
+  errorMessage String?
+  createdAt   DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([phoneNumber])
+}
+
+enum SmsStatus {
+  PENDING
+  SENT
   FAILED
 }
