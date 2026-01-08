@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 
 export interface SMSResult {
@@ -13,7 +14,10 @@ export interface SMSResult {
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
 
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private prisma: PrismaService,
+  ) {}
 
   /**
    * Normalize phone number to Kenyan format (254XXXXXXXXX)
@@ -49,6 +53,7 @@ export class SmsService {
     // In development, just log the message (unless SMS is explicitly configured)
     if (nodeEnv === 'development' && !providerUrl) {
       this.logger.log(`[DEV SMS] To: ${phoneNumber}, Message: ${message}`);
+      await this.logSms(phoneNumber, message, 'SENT');
       return { success: true, messageId: `dev-${Date.now()}` };
     }
 
@@ -118,6 +123,7 @@ export class SmsService {
           smsResponse['response-code'] === '200'
         ) {
           this.logger.log(`SMS sent successfully to ${normalizedPhone}. Message ID: ${smsResponse.messageid}`);
+          await this.logSms(normalizedPhone, message, 'SENT');
           return {
             success: true,
             messageId: smsResponse.messageid || String(Date.now()),
@@ -126,6 +132,7 @@ export class SmsService {
         } else {
           const errorDesc = smsResponse['response-description'] || 'SMS sending failed';
           this.logger.error(`SMS failed: ${errorDesc} (code: ${smsResponse['response-code']})`);
+          await this.logSms(normalizedPhone, message, 'FAILED', errorDesc);
           return {
             success: false,
             error: this.mapProviderError(smsResponse['response-code'], errorDesc),
@@ -135,6 +142,7 @@ export class SmsService {
       } else if (response.data.success || response.data.status === 'success') {
         // Fallback for alternative response format
         this.logger.log(`SMS sent successfully to ${normalizedPhone}`);
+        await this.logSms(normalizedPhone, message, 'SENT');
         return {
           success: true,
           messageId: response.data.messageId || response.data.id || String(Date.now()),
@@ -142,6 +150,7 @@ export class SmsService {
       } else {
         const errorMessage = response.data.error || response.data.message || 'Unexpected response format';
         this.logger.error(`SMS failed: ${errorMessage}`);
+        await this.logSms(normalizedPhone, message, 'FAILED', errorMessage);
         return {
           success: false,
           error: errorMessage,
@@ -149,6 +158,7 @@ export class SmsService {
       }
     } catch (error) {
       this.logger.error(`SMS sending error: ${error.message}`);
+      await this.logSms(phoneNumber, message, 'FAILED', error.message);
 
       if (axios.isAxiosError(error)) {
         if (error.code === 'ECONNABORTED') {
@@ -181,6 +191,30 @@ export class SmsService {
         success: false,
         error: 'Failed to send SMS. Please try again later.',
       };
+    }
+  }
+
+  /**
+   * Log SMS to database for tracking
+   */
+  private async logSms(
+    phoneNumber: string,
+    message: string,
+    status: 'PENDING' | 'SENT' | 'FAILED',
+    errorMessage?: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.smsLog.create({
+        data: {
+          phoneNumber,
+          message: message.substring(0, 500), // Truncate long messages
+          status,
+          provider: 'textsms',
+          errorMessage,
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Failed to log SMS: ${error.message}`);
     }
   }
 
