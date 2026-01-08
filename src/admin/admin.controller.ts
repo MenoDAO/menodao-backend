@@ -1,5 +1,5 @@
-import { Controller, Post, Get, Body, UseGuards, Request, HttpCode, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiQuery } from '@nestjs/swagger';
+import { Controller, Post, Get, Body, UseGuards, Request, HttpCode } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { AdminLoginDto, ChangePasswordDto } from './dto/admin-login.dto';
@@ -36,14 +36,5 @@ export class AdminController {
       dto.currentPassword,
       dto.newPassword,
     );
-  }
-
-  @Post('nuke-database')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'DANGER: Delete all data from database (one-time cleanup)' })
-  @ApiQuery({ name: 'confirm', required: true, description: 'Confirmation code: CONFIRM_NUKE_ALL_DATA_2026' })
-  async nukeDatabase(@Query('confirm') confirmationCode: string) {
-    return this.adminService.nukeDatabaseData(confirmationCode);
   }
 }
