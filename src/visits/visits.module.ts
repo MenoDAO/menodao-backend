@@ -14,6 +14,11 @@ import { StaffModule } from '../staff/staff.module';
 })
 export class VisitsModule {
   constructor() {
-    console.log('🟡 VisitsModule constructor called');
+    try {
+      console.log('🟡 VisitsModule constructor called');
+    } catch (error) {
+      console.error('🟡 VisitsModule constructor ERROR:', error);
+      throw error;
+    }
   }
 }

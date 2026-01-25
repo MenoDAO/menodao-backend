@@ -12,6 +12,11 @@ import { StaffModule } from '../staff/staff.module';
 })
 export class ProceduresModule {
   constructor() {
-    console.log('🟢 ProceduresModule constructor called');
+    try {
+      console.log('🟢 ProceduresModule constructor called');
+    } catch (error) {
+      console.error('🟢 ProceduresModule constructor ERROR:', error);
+      throw error;
+    }
   }
 }
