@@ -23,13 +23,9 @@ import { PrismaModule } from '../prisma/prisma.module';
   exports: [StaffService, StaffAuthGuard],
 })
 export class StaffModule {
-  constructor(
-    private prisma?: any,
-    private jwtModule?: any,
-  ) {
+  constructor() {
     try {
       console.log('🔵 StaffModule constructor called');
-      console.log('🔵 StaffModule - Prisma available:', !!this.prisma);
     } catch (error) {
       console.error('🔵 StaffModule constructor ERROR:', error);
       throw error;
