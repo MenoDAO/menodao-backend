@@ -22,4 +22,8 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [StaffService, StaffAuthGuard],
   exports: [StaffService, StaffAuthGuard],
 })
-export class StaffModule {}
+export class StaffModule {
+  constructor() {
+    console.log('StaffModule constructor called');
+  }
+}
