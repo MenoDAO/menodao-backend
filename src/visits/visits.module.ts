@@ -5,12 +5,11 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { ProceduresModule } from '../procedures/procedures.module';
 import { SmsModule } from '../sms/sms.module';
 import { StaffModule } from '../staff/staff.module';
-import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
 
 @Module({
   imports: [PrismaModule, ProceduresModule, SmsModule, StaffModule],
   controllers: [VisitsController],
-  providers: [VisitsService, StaffAuthGuard],
+  providers: [VisitsService],
   exports: [VisitsService],
 })
 export class VisitsModule {

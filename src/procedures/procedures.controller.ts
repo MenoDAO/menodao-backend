@@ -1,7 +1,7 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProceduresService } from './procedures.service';
-import { StaffAuthGuard } from './staff-auth.guard';
+import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
 import { PackageTier } from '@prisma/client';
 
 @ApiTags('Procedures')
