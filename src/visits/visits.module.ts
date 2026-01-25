@@ -12,8 +12,4 @@ import { StaffModule } from '../staff/staff.module';
   providers: [VisitsService],
   exports: [VisitsService],
 })
-export class VisitsModule {
-  constructor() {
-    console.log('VisitsModule constructor called');
-  }
-}
+export class VisitsModule {}
