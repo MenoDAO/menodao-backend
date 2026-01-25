@@ -1,11 +1,11 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ProceduresService } from './procedures.service';
 import { ProceduresController } from './procedures.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StaffModule } from '../staff/staff.module';
 
 @Module({
-  imports: [PrismaModule, forwardRef(() => StaffModule)],
+  imports: [PrismaModule, StaffModule],
   controllers: [ProceduresController],
   providers: [ProceduresService],
   exports: [ProceduresService],
