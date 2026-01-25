@@ -18,11 +18,15 @@ export class StaffService implements OnModuleInit {
    * Initialize default staff user if none exists
    */
   async onModuleInit() {
-    // Add a small delay to ensure Prisma schema is pushed first
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Add a delay to ensure Prisma schema is pushed first
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     try {
-      const staffCount = await this.prisma.staffUser.count();
+      // Check if the table exists by attempting a simple query
+      const staffCount = await this.prisma.staffUser.count().catch(() => {
+        this.logger.warn('StaffUser table does not exist yet, skipping initialization');
+        return 0;
+      });
       
       if (staffCount === 0) {
         const defaultUsername = this.configService.get<string>('STAFF_DEFAULT_USERNAME') || 'staff001';

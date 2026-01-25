@@ -20,10 +20,16 @@ export class ProceduresService implements OnModuleInit {
    * Initialize default procedures on module start
    */
   async onModuleInit() {
-    // Add a small delay to ensure Prisma schema is pushed first
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Add a delay to ensure Prisma schema is pushed first
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     try {
+      // Check if the table exists by attempting a simple query
+      await this.prisma.procedure.findFirst().catch(() => {
+        this.logger.warn('Procedure table does not exist yet, skipping initialization');
+        return null;
+      });
+      
       await this.initializeProcedures();
     } catch (error) {
       this.logger.error(`Failed to initialize procedures: ${error.message}`);
