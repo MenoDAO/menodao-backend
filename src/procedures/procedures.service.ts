@@ -20,6 +20,9 @@ export class ProceduresService implements OnModuleInit {
    * Initialize default procedures on module start
    */
   async onModuleInit() {
+    // Add a small delay to ensure Prisma schema is pushed first
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     try {
       await this.initializeProcedures();
     } catch (error) {

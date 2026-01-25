@@ -18,6 +18,9 @@ export class StaffService implements OnModuleInit {
    * Initialize default staff user if none exists
    */
   async onModuleInit() {
+    // Add a small delay to ensure Prisma schema is pushed first
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     try {
       const staffCount = await this.prisma.staffUser.count();
       
