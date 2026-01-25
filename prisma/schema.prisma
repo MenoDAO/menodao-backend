@@ -27,6 +27,7 @@ model Member {
   otpCodes        OTPCode[]
   transactions    BlockchainTransaction[]
   deviceTokens    DeviceToken[]
+  visits          Visit[]
 }
 
 // OTP codes for SMS authentication
@@ -102,6 +103,7 @@ model Claim {
   status          ClaimStatus @default(PENDING)
   txHash          String?     // Blockchain transaction hash for disbursement
   campId          String?
+  visitId         String?     // Link to visit if created from staff dashboard
   processedAt     DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -109,6 +111,7 @@ model Claim {
   member          Member      @relation(fields: [memberId], references: [id])
   memberId        String
   camp            Camp?       @relation(fields: [campId], references: [id])
+  visit           Visit?      @relation(fields: [visitId], references: [id])
 }
 
 enum ClaimType {
@@ -223,6 +226,85 @@ model AdminUser {
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+}
+
+// Staff user for clinic/camp staff access
+model StaffUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  fullName     String
+  role         StaffRole @default(STAFF)
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  visits       Visit[]
+}
+
+enum StaffRole {
+  STAFF  // Can check-in and add claims
+  ADMIN  // Can override limits and void claims
+}
+
+// Patient visit record
+model Visit {
+  id              String          @id @default(uuid())
+  memberId        String
+  staffId         String          // Staff who checked in the patient
+  status          VisitStatus     @default(OPEN)
+  totalCost       Int             @default(0) // Total cost of procedures in KES
+  checkedInAt     DateTime        @default(now())
+  dischargedAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  member          Member          @relation(fields: [memberId], references: [id])
+  staff           StaffUser       @relation(fields: [staffId], references: [id])
+  procedures      VisitProcedure[]
+  claims          Claim[]
+  
+  @@index([memberId])
+  @@index([staffId])
+  @@index([status])
+}
+
+enum VisitStatus {
+  OPEN      // Patient checked in, treatment in progress
+  DISCHARGED // Visit completed and closed
+  CANCELLED // Visit cancelled
+}
+
+// Dental procedure definitions
+model Procedure {
+  id              String      @id @default(uuid())
+  code            String      @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
+  name            String      // e.g., "Consultation", "Simple Extraction"
+  description     String?
+  cost            Int         // Cost in KES
+  allowedTiers    Json        // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  visitProcedures VisitProcedure[]
+}
+
+// Join table: Visit-Procedure relationship
+model VisitProcedure {
+  id          String   @id @default(uuid())
+  visitId     String
+  procedureId String
+  cost        Int      // Cost at time of procedure (in case prices change)
+  addedAt     DateTime @default(now())
+  addedBy     String   // Staff ID who added the procedure
+
+  visit       Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  procedure   Procedure @relation(fields: [procedureId], references: [id])
+
+  @@index([visitId])
+  @@index([procedureId])
 }
 
 // Device tokens for push notifications

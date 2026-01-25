@@ -13,6 +13,9 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SmsModule } from './sms/sms.module';
 import { AdminModule } from './admin/admin.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ProceduresModule } from './procedures/procedures.module';
+import { StaffModule } from './staff/staff.module';
+import { VisitsModule } from './visits/visits.module';
 
 @Module({
   imports: [
@@ -31,6 +34,9 @@ import { NotificationsModule } from './notifications/notifications.module';
     BlockchainModule,
     AdminModule,
     NotificationsModule,
+    ProceduresModule,
+    StaffModule,
+    VisitsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
