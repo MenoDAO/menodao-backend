@@ -20,7 +20,13 @@ export class ProceduresService implements OnModuleInit {
    * Initialize default procedures on module start
    */
   async onModuleInit() {
-    await this.initializeProcedures();
+    try {
+      await this.initializeProcedures();
+    } catch (error) {
+      this.logger.error(`Failed to initialize procedures: ${error.message}`);
+      // Don't throw - allow module to load even if initialization fails
+      // Procedures can be created manually or on next restart
+    }
   }
 
   /**

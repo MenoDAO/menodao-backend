@@ -18,26 +18,32 @@ export class StaffService implements OnModuleInit {
    * Initialize default staff user if none exists
    */
   async onModuleInit() {
-    const staffCount = await this.prisma.staffUser.count();
-    
-    if (staffCount === 0) {
-      const defaultUsername = this.configService.get<string>('STAFF_DEFAULT_USERNAME') || 'staff001';
-      const defaultPassword = this.configService.get<string>('STAFF_DEFAULT_PASSWORD') || 'staff2026!';
-      const defaultName = this.configService.get<string>('STAFF_DEFAULT_NAME') || 'Clinic Staff';
+    try {
+      const staffCount = await this.prisma.staffUser.count();
       
-      const passwordHash = await bcrypt.hash(defaultPassword, 10);
-      
-      await this.prisma.staffUser.create({
-        data: {
-          username: defaultUsername,
-          passwordHash,
-          fullName: defaultName,
-          role: 'STAFF',
-          isActive: true,
-        },
-      });
-      
-      this.logger.log(`Default staff user created: ${defaultUsername}`);
+      if (staffCount === 0) {
+        const defaultUsername = this.configService.get<string>('STAFF_DEFAULT_USERNAME') || 'staff001';
+        const defaultPassword = this.configService.get<string>('STAFF_DEFAULT_PASSWORD') || 'staff2026!';
+        const defaultName = this.configService.get<string>('STAFF_DEFAULT_NAME') || 'Clinic Staff';
+        
+        const passwordHash = await bcrypt.hash(defaultPassword, 10);
+        
+        await this.prisma.staffUser.create({
+          data: {
+            username: defaultUsername,
+            passwordHash,
+            fullName: defaultName,
+            role: 'STAFF',
+            isActive: true,
+          },
+        });
+        
+        this.logger.log(`Default staff user created: ${defaultUsername}`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to initialize default staff user: ${error.message}`);
+      // Don't throw - allow module to load even if initialization fails
+      // Staff user can be created manually or on next restart
     }
   }
 
