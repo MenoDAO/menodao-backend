@@ -20,7 +20,7 @@ import { PrismaModule } from '../prisma/prisma.module';
   ],
   controllers: [StaffController],
   providers: [StaffService, StaffAuthGuard],
-  exports: [StaffService, StaffAuthGuard],
+  exports: [StaffService, StaffAuthGuard, JwtModule],
 })
 export class StaffModule {
   constructor() {
