@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
@@ -56,7 +61,8 @@ export class SubscriptionsService {
     private blockchainService: BlockchainService,
     private configService: ConfigService,
   ) {
-    this.isDevEnvironment = this.configService.get('NODE_ENV') === 'development';
+    this.isDevEnvironment =
+      this.configService.get('NODE_ENV') === 'development';
     if (this.isDevEnvironment) {
       this.logger.log('Using dev pricing (3, 5, 7 KES)');
     }
@@ -66,7 +72,9 @@ export class SubscriptionsService {
    * Get the appropriate price for a tier based on environment
    */
   private getPrice(tier: PackageTier): number {
-    return this.isDevEnvironment ? DEV_PACKAGE_PRICES[tier] : PACKAGE_PRICES[tier];
+    return this.isDevEnvironment
+      ? DEV_PACKAGE_PRICES[tier]
+      : PACKAGE_PRICES[tier];
   }
 
   /**
@@ -81,7 +89,9 @@ export class SubscriptionsService {
       tier,
       monthlyPrice: price,
       // In dev, show actual charge amount for testing
-      actualCharge: this.isDevEnvironment ? DEV_PACKAGE_PRICES[tier as PackageTier] : price,
+      actualCharge: this.isDevEnvironment
+        ? DEV_PACKAGE_PRICES[tier as PackageTier]
+        : price,
       benefits: PACKAGE_BENEFITS[tier as PackageTier],
       isDevPricing: this.isDevEnvironment,
     }));
@@ -99,7 +109,9 @@ export class SubscriptionsService {
 
     if (existing) {
       if (existing.isActive) {
-        throw new BadRequestException('Member already has an active subscription. Use upgrade instead.');
+        throw new BadRequestException(
+          'Member already has an active subscription. Use upgrade instead.',
+        );
       }
       // If inactive subscription exists, update it
       const subscription = await this.prisma.subscription.update({
@@ -160,8 +172,13 @@ export class SubscriptionsService {
 
     // Mint NFT for the member
     try {
-      await this.blockchainService.mintMembershipNFT(memberId, subscription.tier);
-      this.logger.log(`NFT minted for member ${memberId} - ${subscription.tier}`);
+      await this.blockchainService.mintMembershipNFT(
+        memberId,
+        subscription.tier,
+      );
+      this.logger.log(
+        `NFT minted for member ${memberId} - ${subscription.tier}`,
+      );
     } catch (error) {
       this.logger.error('Failed to mint NFT:', error);
       // Continue - NFT minting is non-blocking
@@ -178,7 +195,9 @@ export class SubscriptionsService {
     }
 
     if (!existing.isActive) {
-      throw new BadRequestException('Please activate your current subscription first');
+      throw new BadRequestException(
+        'Please activate your current subscription first',
+      );
     }
 
     const tierOrder = { BRONZE: 1, SILVER: 2, GOLD: 3 };
@@ -196,7 +215,8 @@ export class SubscriptionsService {
       newTier,
       paymentRequired: true,
       paymentAmount: upgradeCost,
-      displayAmount: this.getDisplayPrice(newTier) - this.getDisplayPrice(existing.tier),
+      displayAmount:
+        this.getDisplayPrice(newTier) - this.getDisplayPrice(existing.tier),
       message: 'Please complete payment to upgrade your subscription',
     };
   }
@@ -283,7 +303,9 @@ export class SubscriptionsService {
         });
         deactivatedCount++;
         deactivatedMembers.push(subscription.member.phoneNumber);
-        this.logger.log(`Deactivated subscription for ${subscription.member.phoneNumber}`);
+        this.logger.log(
+          `Deactivated subscription for ${subscription.member.phoneNumber}`,
+        );
       }
     }
 
@@ -292,6 +314,81 @@ export class SubscriptionsService {
       deactivatedCount,
       deactivatedMembers,
       keptActiveCount: activeSubscriptions.length - deactivatedCount,
+    };
+  }
+
+  /**
+   * [DEV ONLY] Mock a successful payment and activate subscription
+   * Bypasses real payment provider for testing purposes
+   */
+  async mockPaymentAndActivate(memberId: string, tier: PackageTier) {
+    // Safety check - only allow in development environment
+    if (!this.isDevEnvironment) {
+      throw new BadRequestException(
+        'Mock payment is only available in development environment',
+      );
+    }
+
+    this.logger.warn(
+      `[DEV] Mock payment initiated for member ${memberId}, tier ${tier}`,
+    );
+
+    // Create or update subscription
+    let subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (subscription?.isActive) {
+      throw new BadRequestException(
+        'Member already has an active subscription',
+      );
+    }
+
+    if (subscription) {
+      subscription = await this.prisma.subscription.update({
+        where: { memberId },
+        data: {
+          tier,
+          monthlyAmount: this.getDisplayPrice(tier),
+          isActive: false,
+        },
+      });
+    } else {
+      subscription = await this.prisma.subscription.create({
+        data: {
+          memberId,
+          tier,
+          monthlyAmount: this.getDisplayPrice(tier),
+          isActive: false,
+        },
+      });
+    }
+
+    // Create mock contribution with COMPLETED status
+    const mockPaymentRef = `DEV_MOCK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await this.prisma.contribution.create({
+      data: {
+        memberId,
+        amount: this.getDisplayPrice(tier),
+        month: new Date(),
+        paymentMethod: 'DEV_MOCK',
+        status: 'COMPLETED',
+        paymentRef: mockPaymentRef,
+      },
+    });
+
+    // Activate subscription (this also mints NFT)
+    await this.activateSubscription(memberId);
+
+    this.logger.warn(
+      `[DEV] Mock payment completed for member ${memberId}, subscription activated`,
+    );
+
+    return {
+      success: true,
+      subscription: await this.getSubscription(memberId),
+      mockPaymentRef,
+      message: '[DEV] Subscription activated via mock payment',
     };
   }
 }

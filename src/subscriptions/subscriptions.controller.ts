@@ -1,5 +1,19 @@
-import { Controller, Get, Post, Body, UseGuards, Request, Query, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  Request,
+  Query,
+  UnauthorizedException,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from './subscriptions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -55,5 +69,18 @@ export class SubscriptionsController {
     }
 
     return this.subscriptionsService.deactivateUnpaidSubscriptions();
+  }
+
+  @Post('dev/mock-payment')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[DEV ONLY] Mock a successful payment to activate subscription',
+  })
+  async mockPayment(@Request() req, @Body() dto: SubscribeDto) {
+    return this.subscriptionsService.mockPaymentAndActivate(
+      req.user.id,
+      dto.tier,
+    );
   }
 }
