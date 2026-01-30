@@ -17,6 +17,16 @@ import { EnrollStaffDto } from './dto/enroll-staff.dto';
 import { StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+interface AuthenticatedRequest extends Request {
+  staff: {
+    id: string;
+    username: string;
+    fullName: string;
+    role: StaffRole;
+    branch?: string;
+  };
+}
+
 @ApiTags('Staff')
 @Controller('staff')
 export class StaffController {
@@ -34,7 +44,7 @@ export class StaffController {
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get staff profile' })
-  async getProfile(@Request() req: any) {
+  async getProfile(@Request() req: AuthenticatedRequest) {
     return this.staffService.getProfile(req.staff.id);
   }
 
@@ -43,7 +53,7 @@ export class StaffController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all staff users (Admin only)' })
   async getUsers(
-    @Request() req: any,
+    @Request() req: AuthenticatedRequest,
     @Query('branch') branch?: string,
     @Query('role') role?: StaffRole,
   ) {
@@ -57,15 +67,29 @@ export class StaffController {
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get staff dashboard stats' })
-  async getStats(@Request() req: any) {
+  async getStats(@Request() req: AuthenticatedRequest) {
     return this.staffService.getStaffStats(req.staff.id);
+  }
+
+  @Get('members')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all members (Staff access)' })
+  async getMembers(
+    @Request() req: AuthenticatedRequest,
+    @Query('branch') branch?: string,
+  ) {
+    return this.staffService.getMembers({ branch });
   }
 
   @Post('enroll')
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Enroll a new staff member (Admin only)' })
-  async enroll(@Request() req: any, @Body() dto: EnrollStaffDto) {
+  async enroll(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: EnrollStaffDto,
+  ) {
     if (req.staff.role !== StaffRole.ADMIN) {
       throw new ForbiddenException('Only admin staff can enroll new staff');
     }
@@ -93,7 +117,10 @@ export class StaffController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change staff password' })
   @ApiBody({ type: ChangePasswordDto })
-  async changePassword(@Request() req, @Body() dto: ChangePasswordDto) {
+  async changePassword(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
     return this.staffService.changePassword(
       req.staff.id,
       dto.currentPassword,

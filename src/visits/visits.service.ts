@@ -37,12 +37,26 @@ export class VisitsService {
    * Search member by phone number and return status
    */
   async searchMember(phoneNumber: string) {
+    this.logger.log(`Searching for member: ${phoneNumber}`);
+
     // Normalize phone number to standard format (+254...)
     const normalized = this.normalizePhoneNumber(phoneNumber);
+    const suffix =
+      phoneNumber.length >= 9 ? phoneNumber.slice(-9) : phoneNumber;
 
-    // Try to find by exact normalized match first
-    let member = await this.prisma.member.findUnique({
-      where: { phoneNumber: normalized },
+    // Try to find by exact normalized match, alternative format, or suffix
+    const member = await this.prisma.member.findFirst({
+      where: {
+        OR: [
+          { phoneNumber: normalized },
+          {
+            phoneNumber: normalized.startsWith('+')
+              ? normalized.substring(1)
+              : '+' + normalized,
+          },
+          { phoneNumber: { endsWith: suffix } },
+        ],
+      },
       include: {
         subscription: true,
         claims: {
@@ -53,40 +67,20 @@ export class VisitsService {
       },
     });
 
-    // If not found, try a more flexible search (e.g., without the + prefix if normalized added it)
     if (!member) {
-      const alternative = normalized.startsWith('+')
-        ? normalized.substring(1)
-        : '+' + normalized;
-      member = await this.prisma.member.findFirst({
-        where: {
-          OR: [
-            { phoneNumber: alternative },
-            {
-              phoneNumber: {
-                endsWith: phoneNumber.substring(phoneNumber.length - 9),
-              },
-            },
-          ],
-        },
-        include: {
-          subscription: true,
-          claims: {
-            where: {
-              status: { in: [ClaimStatus.APPROVED, ClaimStatus.DISBURSED] },
-            },
-          },
-        },
-      });
-    }
-
-    if (!member) {
+      this.logger.warn(
+        `Member not found for phone: ${phoneNumber} (Normalized: ${normalized}, Suffix: ${suffix})`,
+      );
       return {
         found: false,
         message:
           'Member not found. Please verify the phone number of the activated member.',
       };
     }
+
+    this.logger.log(
+      `Member found: ${member.fullName || 'Unnamed'} (${member.phoneNumber})`,
+    );
 
     if (!member.subscription || !member.subscription.isActive) {
       return {
