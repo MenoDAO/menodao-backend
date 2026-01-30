@@ -380,13 +380,25 @@ export class SubscriptionsService {
     // Activate subscription (this also mints NFT)
     await this.activateSubscription(memberId);
 
+    // Verify activation status
+    const updatedSubscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!updatedSubscription?.isActive) {
+      this.logger.error(
+        `[DEV] Check active status failed for member ${memberId}`,
+      );
+      throw new Error('Subscription activation failed to persist');
+    }
+
     this.logger.warn(
-      `[DEV] Mock payment completed for member ${memberId}, subscription activated`,
+      `[DEV] Mock payment completed for member ${memberId}, subscription activated: ${updatedSubscription.isActive}`,
     );
 
     return {
       success: true,
-      subscription: await this.getSubscription(memberId),
+      subscription: updatedSubscription,
       mockPaymentRef,
       message: '[DEV] Subscription activated via mock payment',
     };
