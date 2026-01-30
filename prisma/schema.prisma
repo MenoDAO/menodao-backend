@@ -16,6 +16,7 @@ model Member {
   location        String?
   walletAddress   String?  @unique
   isVerified      Boolean  @default(false)
+  branch          String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -239,6 +240,7 @@ model StaffUser {
   role         StaffRole @default(STAFF)
   isActive     Boolean   @default(true)
   lastLogin    DateTime?
+  branch       String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

@@ -1,8 +1,21 @@
-import { Controller, Post, Get, Body, UseGuards, Request, HttpCode } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  UseGuards,
+  Request,
+  HttpCode,
+  ForbiddenException,
+  Query,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
 import { StaffAuthGuard } from './guards/staff-auth.guard';
 import { StaffLoginDto, ChangePasswordDto } from './dto/staff-login.dto';
+import { EnrollStaffDto } from './dto/enroll-staff.dto';
+import { StaffRole } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 @ApiTags('Staff')
 @Controller('staff')
@@ -21,8 +34,58 @@ export class StaffController {
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get staff profile' })
-  async getProfile(@Request() req) {
+  async getProfile(@Request() req: any) {
     return this.staffService.getProfile(req.staff.id);
+  }
+
+  @Get('users')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all staff users (Admin only)' })
+  async getUsers(
+    @Request() req: any,
+    @Query('branch') branch?: string,
+    @Query('role') role?: StaffRole,
+  ) {
+    if (req.staff.role !== StaffRole.ADMIN) {
+      throw new ForbiddenException('Only admin staff can view staff list');
+    }
+    return this.staffService.getStaffUsers({ branch, role });
+  }
+
+  @Get('stats')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get staff dashboard stats' })
+  async getStats(@Request() req: any) {
+    return this.staffService.getStaffStats(req.staff.id);
+  }
+
+  @Post('enroll')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enroll a new staff member (Admin only)' })
+  async enroll(@Request() req: any, @Body() dto: EnrollStaffDto) {
+    if (req.staff.role !== StaffRole.ADMIN) {
+      throw new ForbiddenException('Only admin staff can enroll new staff');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    return this.staffService.enrollStaff({
+      username: dto.username,
+      passwordHash,
+      fullName: dto.fullName,
+      role: dto.role,
+      branch: dto.branch,
+    });
+  }
+
+  @Post('bulk-sms')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send bulk SMS to members' })
+  async sendBulkSms(@Body() dto: { phoneNumbers: string[]; message: string }) {
+    return await this.staffService.sendBulkSms(dto.phoneNumbers, dto.message);
   }
 
   @Post('change-password')

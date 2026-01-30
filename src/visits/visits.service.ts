@@ -37,10 +37,11 @@ export class VisitsService {
    * Search member by phone number and return status
    */
   async searchMember(phoneNumber: string) {
-    // Normalize phone number
+    // Normalize phone number to standard format (+254...)
     const normalized = this.normalizePhoneNumber(phoneNumber);
 
-    const member = await this.prisma.member.findUnique({
+    // Try to find by exact normalized match first
+    let member = await this.prisma.member.findUnique({
       where: { phoneNumber: normalized },
       include: {
         subscription: true,
@@ -52,10 +53,38 @@ export class VisitsService {
       },
     });
 
+    // If not found, try a more flexible search (e.g., without the + prefix if normalized added it)
+    if (!member) {
+      const alternative = normalized.startsWith('+')
+        ? normalized.substring(1)
+        : '+' + normalized;
+      member = await this.prisma.member.findFirst({
+        where: {
+          OR: [
+            { phoneNumber: alternative },
+            {
+              phoneNumber: {
+                endsWith: phoneNumber.substring(phoneNumber.length - 9),
+              },
+            },
+          ],
+        },
+        include: {
+          subscription: true,
+          claims: {
+            where: {
+              status: { in: [ClaimStatus.APPROVED, ClaimStatus.DISBURSED] },
+            },
+          },
+        },
+      });
+    }
+
     if (!member) {
       return {
         found: false,
-        message: 'Member not found',
+        message:
+          'Member not found. Please verify the phone number of the activated member.',
       };
     }
 
@@ -349,9 +378,7 @@ export class VisitsService {
       const claim = await this.prisma.claim.create({
         data: {
           memberId: visit.memberId,
-          claimType: this.mapProcedureToClaimType(
-            vp.procedure.code,
-          ) as ClaimType,
+          claimType: this.mapProcedureToClaimType(vp.procedure.code),
           description: `${vp.procedure.name} - ${vp.procedure.description || ''}`,
           amount: vp.cost,
           status: ClaimStatus.APPROVED, // Auto-approve claims from staff dashboard

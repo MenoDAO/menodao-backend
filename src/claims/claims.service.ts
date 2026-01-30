@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { ClaimType, ClaimStatus } from '@prisma/client';
@@ -30,7 +34,9 @@ export class ClaimsService {
     });
 
     if (!subscription || !subscription.isActive) {
-      throw new BadRequestException('Active subscription required to make claims');
+      throw new BadRequestException(
+        'Active subscription required to make claims',
+      );
     }
 
     // Check claim limits
@@ -47,11 +53,15 @@ export class ClaimsService {
     const totalClaimed = existingClaims.reduce((sum, c) => sum + c.amount, 0);
 
     if (existingClaims.length >= limits.maxClaims) {
-      throw new BadRequestException(`You have reached your annual claim limit of ${limits.maxClaims} claims`);
+      throw new BadRequestException(
+        `You have reached your annual claim limit of ${limits.maxClaims} claims`,
+      );
     }
 
     if (totalClaimed + amount > limits.maxAmount) {
-      throw new BadRequestException(`This claim would exceed your annual limit of KES ${limits.maxAmount}`);
+      throw new BadRequestException(
+        `This claim would exceed your annual limit of KES ${limits.maxAmount}`,
+      );
     }
 
     // Create claim
@@ -95,7 +105,9 @@ export class ClaimsService {
     }
 
     if (claim.status !== ClaimStatus.APPROVED) {
-      throw new BadRequestException('Claim must be approved before disbursement');
+      throw new BadRequestException(
+        'Claim must be approved before disbursement',
+      );
     }
 
     // Update status to processing
@@ -141,8 +153,10 @@ export class ClaimsService {
     });
 
     const approvedClaims = claims.filter(
-      (c) => c.createdAt >= yearStart && 
-      (c.status === ClaimStatus.APPROVED || c.status === ClaimStatus.DISBURSED)
+      (c) =>
+        c.createdAt >= yearStart &&
+        (c.status === ClaimStatus.APPROVED ||
+          c.status === ClaimStatus.DISBURSED),
     );
 
     const limits = subscription ? CLAIM_LIMITS[subscription.tier] : null;
@@ -150,12 +164,44 @@ export class ClaimsService {
 
     return {
       claims,
-      summary: limits ? {
-        claimsUsed: approvedClaims.length,
-        claimsRemaining: limits.maxClaims - approvedClaims.length,
-        amountClaimed: totalClaimed,
-        amountRemaining: limits.maxAmount - totalClaimed,
-      } : null,
+      summary: limits
+        ? {
+            claimsUsed: approvedClaims.length,
+            claimsRemaining: limits.maxClaims - approvedClaims.length,
+            amountClaimed: totalClaimed,
+            amountRemaining: limits.maxAmount - totalClaimed,
+          }
+        : null,
     };
+  }
+
+  async getAllClaims(filters: { status?: ClaimStatus; memberId?: string }) {
+    return this.prisma.claim.findMany({
+      where: {
+        status: filters.status,
+        memberId: filters.memberId,
+      },
+      include: {
+        member: true,
+        camp: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getClaimById(id: string) {
+    const claim = await this.prisma.claim.findUnique({
+      where: { id },
+      include: {
+        member: true,
+        camp: true,
+      },
+    });
+
+    if (!claim) {
+      throw new NotFoundException('Claim not found');
+    }
+
+    return claim;
   }
 }
