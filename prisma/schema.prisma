@@ -28,6 +28,7 @@ model Member {
   transactions    BlockchainTransaction[]
   deviceTokens    DeviceToken[]
   visits          Visit[]
+  campRegistrations CampRegistration[]
 }
 
 // OTP codes for SMS authentication
@@ -174,6 +175,7 @@ model CampRegistration {
   campId      String
   memberId    String
   camp        Camp     @relation(fields: [campId], references: [id])
+  member      Member   @relation(fields: [memberId], references: [id])
 
   @@unique([campId, memberId])
 }

@@ -1,14 +1,26 @@
-import { Injectable, BadRequestException, NotFoundException, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  Logger,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProceduresService } from '../procedures/procedures.service';
 import { SmsService } from '../sms/sms.service';
-import { PackageTier, VisitStatus, ClaimStatus, ClaimType } from '@prisma/client';
+import {
+  PackageTier,
+  VisitStatus,
+  ClaimStatus,
+  ClaimType,
+} from '@prisma/client';
 
 // Updated claim limits per tier (total claim limit, not annual)
 const CLAIM_LIMITS: Record<PackageTier, number> = {
-  BRONZE: 2000,  // KES 2,000
-  SILVER: 5000,  // KES 5,000
-  GOLD: 10000,   // KES 10,000
+  BRONZE: 2000, // KES 2,000
+  SILVER: 5000, // KES 5,000
+  GOLD: 10000, // KES 10,000
 };
 
 @Injectable()
@@ -27,7 +39,7 @@ export class VisitsService {
   async searchMember(phoneNumber: string) {
     // Normalize phone number
     const normalized = this.normalizePhoneNumber(phoneNumber);
-    
+
     const member = await this.prisma.member.findUnique({
       where: { phoneNumber: normalized },
       include: {
@@ -63,7 +75,10 @@ export class VisitsService {
     // Calculate remaining claim limit
     const tier = member.subscription.tier;
     const allocatedLimit = CLAIM_LIMITS[tier];
-    const totalClaimed = member.claims.reduce((sum, claim) => sum + claim.amount, 0);
+    const totalClaimed = member.claims.reduce(
+      (sum, claim) => sum + claim.amount,
+      0,
+    );
     const remainingLimit = Math.max(0, allocatedLimit - totalClaimed);
 
     return {
@@ -98,7 +113,9 @@ export class VisitsService {
     }
 
     if (!searchResult.active) {
-      throw new BadRequestException('Member does not have an active subscription');
+      throw new BadRequestException(
+        'Member does not have an active subscription',
+      );
     }
 
     // Check if there's already an open visit for this member
@@ -187,7 +204,8 @@ export class VisitsService {
     }
 
     // Get procedure
-    const procedure = await this.proceduresService.getProcedureById(procedureId);
+    const procedure =
+      await this.proceduresService.getProcedureById(procedureId);
     if (!procedure || !procedure.isActive) {
       throw new NotFoundException('Procedure not found or inactive');
     }
@@ -202,11 +220,17 @@ export class VisitsService {
     }
 
     // Calculate current total cost including this procedure
-    const currentVisitCost = visit.procedures.reduce((sum, vp) => sum + vp.cost, 0);
+    const currentVisitCost = visit.procedures.reduce(
+      (sum, vp) => sum + vp.cost,
+      0,
+    );
     const newTotalCost = currentVisitCost + procedure.cost;
 
     // Calculate remaining claim limit
-    const totalClaimed = visit.member.claims.reduce((sum, claim) => sum + claim.amount, 0);
+    const totalClaimed = visit.member.claims.reduce(
+      (sum, claim) => sum + claim.amount,
+      0,
+    );
     const allocatedLimit = CLAIM_LIMITS[memberTier];
     const remainingLimit = allocatedLimit - totalClaimed;
 
@@ -295,11 +319,16 @@ export class VisitsService {
     }
 
     if (visit.procedures.length === 0) {
-      throw new BadRequestException('Cannot discharge visit with no procedures');
+      throw new BadRequestException(
+        'Cannot discharge visit with no procedures',
+      );
     }
 
     // Final validation: ensure total cost doesn't exceed limit
-    const totalClaimed = visit.member.claims.reduce((sum, claim) => sum + claim.amount, 0);
+    const totalClaimed = visit.member.claims.reduce(
+      (sum, claim) => sum + claim.amount,
+      0,
+    );
     const allocatedLimit = CLAIM_LIMITS[visit.member.subscription!.tier];
     const remainingLimit = allocatedLimit - totalClaimed;
 
@@ -320,7 +349,9 @@ export class VisitsService {
       const claim = await this.prisma.claim.create({
         data: {
           memberId: visit.memberId,
-          claimType: this.mapProcedureToClaimType(vp.procedure.code) as ClaimType,
+          claimType: this.mapProcedureToClaimType(
+            vp.procedure.code,
+          ) as ClaimType,
           description: `${vp.procedure.name} - ${vp.procedure.description || ''}`,
           amount: vp.cost,
           status: ClaimStatus.APPROVED, // Auto-approve claims from staff dashboard
@@ -346,7 +377,7 @@ export class VisitsService {
     // Send SMS notification
     const memberName = visit.member.fullName || 'Member';
     const smsMessage = `Dear ${memberName}, MenoDAO covered KES ${visit.totalCost} for your visit today. Your new limit is KES ${newRemainingLimit}. Get well soon!`;
-    
+
     try {
       await this.smsService.sendSms(visit.member.phoneNumber, smsMessage);
       this.logger.log(`Discharge SMS sent to ${visit.member.phoneNumber}`);
@@ -399,7 +430,10 @@ export class VisitsService {
       return null;
     }
 
-    const totalClaimed = visit.member.claims.reduce((sum, claim) => sum + claim.amount, 0);
+    const totalClaimed = visit.member.claims.reduce(
+      (sum, claim) => sum + claim.amount,
+      0,
+    );
     const allocatedLimit = CLAIM_LIMITS[visit.member.subscription!.tier];
     const remainingLimit = allocatedLimit - totalClaimed;
 
@@ -431,7 +465,10 @@ export class VisitsService {
     }
 
     const allocatedLimit = CLAIM_LIMITS[member.subscription.tier];
-    const totalClaimed = member.claims.reduce((sum, claim) => sum + claim.amount, 0);
+    const totalClaimed = member.claims.reduce(
+      (sum, claim) => sum + claim.amount,
+      0,
+    );
     const remainingLimit = Math.max(0, allocatedLimit - totalClaimed);
 
     return {
@@ -459,21 +496,20 @@ export class VisitsService {
     return mapping[procedureCode] || ClaimType.OTHER;
   }
 
-  /**
-   * Normalize phone number to format 254XXXXXXXXX
-   */
   private normalizePhoneNumber(phone: string): string {
-    let normalized = phone.replace(/[\s\-\(\)]/g, '');
-    normalized = normalized.replace(/^\+/, '');
+    // Remove spaces and special characters
+    let cleaned = phone.replace(/[\s\-\(\)]/g, '');
 
-    if (normalized.startsWith('0')) {
-      normalized = '254' + normalized.substring(1);
+    // Handle Kenyan numbers logic matching AuthService
+    if (cleaned.startsWith('0')) {
+      cleaned = '+254' + cleaned.substring(1);
+    } else if (cleaned.startsWith('254')) {
+      cleaned = '+' + cleaned;
+    } else if (!cleaned.startsWith('+')) {
+      // Default to adding + if missing
+      cleaned = '+' + cleaned;
     }
 
-    if (!normalized.startsWith('254')) {
-      normalized = '254' + normalized;
-    }
-
-    return normalized;
+    return cleaned;
   }
 }
