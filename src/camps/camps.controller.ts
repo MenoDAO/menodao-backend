@@ -7,8 +7,14 @@ import {
   Param,
   Delete,
   UseGuards,
+  Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { CampsService } from './camps.service';
 import {
   CreateCampDto,
@@ -36,10 +42,39 @@ export class CampsController {
     return this.campsService.findAll();
   }
 
+  @Get('upcoming')
+  @ApiOperation({ summary: 'List upcoming active camps' })
+  getUpcoming() {
+    return this.campsService.getUpcomingCamps();
+  }
+
+  @Get('nearby')
+  @ApiOperation({ summary: 'Find camps nearby a coordinate' })
+  @ApiQuery({ name: 'lat', type: Number })
+  @ApiQuery({ name: 'lon', type: Number })
+  @ApiQuery({ name: 'radius', type: Number, required: false })
+  findNearby(
+    @Query('lat') lat: string,
+    @Query('lon') lon: string,
+    @Query('radius') radius: string = '50',
+  ) {
+    return this.campsService.findNearby(
+      parseFloat(lat),
+      parseFloat(lon),
+      parseFloat(radius),
+    );
+  }
+
+  @Get('member/:memberId')
+  @ApiOperation({ summary: 'Get all camp registrations for a member' })
+  getMemberRegistrations(@Param('memberId') memberId: string) {
+    return this.campsService.getMemberRegistrations(memberId);
+  }
+
   @Get(':id')
-  @ApiOperation({ summary: 'Get camp details' })
+  @ApiOperation({ summary: 'Get camp details with capacity info' })
   findOne(@Param('id') id: string) {
-    return this.campsService.findOne(id);
+    return this.campsService.getCamp(id);
   }
 
   @Patch(':id')
@@ -49,14 +84,26 @@ export class CampsController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete or deactivate a camp' })
+  @ApiOperation({ summary: 'Deactivate a camp' })
   remove(@Param('id') id: string) {
     return this.campsService.remove(id);
   }
 
+  @Post(':id/register')
+  @ApiOperation({ summary: 'Register a member for a camp' })
+  register(@Param('id') id: string, @Body() dto: AssignMemberDto) {
+    return this.campsService.registerForCamp(dto.memberId, id);
+  }
+
   @Post(':id/assign')
-  @ApiOperation({ summary: 'Assign a member to a camp' })
+  @ApiOperation({ summary: 'Legacy endpoint to assign a member' })
   assignMember(@Param('id') id: string, @Body() dto: AssignMemberDto) {
-    return this.campsService.assignMember(id, dto.memberId);
+    return this.campsService.registerForCamp(dto.memberId, id);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Cancel a member registration' })
+  cancel(@Param('id') id: string, @Body() dto: AssignMemberDto) {
+    return this.campsService.cancelRegistration(dto.memberId, id);
   }
 }

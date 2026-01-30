@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampDto, UpdateCampDto } from './dto/create-camp.dto';
-import { RegistrationStatus } from '@prisma/client';
 
 @Injectable()
 export class CampsService {
@@ -13,60 +12,79 @@ export class CampsService {
 
   async create(dto: CreateCampDto) {
     return this.prisma.camp.create({
-      data: {
-        name: dto.name,
-        description: dto.description,
-        venue: dto.venue,
-        address: dto.address,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        startDate: dto.startDate,
-        endDate: dto.endDate,
-        capacity: dto.capacity || 100,
-        isActive: true,
-      },
+      data: dto,
     });
   }
 
   async findAll() {
     return this.prisma.camp.findMany({
+      include: {
+        _count: {
+          select: { registrations: true },
+        },
+      },
       orderBy: { startDate: 'desc' },
+    });
+  }
+
+  async getUpcomingCamps() {
+    return this.prisma.camp.findMany({
+      where: {
+        isActive: true,
+        startDate: { gte: new Date() },
+      },
+      orderBy: { startDate: 'asc' },
+    });
+  }
+
+  async findNearby(lat: number, lon: number, radiusKm: number) {
+    const camps = await this.prisma.camp.findMany({
+      where: { isActive: true },
+    });
+
+    const nearbyCamps = camps
+      .map((camp) => {
+        const distance = this.getDistance(
+          lat,
+          lon,
+          camp.latitude,
+          camp.longitude,
+        );
+        return { ...camp, distanceKm: distance };
+      })
+      .filter((camp) => camp.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    return nearbyCamps;
+  }
+
+  async getCamp(id: string) {
+    const camp = await this.prisma.camp.findUnique({
+      where: { id },
       include: {
         _count: {
           select: { registrations: true },
         },
       },
     });
+
+    if (!camp) {
+      throw new NotFoundException(`Camp with ID ${id} not found`);
+    }
+
+    const { _count, ...campData } = camp;
+    return {
+      ...campData,
+      registrationsCount: _count.registrations,
+      spotsRemaining: camp.capacity - _count.registrations,
+    };
   }
 
   async findOne(id: string) {
-    const camp = await this.prisma.camp.findUnique({
-      where: { id },
-      include: {
-        registrations: {
-          include: {
-            member: {
-              select: {
-                id: true,
-                fullName: true,
-                phoneNumber: true,
-                subscription: { select: { tier: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!camp) {
-      throw new NotFoundException('Camp not found');
-    }
-
-    return camp;
+    return this.getCamp(id);
   }
 
   async update(id: string, dto: UpdateCampDto) {
-    await this.findOne(id); // create checkExists
     return this.prisma.camp.update({
       where: { id },
       data: dto,
@@ -74,55 +92,86 @@ export class CampsService {
   }
 
   async remove(id: string) {
-    await this.findOne(id); // create checkExists
-    // Only delete if no registrations linked? Or cascade?
-    // Safe delete via setting isActive: false is better usually, but sticking to delete for now if schema supports it or throws error
-    try {
-      return await this.prisma.camp.delete({ where: { id } });
-    } catch (error) {
-      // Fallback to deactivation if foreign key constraint fails
-      return this.prisma.camp.update({
-        where: { id },
-        data: { isActive: false },
-      });
-    }
+    return this.prisma.camp.update({
+      where: { id },
+      data: { isActive: false },
+    });
   }
 
-  async assignMember(campId: string, memberId: string) {
-    const camp = await this.findOne(campId);
+  async registerForCamp(memberId: string, campId: string) {
+    const camp = await this.getCamp(campId);
 
-    // Check capacity
-    const registrationCount = await this.prisma.campRegistration.count({
-      where: { campId },
-    });
-
-    if (registrationCount >= camp.capacity) {
-      throw new BadRequestException('Camp is at full capacity');
+    if (camp.spotsRemaining <= 0) {
+      throw new BadRequestException('Camp is fully booked');
     }
 
-    // Check existing registration
-    const existing = await this.prisma.campRegistration.findUnique({
+    const existingRegistration = await this.prisma.campRegistration.findUnique({
       where: {
-        campId_memberId: {
-          campId,
-          memberId,
-        },
+        campId_memberId: { campId, memberId },
       },
     });
 
-    if (existing) {
-      throw new BadRequestException('Member already registered for this camp');
+    if (existingRegistration) {
+      throw new BadRequestException(
+        'Member is already registered for this camp',
+      );
     }
 
     return this.prisma.campRegistration.create({
-      data: {
-        campId,
-        memberId,
-        status: RegistrationStatus.REGISTERED,
-      },
-      include: {
-        member: true,
+      data: { campId, memberId },
+      include: { camp: true },
+    });
+  }
+
+  async assignMember(campId: string, memberId: string) {
+    return this.registerForCamp(memberId, campId);
+  }
+
+  async getMemberRegistrations(memberId: string) {
+    return this.prisma.campRegistration.findMany({
+      where: { memberId },
+      include: { camp: true },
+      orderBy: { camp: { startDate: 'asc' } },
+    });
+  }
+
+  async cancelRegistration(memberId: string, campId: string) {
+    const registration = await this.prisma.campRegistration.findUnique({
+      where: {
+        campId_memberId: { campId, memberId },
       },
     });
+
+    if (!registration) {
+      throw new NotFoundException('Registration not found');
+    }
+
+    return this.prisma.campRegistration.update({
+      where: { id: registration.id },
+      data: { status: 'CANCELLED' as any },
+    });
+  }
+
+  private getDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    const R = 6371; // Earth's radius in km
+    const dLat = this.deg2rad(lat2 - lat1);
+    const dLon = this.deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.deg2rad(lat1)) *
+        Math.cos(this.deg2rad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  private deg2rad(deg: number): number {
+    return deg * (Math.PI / 180);
   }
 }
