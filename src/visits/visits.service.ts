@@ -37,25 +37,31 @@ export class VisitsService {
    * Search member by phone number and return status
    */
   async searchMember(phoneNumber: string) {
-    this.logger.log(`Searching for member: ${phoneNumber}`);
+    const rawInput = phoneNumber.trim();
+    this.logger.log(`Searching for member: ${rawInput}`);
 
     // Normalize phone number to standard format (+254...)
-    const normalized = this.normalizePhoneNumber(phoneNumber);
-    const suffix =
-      phoneNumber.length >= 9 ? phoneNumber.slice(-9) : phoneNumber;
+    const normalized = this.normalizePhoneNumber(rawInput);
+    const suffix = rawInput.length >= 9 ? rawInput.slice(-9) : rawInput;
 
-    // Try to find by exact normalized match, alternative format, or suffix
+    const orConditions: any[] = [
+      { phoneNumber: normalized },
+      { phoneNumber: rawInput },
+      {
+        phoneNumber: normalized.startsWith('+')
+          ? normalized.substring(1)
+          : '+' + normalized,
+      },
+    ];
+
+    if (suffix.length >= 7) {
+      orConditions.push({ phoneNumber: { endsWith: suffix } });
+    }
+
+    // Try to find by multiple conditions
     const member = await this.prisma.member.findFirst({
       where: {
-        OR: [
-          { phoneNumber: normalized },
-          {
-            phoneNumber: normalized.startsWith('+')
-              ? normalized.substring(1)
-              : '+' + normalized,
-          },
-          { phoneNumber: { endsWith: suffix } },
-        ],
+        OR: orConditions,
       },
       include: {
         subscription: true,
@@ -69,12 +75,12 @@ export class VisitsService {
 
     if (!member) {
       this.logger.warn(
-        `Member not found for phone: ${phoneNumber} (Normalized: ${normalized}, Suffix: ${suffix})`,
+        `Member not found for input: ${rawInput} (Normalized: ${normalized}, Suffix: ${suffix}, Conditions: ${JSON.stringify(orConditions)})`,
       );
       return {
         found: false,
         message:
-          'Member not found. Please verify the phone number of the activated member.',
+          'Member not found. Please verify the phone number or ask the patient to register.',
       };
     }
 

@@ -16,8 +16,9 @@ import { StaffLoginDto, ChangePasswordDto } from './dto/staff-login.dto';
 import { EnrollStaffDto } from './dto/enroll-staff.dto';
 import { StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { Request as ExpressRequest } from 'express';
 
-interface AuthenticatedRequest extends Request {
+interface AuthenticatedRequest extends ExpressRequest {
   staff: {
     id: string;
     username: string;
