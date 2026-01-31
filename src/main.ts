@@ -49,4 +49,5 @@ async function bootstrap() {
   console.log(`🚀 MenoDAO API running on http://localhost:${port}`);
   console.log(`📚 API Docs available at http://localhost:${port}/api/docs`);
 }
+
 bootstrap();

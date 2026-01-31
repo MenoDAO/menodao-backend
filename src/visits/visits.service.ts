@@ -63,14 +63,6 @@ export class VisitsService {
       where: {
         OR: orConditions,
       },
-      include: {
-        subscription: true,
-        claims: {
-          where: {
-            status: { in: [ClaimStatus.APPROVED, ClaimStatus.DISBURSED] },
-          },
-        },
-      },
     });
 
     if (!member) {
