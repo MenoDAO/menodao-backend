@@ -5,13 +5,15 @@ import { StaffController } from './staff.controller';
 import { StaffService } from './staff.service';
 import { StaffAuthGuard } from './guards/staff-auth.guard';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SmsModule } from '../sms/sms.module';
 
 @Module({
   imports: [
     PrismaModule,
+    SmsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: { expiresIn: '8h' },
       }),
