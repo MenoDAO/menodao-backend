@@ -3,7 +3,6 @@ import {
   UnauthorizedException,
   OnModuleInit,
   Logger,
-  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -68,10 +67,9 @@ export class StaffService implements OnModuleInit {
 
         this.logger.log(`Default staff user created: ${defaultUsername}`);
       }
-    } catch (error) {
-      this.logger.error(
-        `Failed to initialize default staff user: ${error.message}`,
-      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to initialize default staff user: ${message}`);
       // Don't throw - allow module to load even if initialization fails
       // Staff user can be created manually or on next restart
     }
@@ -289,7 +287,7 @@ export class StaffService implements OnModuleInit {
   }
 
   async getMembers(filters: { branch?: string }) {
-    return this.prisma.member.findMany({
+    const members = await this.prisma.member.findMany({
       where: {
         branch: filters.branch,
       },
@@ -306,6 +304,14 @@ export class StaffService implements OnModuleInit {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return members.map((m) => ({
+      id: m.id,
+      fullName: m.fullName,
+      phoneNumber: m.phoneNumber,
+      branch: m.branch,
+      tier: m.subscription?.tier || 'BRONZE',
+    }));
   }
 
   async getStaffUsers(filters: { branch?: string; role?: StaffRole }) {

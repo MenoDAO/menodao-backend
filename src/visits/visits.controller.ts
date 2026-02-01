@@ -13,11 +13,14 @@ import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
 import { CheckInDto } from './dto/check-in.dto';
 import { AddProcedureDto } from './dto/add-procedure.dto';
 
-interface RequestWithStaff extends Request {
+import { Request as ExpressRequest } from 'express';
+
+interface RequestWithStaff extends ExpressRequest {
   staff: {
     id: string;
     username: string;
     role: string;
+    branch?: string;
   };
 }
 

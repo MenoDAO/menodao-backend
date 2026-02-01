@@ -45,6 +45,24 @@ export interface SearchMemberResult {
   message?: string;
 }
 
+// Interface for Visit with member and subscription included
+interface VisitWithMember {
+  id: string;
+  memberId: string;
+  status: VisitStatus;
+  checkedInAt: Date;
+  totalCost: number;
+  member: {
+    id: string;
+    fullName: string | null;
+    phoneNumber: string;
+    subscription: {
+      tier: PackageTier;
+      isActive: boolean;
+    } | null;
+  };
+}
+
 @Injectable()
 export class VisitsService {
   private readonly logger = new Logger(VisitsService.name);
@@ -210,23 +228,25 @@ export class VisitsService {
       },
     });
 
-    const visitMember = visit.member;
+    const v = visit as unknown as VisitWithMember;
+    const vm = v.member;
+    const tier = vm.subscription?.tier || PackageTier.BRONZE;
 
     return {
       visit: {
-        id: visit.id,
-        memberId: visit.memberId,
-        status: visit.status,
-        checkedInAt: visit.checkedInAt,
-        totalCost: visit.totalCost,
+        id: v.id,
+        memberId: v.memberId,
+        status: v.status,
+        checkedInAt: v.checkedInAt,
+        totalCost: v.totalCost,
       },
       member: {
-        id: visitMember.id,
-        fullName: visitMember.fullName,
-        phoneNumber: visitMember.phoneNumber,
-        tier: visitMember.subscription?.tier,
+        id: vm.id,
+        fullName: vm.fullName,
+        phoneNumber: vm.phoneNumber,
+        tier: tier,
       },
-      claimLimit: await this.getRemainingClaimLimit(visit.memberId),
+      claimLimit: await this.getRemainingClaimLimit(v.memberId),
     };
   }
 
@@ -408,30 +428,37 @@ export class VisitsService {
       );
     }
 
-    // Create claims for each procedure
-    const claims: any[] = [];
-    for (const vp of visit.procedures) {
-      const claim = await this.prisma.claim.create({
-        data: {
-          memberId: visit.memberId,
-          claimType: this.mapProcedureToClaimType(vp.procedure.code),
-          description: `${vp.procedure.name} - ${vp.procedure.description || ''}`,
-          amount: vp.cost,
-          status: ClaimStatus.APPROVED, // Auto-approve claims from staff dashboard
-          visitId: visit.id,
-        },
-      });
-      claims.push(claim);
-    }
+    // Use transaction to ensure visit closure and claim creation are atomic
+    const { dischargedVisit, claims } = await this.prisma.$transaction(
+      async (tx) => {
+        const createdClaims: any[] = [];
+        // Create claims
+        for (const vp of visit.procedures) {
+          const claim = await tx.claim.create({
+            data: {
+              memberId: visit.memberId,
+              claimType: this.mapProcedureToClaimType(vp.procedure.code),
+              description: `${vp.procedure.name} - ${vp.procedure.description || ''}`,
+              amount: vp.cost,
+              status: ClaimStatus.APPROVED,
+              visitId: visit.id,
+            },
+          });
+          createdClaims.push(claim);
+        }
 
-    // Close the visit
-    const dischargedVisit = await this.prisma.visit.update({
-      where: { id: visitId },
-      data: {
-        status: VisitStatus.DISCHARGED,
-        dischargedAt: new Date(),
+        // Close visit
+        const updatedVisit = await tx.visit.update({
+          where: { id: visitId },
+          data: {
+            status: VisitStatus.DISCHARGED,
+            dischargedAt: new Date(),
+          },
+        });
+
+        return { dischargedVisit: updatedVisit, claims: createdClaims };
       },
-    });
+    );
 
     // Calculate new balance
     const newTotalClaimed = totalClaimed + visit.totalCost;
