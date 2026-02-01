@@ -1,5 +1,10 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -14,7 +19,11 @@ export class PaymentsController {
   @ApiOperation({ summary: 'List all payments with pagination and filters' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'],
+  })
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiQuery({ name: 'search', required: false, type: String })
@@ -31,7 +40,7 @@ export class PaymentsController {
     const skip = (pageNum - 1) * limitNum;
 
     const where: any = {};
-    
+
     if (status) {
       where.status = status;
     }

@@ -75,7 +75,12 @@ describe('ClaimsService', () => {
       ]);
 
       await expect(
-        service.createClaim('member-1', 'CLEANING', 'Professional cleaning', 1000),
+        service.createClaim(
+          'member-1',
+          'CLEANING',
+          'Professional cleaning',
+          1000,
+        ),
       ).rejects.toThrow('reached your annual claim limit');
     });
 
@@ -233,7 +238,9 @@ describe('ClaimsService', () => {
         amount: 5000,
         member: { id: 'member-1' },
       });
-      mockPrismaService.claim.update.mockResolvedValue({ status: 'PROCESSING' });
+      mockPrismaService.claim.update.mockResolvedValue({
+        status: 'PROCESSING',
+      });
       mockBlockchainService.processDisbursement.mockRejectedValue(
         new Error('Blockchain error'),
       );
@@ -249,7 +256,7 @@ describe('ClaimsService', () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         tier: 'SILVER', // 4 claims, 15000 KES limit
       });
-      
+
       const yearStart = new Date(new Date().getFullYear(), 0, 1);
       const mockClaims = [
         { id: 'cl1', amount: 3000, status: 'DISBURSED', createdAt: new Date() },

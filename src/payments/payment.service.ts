@@ -90,7 +90,9 @@ export class PaymentService {
   ): Promise<PaymentResult> {
     const merchantCode = this.configService.get<string>('RIFT_MERCHANT_CODE');
     const privateKey = this.configService.get<string>('RIFT_PRIVATE_KEY');
-    const apiBaseUrl = this.configService.get<string>('API_BASE_URL') || 'https://api.menodao.org';
+    const apiBaseUrl =
+      this.configService.get<string>('API_BASE_URL') ||
+      'https://api.menodao.org';
 
     if (!merchantCode || !privateKey) {
       this.logger.error('Rift merchant credentials not configured');
@@ -133,7 +135,9 @@ export class PaymentService {
         privateKey,
       );
 
-      this.logger.log(`Initiating STK Push for ${normalizedPhone}, amount: ${amount}`);
+      this.logger.log(
+        `Initiating STK Push for ${normalizedPhone}, amount: ${amount}`,
+      );
 
       const response = await axios.post(`${this.baseUrl}${url}`, bodyString, {
         headers: {
@@ -149,8 +153,10 @@ export class PaymentService {
       const riftResponse = response.data;
 
       if (riftResponse.success) {
-        const checkoutRequestId = riftResponse.checkout_request_id || riftResponse.CheckoutRequestID;
-        const transactionCode = riftResponse.transaction_code || riftResponse.MerchantRequestID;
+        const checkoutRequestId =
+          riftResponse.checkout_request_id || riftResponse.CheckoutRequestID;
+        const transactionCode =
+          riftResponse.transaction_code || riftResponse.MerchantRequestID;
 
         // Update contribution with payment reference
         await this.prisma.contribution.update({
@@ -166,7 +172,9 @@ export class PaymentService {
           },
         });
 
-        this.logger.log(`STK Push initiated successfully. Ref: ${transactionRef}`);
+        this.logger.log(
+          `STK Push initiated successfully. Ref: ${transactionRef}`,
+        );
 
         return {
           success: true,
@@ -199,18 +207,20 @@ export class PaymentService {
   /**
    * Validate incoming payment (called by payment provider before processing)
    */
-  async validatePayment(data: PaymentCallbackData): Promise<{ valid: boolean; message: string }> {
+  async validatePayment(
+    data: PaymentCallbackData,
+  ): Promise<{ valid: boolean; message: string }> {
     try {
       const { MerchantRequestID, CheckoutRequestID, TransAmount } = data;
 
-      this.logger.log(`Validating payment: ${MerchantRequestID || CheckoutRequestID}`);
+      this.logger.log(
+        `Validating payment: ${MerchantRequestID || CheckoutRequestID}`,
+      );
 
       // Find the contribution by checkout request ID or transaction code
       const contribution = await this.prisma.contribution.findFirst({
         where: {
-          OR: [
-            { paymentRef: { startsWith: 'menodao_' } },
-          ],
+          OR: [{ paymentRef: { startsWith: 'menodao_' } }],
           status: 'PENDING',
         },
       });
@@ -225,7 +235,9 @@ export class PaymentService {
       const receivedAmount = parseFloat(TransAmount || '0');
 
       if (Math.abs(expectedAmount - receivedAmount) > 1) {
-        this.logger.warn(`Amount mismatch: expected ${expectedAmount}, received ${receivedAmount}`);
+        this.logger.warn(
+          `Amount mismatch: expected ${expectedAmount}, received ${receivedAmount}`,
+        );
         return { valid: false, message: 'Amount mismatch' };
       }
 
@@ -239,7 +251,9 @@ export class PaymentService {
   /**
    * Process payment callback (confirmation from payment provider)
    */
-  async processCallback(data: PaymentCallbackData): Promise<{ success: boolean; message: string }> {
+  async processCallback(
+    data: PaymentCallbackData,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const {
         MerchantRequestID,
@@ -276,7 +290,7 @@ export class PaymentService {
           data: {
             status: 'COMPLETED',
             metadata: {
-              ...(contribution.metadata as object || {}),
+              ...((contribution.metadata as object) || {}),
               transactionCode: TransactionCode,
               customerMobile: CustomerMobile,
               completedAt: new Date().toISOString(),
@@ -285,7 +299,9 @@ export class PaymentService {
           },
         });
 
-        this.logger.log(`Payment completed for contribution ${contribution.id}`);
+        this.logger.log(
+          `Payment completed for contribution ${contribution.id}`,
+        );
         return { success: true, message: 'Payment processed successfully' };
       } else {
         // Update contribution to failed
@@ -294,7 +310,7 @@ export class PaymentService {
           data: {
             status: 'FAILED',
             metadata: {
-              ...(contribution.metadata as object || {}),
+              ...((contribution.metadata as object) || {}),
               failedAt: new Date().toISOString(),
               resultCode: ResultCode,
               resultDesc: data.ResultDesc,
@@ -302,7 +318,9 @@ export class PaymentService {
           },
         });
 
-        this.logger.warn(`Payment failed for contribution ${contribution.id}: ${data.ResultDesc}`);
+        this.logger.warn(
+          `Payment failed for contribution ${contribution.id}: ${data.ResultDesc}`,
+        );
         return { success: true, message: 'Payment failure recorded' };
       }
     } catch (error) {
@@ -326,7 +344,9 @@ export class PaymentService {
       return { status: 'NOT_FOUND' };
     }
 
-    const metadata = contribution.metadata as { transactionCode?: string } | null;
+    const metadata = contribution.metadata as {
+      transactionCode?: string;
+    } | null;
 
     return {
       status: contribution.status,

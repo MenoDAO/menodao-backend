@@ -1,5 +1,18 @@
-import { Controller, Get, Patch, Body, Query, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Query,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -12,7 +25,9 @@ export class MembersController {
   constructor(private membersService: MembersService) {}
 
   @Get('profile')
-  @ApiOperation({ summary: 'Get current member profile with subscription and history' })
+  @ApiOperation({
+    summary: 'Get current member profile with subscription and history',
+  })
   async getProfile(@Request() req) {
     return this.membersService.findById(req.user.id);
   }
@@ -32,7 +47,11 @@ export class MembersController {
     @Query('page') page = 1,
     @Query('limit') limit = 20,
   ) {
-    return this.membersService.getContributionHistory(req.user.id, +page, +limit);
+    return this.membersService.getContributionHistory(
+      req.user.id,
+      +page,
+      +limit,
+    );
   }
 
   @Get('claims')
@@ -56,6 +75,10 @@ export class MembersController {
     @Query('page') page = 1,
     @Query('limit') limit = 20,
   ) {
-    return this.membersService.getTransactionHistory(req.user.id, +page, +limit);
+    return this.membersService.getTransactionHistory(
+      req.user.id,
+      +page,
+      +limit,
+    );
   }
 }

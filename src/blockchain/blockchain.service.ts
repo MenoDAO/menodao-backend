@@ -3,7 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { ethers } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
 import { PackageTier, TransactionType, TxStatus } from '@prisma/client';
-import { ChainId, CHAIN_CONFIGS, getChainConfig, DEFAULT_CHAIN } from './chains.config';
+import {
+  ChainId,
+  CHAIN_CONFIGS,
+  getChainConfig,
+  DEFAULT_CHAIN,
+} from './chains.config';
 
 // Simplified ABI for MenoDAO NFT contract
 const NFT_ABI = [
@@ -42,7 +47,8 @@ export class BlockchainService {
     private prisma: PrismaService,
   ) {
     this.isTestnet = this.configService.get('NODE_ENV') !== 'production';
-    this.defaultChain = (this.configService.get('DEFAULT_CHAIN') as ChainId) || DEFAULT_CHAIN;
+    this.defaultChain =
+      (this.configService.get('DEFAULT_CHAIN') as ChainId) || DEFAULT_CHAIN;
     this.initializeBlockchain();
   }
 
@@ -62,21 +68,35 @@ export class BlockchainService {
         const wallet = new ethers.Wallet(privateKey, provider);
 
         // Get chain-specific contract addresses from env
-        const nftAddress = this.configService.get<string>(`${chainId.toUpperCase()}_NFT_CONTRACT`);
-        const treasuryAddress = this.configService.get<string>(`${chainId.toUpperCase()}_TREASURY_CONTRACT`);
+        const nftAddress = this.configService.get<string>(
+          `${chainId.toUpperCase()}_NFT_CONTRACT`,
+        );
+        const treasuryAddress = this.configService.get<string>(
+          `${chainId.toUpperCase()}_TREASURY_CONTRACT`,
+        );
 
         const connection: ChainConnection = { provider, wallet };
 
         if (nftAddress && nftAddress !== '0x...') {
-          connection.nftContract = new ethers.Contract(nftAddress, NFT_ABI, wallet);
+          connection.nftContract = new ethers.Contract(
+            nftAddress,
+            NFT_ABI,
+            wallet,
+          );
         }
 
         if (treasuryAddress && treasuryAddress !== '0x...') {
-          connection.treasuryContract = new ethers.Contract(treasuryAddress, TREASURY_ABI, wallet);
+          connection.treasuryContract = new ethers.Contract(
+            treasuryAddress,
+            TREASURY_ABI,
+            wallet,
+          );
         }
 
         this.chains.set(chainId, connection);
-        this.logger.log(`Chain ${chainId} initialized (${this.isTestnet ? 'testnet' : 'mainnet'})`);
+        this.logger.log(
+          `Chain ${chainId} initialized (${this.isTestnet ? 'testnet' : 'mainnet'})`,
+        );
       } catch (error) {
         this.logger.error(`Failed to initialize ${chainId}:`, error);
       }
@@ -90,7 +110,9 @@ export class BlockchainService {
       }
     }
 
-    this.logger.log(`Blockchain service initialized with ${this.chains.size} chains`);
+    this.logger.log(
+      `Blockchain service initialized with ${this.chains.size} chains`,
+    );
   }
 
   /**
@@ -107,8 +129,14 @@ export class BlockchainService {
     return Object.entries(CHAIN_CONFIGS).map(([id, config]) => ({
       id,
       name: config.name,
-      chainId: this.isTestnet && config.testnet ? config.testnet.chainId : config.chainId,
-      explorerUrl: this.isTestnet && config.testnet ? config.testnet.explorerUrl : config.explorerUrl,
+      chainId:
+        this.isTestnet && config.testnet
+          ? config.testnet.chainId
+          : config.chainId,
+      explorerUrl:
+        this.isTestnet && config.testnet
+          ? config.testnet.explorerUrl
+          : config.explorerUrl,
       isTestnet: this.isTestnet,
       isConfigured: this.chains.has(id as ChainId),
     }));
@@ -137,13 +165,15 @@ export class BlockchainService {
     // Store wallet address (not private key - that's derived deterministically)
     await this.prisma.member.update({
       where: { id: memberId },
-      data: { 
+      data: {
         walletAddress: wallet.address,
         // Store metadata about the wallet
       },
     });
 
-    this.logger.log(`Custodial wallet created for member ${memberId}: ${wallet.address}`);
+    this.logger.log(
+      `Custodial wallet created for member ${memberId}: ${wallet.address}`,
+    );
     return wallet.address;
   }
 
@@ -174,12 +204,15 @@ export class BlockchainService {
   /**
    * Get custodial wallet signer for a member
    */
-  private getCustodialSigner(memberId: string, chainId?: ChainId): ethers.Wallet {
+  private getCustodialSigner(
+    memberId: string,
+    chainId?: ChainId,
+  ): ethers.Wallet {
     const chain = this.getChain(chainId);
     if (!chain) {
       throw new Error(`Chain ${chainId || this.defaultChain} not configured`);
     }
-    
+
     const privateKey = this.deriveCustodialKey(memberId);
     return new ethers.Wallet(privateKey, chain.provider);
   }
@@ -187,10 +220,14 @@ export class BlockchainService {
   /**
    * Mint membership NFT for a member (multi-chain support)
    */
-  async mintMembershipNFT(memberId: string, tier: PackageTier, chainId?: ChainId): Promise<string> {
+  async mintMembershipNFT(
+    memberId: string,
+    tier: PackageTier,
+    chainId?: ChainId,
+  ): Promise<string> {
     const targetChain = chainId || this.defaultChain;
     const chain = this.getChain(targetChain);
-    
+
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
     });
@@ -204,9 +241,11 @@ export class BlockchainService {
 
     // Mock mode if blockchain not configured
     if (!chain?.nftContract) {
-      this.logger.log(`[MOCK] Minting ${tier} NFT on ${targetChain} for member ${memberId}`);
+      this.logger.log(
+        `[MOCK] Minting ${tier} NFT on ${targetChain} for member ${memberId}`,
+      );
       const mockTxHash = `0x${Buffer.from(Date.now().toString()).toString('hex').padEnd(64, '0')}`;
-      
+
       await this.prisma.nFT.create({
         data: {
           memberId,
@@ -241,8 +280,10 @@ export class BlockchainService {
     const tierValue = { BRONZE: 1, SILVER: 2, GOLD: 3 }[tier];
 
     try {
-      this.logger.log(`Minting ${tier} NFT on ${targetChain} for ${walletAddress}`);
-      
+      this.logger.log(
+        `Minting ${tier} NFT on ${targetChain} for ${walletAddress}`,
+      );
+
       const tx = await chain.nftContract.mint(walletAddress, tierValue);
       const receipt = await tx.wait();
 
@@ -296,7 +337,7 @@ export class BlockchainService {
       orderBy: { mintedAt: 'desc' },
     });
 
-    return nfts.map(nft => ({
+    return nfts.map((nft) => ({
       ...nft,
       chain: (nft.metadata as any)?.chain || 'polygon',
       explorerUrl: (nft.metadata as any)?.explorerUrl,
@@ -307,7 +348,11 @@ export class BlockchainService {
   /**
    * Transfer NFT to external wallet (claim)
    */
-  async claimNFT(memberId: string, nftId: string, externalWallet: string): Promise<string> {
+  async claimNFT(
+    memberId: string,
+    nftId: string,
+    externalWallet: string,
+  ): Promise<string> {
     const nft = await this.prisma.nFT.findFirst({
       where: { id: nftId, memberId },
     });
@@ -316,18 +361,19 @@ export class BlockchainService {
       throw new Error('NFT not found or not owned by member');
     }
 
-    const chainId = (nft.metadata as any)?.chain as ChainId || this.defaultChain;
+    const chainId =
+      ((nft.metadata as any)?.chain as ChainId) || this.defaultChain;
     const chain = this.getChain(chainId);
 
     if (!chain?.nftContract) {
       this.logger.log(`[MOCK] Claiming NFT ${nftId} to ${externalWallet}`);
-      
+
       // Update NFT record
       await this.prisma.nFT.update({
         where: { id: nftId },
         data: {
           metadata: {
-            ...(nft.metadata as object || {}),
+            ...((nft.metadata as object) || {}),
             claimed: true,
             claimedTo: externalWallet,
             claimedAt: new Date().toISOString(),
@@ -384,7 +430,7 @@ export class BlockchainService {
         where: { id: nftId },
         data: {
           metadata: {
-            ...(nft.metadata as object || {}),
+            ...((nft.metadata as object) || {}),
             claimed: true,
             claimedTo: externalWallet,
             claimedAt: new Date().toISOString(),
@@ -399,7 +445,9 @@ export class BlockchainService {
         data: { walletAddress: externalWallet },
       });
 
-      this.logger.log(`NFT ${nftId} claimed to ${externalWallet}: ${receipt.hash}`);
+      this.logger.log(
+        `NFT ${nftId} claimed to ${externalWallet}: ${receipt.hash}`,
+      );
       return receipt.hash;
     } catch (error) {
       this.logger.error('NFT claim failed:', error);
@@ -410,7 +458,11 @@ export class BlockchainService {
   /**
    * Record contribution on-chain (multi-chain support)
    */
-  async recordContribution(memberId: string, amountKES: number, chainId?: ChainId): Promise<string> {
+  async recordContribution(
+    memberId: string,
+    amountKES: number,
+    chainId?: ChainId,
+  ): Promise<string> {
     const targetChain = chainId || this.defaultChain;
     const chain = this.getChain(targetChain);
 
@@ -422,13 +474,16 @@ export class BlockchainService {
       throw new Error('Member not found');
     }
 
-    const walletAddress = member.walletAddress || await this.getOrCreateWallet(memberId);
+    const walletAddress =
+      member.walletAddress || (await this.getOrCreateWallet(memberId));
 
     // Mock mode
     if (!chain?.treasuryContract) {
-      this.logger.log(`[MOCK] Recording contribution of KES ${amountKES} on ${targetChain} for member ${memberId}`);
+      this.logger.log(
+        `[MOCK] Recording contribution of KES ${amountKES} on ${targetChain} for member ${memberId}`,
+      );
       const mockTxHash = `0x${Buffer.from(`contrib-${Date.now()}`).toString('hex').padEnd(64, '0')}`;
-      
+
       await this.prisma.blockchainTransaction.create({
         data: {
           txHash: mockTxHash,
@@ -476,7 +531,12 @@ export class BlockchainService {
   /**
    * Process claim disbursement on-chain (multi-chain support)
    */
-  async processDisbursement(memberId: string, amountKES: number, claimId: string, chainId?: ChainId): Promise<string> {
+  async processDisbursement(
+    memberId: string,
+    amountKES: number,
+    claimId: string,
+    chainId?: ChainId,
+  ): Promise<string> {
     const targetChain = chainId || this.defaultChain;
     const chain = this.getChain(targetChain);
 
@@ -488,13 +548,16 @@ export class BlockchainService {
       throw new Error('Member not found');
     }
 
-    const walletAddress = member.walletAddress || await this.getOrCreateWallet(memberId);
+    const walletAddress =
+      member.walletAddress || (await this.getOrCreateWallet(memberId));
 
     // Mock mode
     if (!chain?.treasuryContract) {
-      this.logger.log(`[MOCK] Disbursing KES ${amountKES} on ${targetChain} for claim ${claimId}`);
+      this.logger.log(
+        `[MOCK] Disbursing KES ${amountKES} on ${targetChain} for claim ${claimId}`,
+      );
       const mockTxHash = `0x${Buffer.from(`disburse-${Date.now()}`).toString('hex').padEnd(64, '0')}`;
-      
+
       await this.prisma.blockchainTransaction.create({
         data: {
           txHash: mockTxHash,

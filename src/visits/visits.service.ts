@@ -15,6 +15,7 @@ import {
   ClaimStatus,
   ClaimType,
 } from '@prisma/client';
+import { CheckInDto } from './dto/check-in.dto';
 
 // Updated claim limits per tier (total claim limit, not annual)
 const CLAIM_LIMITS: Record<PackageTier, number> = {
@@ -22,6 +23,27 @@ const CLAIM_LIMITS: Record<PackageTier, number> = {
   SILVER: 5000, // KES 5,000
   GOLD: 10000, // KES 10,000
 };
+
+export interface SearchMemberResult {
+  found: boolean;
+  active?: boolean;
+  member?: {
+    id: string;
+    phoneNumber: string;
+    fullName: string | null;
+    tier?: PackageTier;
+  };
+  subscription?: {
+    tier: PackageTier;
+    isActive: boolean;
+  };
+  claimLimit?: {
+    allocated: number;
+    used: number;
+    remaining: number;
+  };
+  message?: string;
+}
 
 @Injectable()
 export class VisitsService {
@@ -36,7 +58,7 @@ export class VisitsService {
   /**
    * Search member by phone number and return status
    */
-  async searchMember(phoneNumber: string) {
+  async searchMember(phoneNumber: string): Promise<SearchMemberResult> {
     const rawInput = phoneNumber.trim();
     this.logger.log(`Searching for member: ${rawInput}`);
 
@@ -44,7 +66,7 @@ export class VisitsService {
     const normalized = this.normalizePhoneNumber(rawInput);
     const suffix = rawInput.length >= 9 ? rawInput.slice(-9) : rawInput;
 
-    const orConditions: any[] = [
+    const orConditions: Record<string, any>[] = [
       { phoneNumber: normalized },
       { phoneNumber: rawInput },
       {
@@ -134,23 +156,30 @@ export class VisitsService {
   /**
    * Check-in a patient (create an open visit)
    */
-  async checkIn(phoneNumber: string, staffId: string) {
-    const searchResult = await this.searchMember(phoneNumber);
+  async checkIn(dto: CheckInDto, staffId: string) {
+    const searchResult = await this.searchMember(dto.phoneNumber);
 
     if (!searchResult.found) {
       throw new NotFoundException('Member not found');
     }
 
-    if (!searchResult.active) {
+    const memberData = searchResult.member;
+    if (!searchResult.active || !memberData) {
       throw new BadRequestException(
-        'Member does not have an active subscription',
+        'Member does not have an active subscription or missing member data',
+      );
+    }
+
+    if (!dto.hasConsent) {
+      throw new BadRequestException(
+        'Member must provide consent for treatment and data processing',
       );
     }
 
     // Check if there's already an open visit for this member
     const openVisit = await this.prisma.visit.findFirst({
       where: {
-        memberId: searchResult.member.id,
+        memberId: memberData.id,
         status: VisitStatus.OPEN,
       },
     });
@@ -159,13 +188,18 @@ export class VisitsService {
       throw new BadRequestException('Member already has an open visit');
     }
 
-    // Create new visit
+    // Create new visit with clinical data
     const visit = await this.prisma.visit.create({
       data: {
-        memberId: searchResult.member.id,
+        memberId: memberData.id,
         staffId: staffId,
         status: VisitStatus.OPEN,
         totalCost: 0,
+        chiefComplaint: dto.chiefComplaint,
+        medicalHistory: dto.medicalHistory,
+        vitals: dto.vitals,
+        clinicalNotes: dto.clinicalNotes,
+        hasConsent: dto.hasConsent,
       },
       include: {
         member: {
@@ -176,6 +210,8 @@ export class VisitsService {
       },
     });
 
+    const visitMember = visit.member;
+
     return {
       visit: {
         id: visit.id,
@@ -185,10 +221,10 @@ export class VisitsService {
         totalCost: visit.totalCost,
       },
       member: {
-        id: visit.member.id,
-        fullName: visit.member.fullName,
-        phoneNumber: visit.member.phoneNumber,
-        tier: visit.member.subscription?.tier,
+        id: visitMember.id,
+        fullName: visitMember.fullName,
+        phoneNumber: visitMember.phoneNumber,
+        tier: visitMember.subscription?.tier,
       },
       claimLimit: await this.getRemainingClaimLimit(visit.memberId),
     };
@@ -317,7 +353,7 @@ export class VisitsService {
   /**
    * Discharge a visit (close visit, create claims, send SMS)
    */
-  async dischargeVisit(visitId: string, staffId: string) {
+  async dischargeVisit(visitId: string) {
     const visit = await this.prisma.visit.findUnique({
       where: { id: visitId },
       include: {
@@ -409,7 +445,8 @@ export class VisitsService {
       await this.smsService.sendSms(visit.member.phoneNumber, smsMessage);
       this.logger.log(`Discharge SMS sent to ${visit.member.phoneNumber}`);
     } catch (error) {
-      this.logger.error(`Failed to send discharge SMS: ${error.message}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to send discharge SMS: ${message}`);
       // Don't fail the discharge if SMS fails
     }
 
@@ -525,7 +562,7 @@ export class VisitsService {
 
   private normalizePhoneNumber(phone: string): string {
     // Remove spaces and special characters
-    let cleaned = phone.replace(/[\s\-\(\)]/g, '');
+    let cleaned = phone.replace(/[\s\-()]/g, '');
 
     // Handle Kenyan numbers logic matching AuthService
     if (cleaned.startsWith('0')) {

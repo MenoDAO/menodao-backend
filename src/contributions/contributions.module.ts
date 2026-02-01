@@ -7,7 +7,7 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
-    BlockchainModule, 
+    BlockchainModule,
     PaymentModule,
     forwardRef(() => SubscriptionsModule),
   ],

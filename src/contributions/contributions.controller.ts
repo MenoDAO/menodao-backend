@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+  Logger,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { ContributionsService } from './contributions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -28,7 +37,12 @@ export class ContributionsController {
       type: 'object',
       properties: {
         amount: { type: 'number', example: 700, description: 'Amount in KES' },
-        phoneNumber: { type: 'string', example: '0712345678', description: 'M-Pesa phone number (optional, defaults to member phone)' },
+        phoneNumber: {
+          type: 'string',
+          example: '0712345678',
+          description:
+            'M-Pesa phone number (optional, defaults to member phone)',
+        },
       },
       required: ['amount'],
     },
@@ -51,11 +65,13 @@ export class ContributionsController {
   }
 
   @Post('validation')
-  @ApiOperation({ summary: 'Payment validation endpoint (called by payment provider)' })
+  @ApiOperation({
+    summary: 'Payment validation endpoint (called by payment provider)',
+  })
   async handleValidation(@Body() payload: any) {
     this.logger.log('Validation request received');
     const result = await this.contributionsService.validatePayment(payload);
-    
+
     // Return format expected by Rift/M-Pesa
     return {
       ResultCode: result.valid ? '0' : '1',
@@ -64,11 +80,14 @@ export class ContributionsController {
   }
 
   @Post('callback')
-  @ApiOperation({ summary: 'Payment confirmation callback (called by payment provider)' })
+  @ApiOperation({
+    summary: 'Payment confirmation callback (called by payment provider)',
+  })
   async handleCallback(@Body() payload: any) {
     this.logger.log('Callback request received');
-    const result = await this.contributionsService.handlePaymentCallback(payload);
-    
+    const result =
+      await this.contributionsService.handlePaymentCallback(payload);
+
     return {
       ResultCode: result.success ? '0' : '1',
       ResultDesc: result.message,
@@ -76,7 +95,9 @@ export class ContributionsController {
   }
 
   @Post('webhook')
-  @ApiOperation({ summary: 'Legacy payment webhook (deprecated, use /callback)' })
+  @ApiOperation({
+    summary: 'Legacy payment webhook (deprecated, use /callback)',
+  })
   async handleWebhook(@Body() payload: any) {
     return this.contributionsService.handlePaymentWebhook(payload);
   }

@@ -14,9 +14,7 @@ describe('AuthController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [
-        { provide: AuthService, useValue: mockAuthService },
-      ],
+      providers: [{ provide: AuthService, useValue: mockAuthService }],
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
@@ -28,7 +26,9 @@ describe('AuthController', () => {
   describe('requestOtp', () => {
     it('should call authService.requestOtp with phone number', async () => {
       const dto = { phoneNumber: '+254712345678' };
-      mockAuthService.requestOtp.mockResolvedValue({ message: 'OTP sent successfully' });
+      mockAuthService.requestOtp.mockResolvedValue({
+        message: 'OTP sent successfully',
+      });
 
       const result = await controller.requestOtp(dto);
 
@@ -48,7 +48,10 @@ describe('AuthController', () => {
 
       const result = await controller.verifyOtp(dto);
 
-      expect(authService.verifyOtp).toHaveBeenCalledWith('+254712345678', '123456');
+      expect(authService.verifyOtp).toHaveBeenCalledWith(
+        '+254712345678',
+        '123456',
+      );
       expect(result).toEqual(mockResponse);
     });
   });

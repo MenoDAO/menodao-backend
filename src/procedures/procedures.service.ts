@@ -21,15 +21,17 @@ export class ProceduresService implements OnModuleInit {
    */
   async onModuleInit() {
     // Add a delay to ensure Prisma schema is pushed first
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
     try {
       // Check if the table exists by attempting a simple query
       await this.prisma.procedure.findFirst().catch(() => {
-        this.logger.warn('Procedure table does not exist yet, skipping initialization');
+        this.logger.warn(
+          'Procedure table does not exist yet, skipping initialization',
+        );
         return null;
       });
-      
+
       await this.initializeProcedures();
     } catch (error) {
       this.logger.error(`Failed to initialize procedures: ${error.message}`);
@@ -49,21 +51,33 @@ export class ProceduresService implements OnModuleInit {
         name: 'Consultation',
         description: 'General dental consultation',
         cost: 500,
-        allowedTiers: [PackageTier.BRONZE, PackageTier.SILVER, PackageTier.GOLD],
+        allowedTiers: [
+          PackageTier.BRONZE,
+          PackageTier.SILVER,
+          PackageTier.GOLD,
+        ],
       },
       {
         code: 'SCREEN_BASIC',
         name: 'Basic Screening',
         description: 'Basic dental screening',
         cost: 300,
-        allowedTiers: [PackageTier.BRONZE, PackageTier.SILVER, PackageTier.GOLD],
+        allowedTiers: [
+          PackageTier.BRONZE,
+          PackageTier.SILVER,
+          PackageTier.GOLD,
+        ],
       },
       {
         code: 'PAIN_RELIEF',
         name: 'Pain Relief (Panadol)',
         description: 'Pain relief medication',
         cost: 200,
-        allowedTiers: [PackageTier.BRONZE, PackageTier.SILVER, PackageTier.GOLD],
+        allowedTiers: [
+          PackageTier.BRONZE,
+          PackageTier.SILVER,
+          PackageTier.GOLD,
+        ],
       },
       // Silver tier procedures (includes all Bronze)
       {
@@ -153,7 +167,7 @@ export class ProceduresService implements OnModuleInit {
    */
   async getProceduresForTier(tier: PackageTier) {
     const allProcedures = await this.getAllProcedures();
-    
+
     return allProcedures.filter((proc) => {
       const allowedTiers = proc.allowedTiers as string[];
       return allowedTiers.includes(tier);

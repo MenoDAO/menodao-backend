@@ -269,6 +269,13 @@ model Visit {
   procedures      VisitProcedure[]
   claims          Claim[]
   
+  // Clinical data for SACCO/Insurance and data privacy compliance
+  chiefComplaint  String?
+  medicalHistory  String?
+  vitals          Json?           // { bp: string, pulse: number, temp: number }
+  clinicalNotes   String?
+  hasConsent      Boolean         @default(false)
+  
   @@index([memberId])
   @@index([staffId])
   @@index([status])

@@ -28,11 +28,7 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
     UsersController,
     PaymentsController,
   ],
-  providers: [
-    AdminService,
-    StatsService,
-    AdminAuthGuard,
-  ],
+  providers: [AdminService, StatsService, AdminAuthGuard],
   exports: [AdminService, AdminAuthGuard],
 })
 export class AdminModule {}

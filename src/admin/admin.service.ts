@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException, OnModuleInit, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  OnModuleInit,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,20 +24,23 @@ export class AdminService implements OnModuleInit {
    */
   async onModuleInit() {
     const adminCount = await this.prisma.adminUser.count();
-    
+
     if (adminCount === 0) {
-      const defaultUsername = this.configService.get<string>('ADMIN_USERNAME') || 'admin';
-      const defaultPassword = this.configService.get<string>('ADMIN_DEFAULT_PASSWORD') || 'menodao2026!';
-      
+      const defaultUsername =
+        this.configService.get<string>('ADMIN_USERNAME') || 'admin';
+      const defaultPassword =
+        this.configService.get<string>('ADMIN_DEFAULT_PASSWORD') ||
+        'menodao2026!';
+
       const passwordHash = await bcrypt.hash(defaultPassword, 10);
-      
+
       await this.prisma.adminUser.create({
         data: {
           username: defaultUsername,
           passwordHash,
         },
       });
-      
+
       this.logger.log(`Default admin user created: ${defaultUsername}`);
     }
   }
@@ -40,7 +48,10 @@ export class AdminService implements OnModuleInit {
   /**
    * Validate admin credentials and return JWT token
    */
-  async login(username: string, password: string): Promise<{ accessToken: string; admin: { id: string; username: string } }> {
+  async login(
+    username: string,
+    password: string,
+  ): Promise<{ accessToken: string; admin: { id: string; username: string } }> {
     const admin = await this.prisma.adminUser.findUnique({
       where: { username },
     });
@@ -50,7 +61,7 @@ export class AdminService implements OnModuleInit {
     }
 
     const isPasswordValid = await bcrypt.compare(password, admin.passwordHash);
-    
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -61,8 +72,8 @@ export class AdminService implements OnModuleInit {
       data: { lastLogin: new Date() },
     });
 
-    const payload = { 
-      sub: admin.id, 
+    const payload = {
+      sub: admin.id,
       username: admin.username,
       type: 'admin',
     };
@@ -83,7 +94,11 @@ export class AdminService implements OnModuleInit {
   /**
    * Change admin password
    */
-  async changePassword(adminId: string, currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  async changePassword(
+    adminId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: adminId },
     });
@@ -92,8 +107,11 @@ export class AdminService implements OnModuleInit {
       throw new UnauthorizedException('Admin not found');
     }
 
-    const isPasswordValid = await bcrypt.compare(currentPassword, admin.passwordHash);
-    
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      admin.passwordHash,
+    );
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Current password is incorrect');
     }
@@ -111,7 +129,10 @@ export class AdminService implements OnModuleInit {
   /**
    * Verify admin JWT token
    */
-  async validateAdminToken(payload: { sub: string; type: string }): Promise<{ id: string; username: string } | null> {
+  async validateAdminToken(payload: {
+    sub: string;
+    type: string;
+  }): Promise<{ id: string; username: string } | null> {
     if (payload.type !== 'admin') {
       return null;
     }
@@ -140,5 +161,4 @@ export class AdminService implements OnModuleInit {
 
     return admin;
   }
-
 }
