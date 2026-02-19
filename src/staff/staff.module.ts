@@ -13,10 +13,18 @@ import { SmsModule } from '../sms/sms.module';
     SmsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '8h' },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET environment variable is not set. Cannot start the application.',
+          );
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '8h' },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

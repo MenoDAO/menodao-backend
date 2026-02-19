@@ -30,6 +30,11 @@ export class StaffAuthGuard implements CanActivate {
 
     try {
       const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new UnauthorizedException(
+          'Server configuration error: JWT_SECRET is not set',
+        );
+      }
       const payload = await this.jwtService.verifyAsync(token, { secret });
 
       if (payload.type !== 'staff') {
