@@ -13,6 +13,7 @@ import {
   ApiOperation,
   ApiBearerAuth,
   ApiQuery,
+  ApiBody,
 } from '@nestjs/swagger';
 import { ClaimsService } from './claims.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -66,5 +67,35 @@ export class ClaimsController {
       dto.amount,
       dto.campId,
     );
+  }
+
+  @Post(':id/approve')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Approve a pending claim and trigger disbursal',
+  })
+  async approveClaim(@Param('id') id: string) {
+    return await this.claimsService.approveClaim(id);
+  }
+
+  @Post(':id/reject')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reject a pending claim with a reason' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          example: 'Insufficient documentation provided',
+        },
+      },
+      required: ['reason'],
+    },
+  })
+  async rejectClaim(@Param('id') id: string, @Body() body: { reason: string }) {
+    return await this.claimsService.rejectClaim(id, body.reason);
   }
 }

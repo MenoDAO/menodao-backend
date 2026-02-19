@@ -115,6 +115,87 @@ export class PaymentsController {
     }));
   }
 
+  @Get('financial-summary')
+  @ApiOperation({
+    summary: 'Get financial health summary: collections vs disbursals',
+  })
+  async getFinancialSummary() {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+
+    // Collections: completed contributions
+    const [collectionsTotal, collectionsMonth, collectionsYear] =
+      await Promise.all([
+        this.prisma.contribution.aggregate({
+          where: { status: 'COMPLETED' },
+          _sum: { amount: true },
+        }),
+        this.prisma.contribution.aggregate({
+          where: { status: 'COMPLETED', createdAt: { gte: monthStart } },
+          _sum: { amount: true },
+        }),
+        this.prisma.contribution.aggregate({
+          where: { status: 'COMPLETED', createdAt: { gte: yearStart } },
+          _sum: { amount: true },
+        }),
+      ]);
+
+    // Disbursals: disbursed claims
+    const [disbursedTotal, disbursedMonth, disbursedYear] = await Promise.all([
+      this.prisma.claim.aggregate({
+        where: { status: 'DISBURSED' },
+        _sum: { amount: true },
+      }),
+      this.prisma.claim.aggregate({
+        where: { status: 'DISBURSED', processedAt: { gte: monthStart } },
+        _sum: { amount: true },
+      }),
+      this.prisma.claim.aggregate({
+        where: { status: 'DISBURSED', processedAt: { gte: yearStart } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    // Recent disbursals list
+    const recentDisbursals = await this.prisma.claim.findMany({
+      where: { status: 'DISBURSED' },
+      orderBy: { processedAt: 'desc' },
+      take: 20,
+      include: {
+        member: {
+          select: { fullName: true, phoneNumber: true },
+        },
+      },
+    });
+
+    const totalCollected = collectionsTotal._sum.amount || 0;
+    const totalDisbursed = disbursedTotal._sum.amount || 0;
+
+    return {
+      collected: {
+        total: totalCollected,
+        thisMonth: collectionsMonth._sum.amount || 0,
+        thisYear: collectionsYear._sum.amount || 0,
+      },
+      disbursed: {
+        total: totalDisbursed,
+        thisMonth: disbursedMonth._sum.amount || 0,
+        thisYear: disbursedYear._sum.amount || 0,
+      },
+      netBalance: totalCollected - totalDisbursed,
+      recentDisbursals: recentDisbursals.map((d) => ({
+        id: d.id,
+        amount: d.amount,
+        claimType: d.claimType,
+        memberName: d.member?.fullName || 'Unknown',
+        memberPhone: d.member?.phoneNumber,
+        txHash: d.txHash,
+        processedAt: d.processedAt,
+      })),
+    };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get payment detail by ID' })
   async getPaymentDetail(@Param('id') id: string) {

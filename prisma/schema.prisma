@@ -103,6 +103,7 @@ model Claim {
   description     String
   amount          Int         // Amount in KES
   status          ClaimStatus @default(PENDING)
+  rejectionReason String?     // Reason provided by staff when rejecting
   txHash          String?     // Blockchain transaction hash for disbursement
   campId          String?
   visitId         String?     // Link to visit if created from staff dashboard
