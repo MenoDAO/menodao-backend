@@ -528,8 +528,22 @@ export class VisitsService {
     const allocatedLimit = CLAIM_LIMITS[visit.member.subscription!.tier];
     const remainingLimit = allocatedLimit - totalClaimed;
 
+    // Extract member to top level to match frontend OpenVisit interface
+    const { member, ...visitData } = visit;
+
     return {
-      visit,
+      visit: visitData,
+      member: {
+        id: member.id,
+        phoneNumber: member.phoneNumber,
+        fullName: member.fullName,
+        subscription: member.subscription
+          ? {
+              tier: member.subscription.tier,
+              isActive: member.subscription.isActive,
+            }
+          : null,
+      },
       remainingLimit: remainingLimit - visit.totalCost,
       allocatedLimit,
     };
