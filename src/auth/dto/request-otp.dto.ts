@@ -8,7 +8,7 @@ export class RequestOtpDto {
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^(\+?254|0)?[17]\d{8}$/, {
+  @Matches(/^(\+?254|0)\d{8,9}$/, {
     message: 'Please provide a valid Kenyan phone number',
   })
   phoneNumber: string;

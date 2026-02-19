@@ -11,6 +11,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VisitsService } from './visits.service';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
 import { CheckInDto } from './dto/check-in.dto';
+import { SearchMemberDto } from './dto/search-member.dto';
 import { AddProcedureDto } from './dto/add-procedure.dto';
 
 import { Request as ExpressRequest } from 'express';
@@ -33,7 +34,7 @@ export class VisitsController {
 
   @Post('search')
   @ApiOperation({ summary: 'Search member by phone number' })
-  async searchMember(@Body() dto: CheckInDto) {
+  async searchMember(@Body() dto: SearchMemberDto) {
     return this.visitsService.searchMember(dto.phoneNumber);
   }
 
