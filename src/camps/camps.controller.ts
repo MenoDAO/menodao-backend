@@ -22,7 +22,7 @@ import {
   AssignMemberDto,
 } from './dto/create-camp.dto';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtOrStaffAuthGuard } from '../auth/guards/jwt-or-staff-auth.guard';
 
 @ApiTags('Camps')
 @Controller('camps')
@@ -39,24 +39,24 @@ export class CampsController {
     return this.campsService.create(createCampDto);
   }
 
-  // ── Member-accessible read endpoints ──────────────────────
+  // ── Accessible to both members and staff ──────────────────
 
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtOrStaffAuthGuard)
   @ApiOperation({ summary: 'List all camps' })
   findAll() {
     return this.campsService.findAll();
   }
 
   @Get('upcoming')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtOrStaffAuthGuard)
   @ApiOperation({ summary: 'List upcoming active camps' })
   getUpcoming() {
     return this.campsService.getUpcomingCamps();
   }
 
   @Get('nearby')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtOrStaffAuthGuard)
   @ApiOperation({ summary: 'Find camps nearby a coordinate' })
   @ApiQuery({ name: 'lat', type: Number })
   @ApiQuery({ name: 'lon', type: Number })
@@ -74,14 +74,14 @@ export class CampsController {
   }
 
   @Get('member/:memberId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtOrStaffAuthGuard)
   @ApiOperation({ summary: 'Get all camp registrations for a member' })
   getMemberRegistrations(@Param('memberId') memberId: string) {
     return this.campsService.getMemberRegistrations(memberId);
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtOrStaffAuthGuard)
   @ApiOperation({ summary: 'Get camp details with capacity info' })
   findOne(@Param('id') id: string) {
     return this.campsService.getCamp(id);
