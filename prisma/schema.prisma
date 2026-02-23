@@ -362,3 +362,21 @@ enum SmsStatus {
   SENT
   FAILED
 }
+
+// Site visit tracking for landing page analytics
+model SiteVisit {
+  id          String   @id @default(uuid())
+  page        String   // URL path visited
+  referrer    String?  // HTTP referrer
+  utmSource   String?  // utm_source param
+  utmMedium   String?  // utm_medium param
+  utmCampaign String?  // utm_campaign param
+  userAgent   String?
+  ip          String?  // Hashed for privacy
+  sessionId   String?  // Client-side session ID to group visits
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([utmSource])
+  @@index([sessionId])
+}

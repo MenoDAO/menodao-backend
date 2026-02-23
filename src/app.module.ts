@@ -16,6 +16,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ProceduresModule } from './procedures/procedures.module';
 import { StaffModule } from './staff/staff.module';
 import { VisitsModule } from './visits/visits.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { VisitsModule } from './visits/visits.module';
     StaffModule,
     ProceduresModule,
     VisitsModule,
+    AnalyticsModule,
     AuthModule,
     MembersModule,
     SubscriptionsModule,

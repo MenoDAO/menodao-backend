@@ -9,10 +9,13 @@ async function bootstrap() {
   // Enable CORS - environment-aware configuration
   const defaultOrigins = [
     'http://localhost:3000',
+    'http://localhost:3001',
     'https://menodao.org',
     'https://www.menodao.org',
     'https://app.menodao.org',
     'https://dev.menodao.org',
+    'https://menodao.co.ke',
+    'https://www.menodao.co.ke',
   ];
   const allowedOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
