@@ -156,7 +156,10 @@ cat > /tmp/task-definition.json <<EOF
                 {"name": "POLYGON_RPC_URL", "valueFrom": "${SECRETS_ARN}:POLYGON_RPC_URL::"},
                 {"name": "PRIVATE_KEY", "valueFrom": "${SECRETS_ARN}:PRIVATE_KEY::"},
                 {"name": "SMS_API_KEY", "valueFrom": "${SECRETS_ARN}:SMS_API_KEY::"},
-                {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_USERNAME::"}
+                {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_USERNAME::"},
+                {"name": "SASAPAY_CLIENT_ID", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_ID::"},
+                {"name": "SASAPAY_CLIENT_SECRET", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_SECRET::"},
+                {"name": "SASAPAY_MERCHANT_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_MERCHANT_CODE::"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",

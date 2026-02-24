@@ -447,6 +447,9 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "PRIVATE_KEY", valueFrom = "${aws_secretsmanager_secret.app.arn}:PRIVATE_KEY::" }
         { name = "SMS_API_KEY", valueFrom = "${aws_secretsmanager_secret.app.arn}:SMS_API_KEY::" }
         { name = "SMS_USERNAME", valueFrom = "${aws_secretsmanager_secret.app.arn}:SMS_USERNAME::" }
+        { name = "SASAPAY_CLIENT_ID", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_CLIENT_ID::" }
+        { name = "SASAPAY_CLIENT_SECRET", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_CLIENT_SECRET::" }
+        { name = "SASAPAY_MERCHANT_CODE", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_MERCHANT_CODE::" }
       ]
       
       logConfiguration = {
