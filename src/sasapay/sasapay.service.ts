@@ -204,7 +204,7 @@ export class SasaPayService {
       this.tokenExpiresAt = 0;
 
       if (axios.isAxiosError(error) && error.response) {
-        const errorData = error.response.data;
+        const errorData = error.response.data as Record<string, any>;
         this.logger.error(
           `SasaPay auth failed [${error.response.status}]: ${JSON.stringify(errorData)}`,
         );
@@ -213,8 +213,9 @@ export class SasaPayService {
         );
       }
 
-      this.logger.error(`SasaPay auth error: ${error.message}`);
-      throw new Error(`SasaPay authentication failed: ${error.message}`);
+      const errorMessage = (error as Error).message || 'Unknown error';
+      this.logger.error(`SasaPay auth error: ${errorMessage}`);
+      throw new Error(`SasaPay authentication failed: ${errorMessage}`);
     }
   }
 
@@ -266,7 +267,7 @@ export class SasaPayService {
       return data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
-        const errorData = error.response.data;
+        const errorData = error.response.data as Record<string, any>;
         this.logger.error(
           `C2B request failed [${error.response.status}]: ${JSON.stringify(errorData)}`,
         );
@@ -277,10 +278,11 @@ export class SasaPayService {
         };
       }
 
-      this.logger.error(`C2B request error: ${error.message}`);
+      const errorMessage = (error as Error).message || 'Unknown error';
+      this.logger.error(`C2B request error: ${errorMessage}`);
       return {
         status: false,
-        detail: `Payment request failed: ${error.message}`,
+        detail: `Payment request failed: ${errorMessage}`,
       };
     }
   }
@@ -333,7 +335,7 @@ export class SasaPayService {
       return data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
-        const errorData = error.response.data;
+        const errorData = error.response.data as Record<string, any>;
         this.logger.error(
           `B2C request failed [${error.response.status}]: ${JSON.stringify(errorData)}`,
         );
@@ -346,10 +348,11 @@ export class SasaPayService {
         };
       }
 
-      this.logger.error(`B2C request error: ${error.message}`);
+      const errorMessage = (error as Error).message || 'Unknown error';
+      this.logger.error(`B2C request error: ${errorMessage}`);
       return {
         status: false,
-        detail: `Disbursal request failed: ${error.message}`,
+        detail: `Disbursal request failed: ${errorMessage}`,
       };
     }
   }
