@@ -118,17 +118,6 @@ export class SasaPayService {
         'https://api.menodao.org';
     }
 
-    this.logger.log(`SasaPay config diagnostic:
-      NODE_ENV: ${this.configService.get('NODE_ENV')}
-      isDevEnvironment: ${this.isDevEnvironment}
-      SASAPAY_CLIENT_ID: ${this.clientId ? 'Set (len:' + this.clientId.length + ')' : 'MISSING'}
-      SASAPAY_CLIENT_SECRET: ${this.clientSecret ? 'Set (len:' + this.clientSecret.length + ')' : 'MISSING'}
-      SASAPAY_MERCHANT_CODE: ${this.merchantCode ? 'Set (' + this.merchantCode + ')' : 'MISSING'}
-      SASAPAY_BASE_URL: ${this.baseUrl}
-      SASAPAY_NETWORK_CODE: ${this.networkCode}
-      callbackBaseUrl: ${this.callbackBaseUrl}
-    `);
-
     if (!this.isConfigured()) {
       this.logger.warn(
         'SasaPay is NOT fully configured. C2B/B2C features will be DISABLED or run in MOCK mode.',
