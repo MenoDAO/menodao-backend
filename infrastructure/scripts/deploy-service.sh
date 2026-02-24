@@ -159,7 +159,15 @@ cat > /tmp/task-definition.json <<EOF
                 {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_USERNAME::"},
                 {"name": "SASAPAY_CLIENT_ID", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_ID::"},
                 {"name": "SASAPAY_CLIENT_SECRET", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_SECRET::"},
-                {"name": "SASAPAY_MERCHANT_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_MERCHANT_CODE::"}
+                {"name": "SASAPAY_MERCHANT_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_MERCHANT_CODE::"},
+                {"name": "SASAPAY_BASE_URL", "valueFrom": "${SECRETS_ARN}:SASAPAY_BASE_URL::"},
+                {"name": "SASAPAY_NETWORK_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_NETWORK_CODE::"},
+                {"name": "API_BASE_URL", "valueFrom": "${SECRETS_ARN}:API_BASE_URL::"},
+                {"name": "API_BASE_URL_DEV", "valueFrom": "${SECRETS_ARN}:API_BASE_URL_DEV::"},
+                {"name": "DB_HOST", "valueFrom": "${SECRETS_ARN}:DB_HOST::"},
+                {"name": "DB_NAME", "valueFrom": "${SECRETS_ARN}:DB_NAME::"},
+                {"name": "DB_USER", "valueFrom": "${SECRETS_ARN}:DB_USER::"},
+                {"name": "DB_PASSWORD", "valueFrom": "${SECRETS_ARN}:DB_PASSWORD::"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",

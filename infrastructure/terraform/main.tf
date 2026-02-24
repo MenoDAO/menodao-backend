@@ -409,6 +409,17 @@ resource "aws_secretsmanager_secret_version" "app" {
     PRIVATE_KEY        = var.blockchain_private_key
     SMS_API_KEY        = var.sms_api_key
     SMS_USERNAME       = var.sms_username
+    SASAPAY_CLIENT_ID     = ""
+    SASAPAY_CLIENT_SECRET = ""
+    SASAPAY_MERCHANT_CODE = ""
+    SASAPAY_BASE_URL      = "https://api.sasapay.app"
+    SASAPAY_NETWORK_CODE  = "63902"
+    API_BASE_URL          = "https://api.menodao.org"
+    API_BASE_URL_DEV      = "https://dev-api.menodao.org"
+    DB_HOST               = aws_db_instance.main.address
+    DB_NAME               = aws_db_instance.main.db_name
+    DB_USER               = aws_db_instance.main.username
+    DB_PASSWORD           = var.db_password
   })
 }
 
@@ -450,6 +461,14 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "SASAPAY_CLIENT_ID", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_CLIENT_ID::" }
         { name = "SASAPAY_CLIENT_SECRET", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_CLIENT_SECRET::" }
         { name = "SASAPAY_MERCHANT_CODE", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_MERCHANT_CODE::" }
+        { name = "SASAPAY_BASE_URL", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_BASE_URL::" }
+        { name = "SASAPAY_NETWORK_CODE", valueFrom = "${aws_secretsmanager_secret.app.arn}:SASAPAY_NETWORK_CODE::" }
+        { name = "API_BASE_URL", valueFrom = "${aws_secretsmanager_secret.app.arn}:API_BASE_URL::" }
+        { name = "API_BASE_URL_DEV", valueFrom = "${aws_secretsmanager_secret.app.arn}:API_BASE_URL_DEV::" }
+        { name = "DB_HOST", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_HOST::" }
+        { name = "DB_NAME", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_NAME::" }
+        { name = "DB_USER", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_USER::" }
+        { name = "DB_PASSWORD", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_PASSWORD::" }
       ]
       
       logConfiguration = {
