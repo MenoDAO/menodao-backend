@@ -127,6 +127,12 @@ fi
 # Get secrets ARN
 SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_PREFIX}/app"
 
+# Determine NODE_ENV
+NODE_ENV_VAL="development"
+if [ "$ENV" == "prod" ]; then
+    NODE_ENV_VAL="production"
+fi
+
 # Create task definition
 echo "📝 Creating task definition..."
 
@@ -146,14 +152,14 @@ cat > /tmp/task-definition.json <<EOF
             "essential": true,
             "portMappings": [
                 {
-                    "containerPort": 3001,
-                    "hostPort": 3001,
+                    "containerPort": 3000,
+                    "hostPort": 3000,
                     "protocol": "tcp"
                 }
             ],
             "environment": [
-                {"name": "NODE_ENV", "value": "${ENV == 'prod' ? 'production' : 'development'}"},
-                {"name": "PORT", "value": "3001"}
+                {"name": "NODE_ENV", "value": "${NODE_ENV_VAL}"},
+                {"name": "PORT", "value": "3000"}
             ],
             "secrets": [
                 {"name": "DATABASE_URL", "valueFrom": "${SECRETS_ARN}:DATABASE_URL::"},
@@ -183,7 +189,7 @@ cat > /tmp/task-definition.json <<EOF
                 }
             },
             "healthCheck": {
-                "command": ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1"],
+                "command": ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"],
                 "interval": 30,
                 "timeout": 5,
                 "retries": 3,
@@ -194,12 +200,6 @@ cat > /tmp/task-definition.json <<EOF
 }
 EOF
 
-# Fix the environment value in the JSON
-if [ "$ENV" == "prod" ]; then
-    sed -i 's/\${ENV == '\''prod'\'' ? '\''production'\'' : '\''development'\''}/production/g' /tmp/task-definition.json
-else
-    sed -i 's/\${ENV == '\''prod'\'' ? '\''production'\'' : '\''development'\''}/development/g' /tmp/task-definition.json
-fi
 
 TASK_DEF_ARN=$(aws ecs register-task-definition \
     --cli-input-json file:///tmp/task-definition.json \
