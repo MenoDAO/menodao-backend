@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import axios from 'axios';
+import {
+  SasaPayService,
+  SasaPayC2BCallbackData,
+} from '../sasapay/sasapay.service';
 import * as crypto from 'crypto';
 
 export interface PaymentResult {
@@ -9,29 +12,26 @@ export interface PaymentResult {
   transactionId?: string;
   reference?: string;
   checkoutRequestId?: string;
+  merchantRequestId?: string;
   error?: string;
 }
 
-export interface PaymentCallbackData {
-  MerchantRequestID?: string;
-  CheckoutRequestID?: string;
-  ResultCode?: string;
-  ResultDesc?: string;
-  TransAmount?: string;
-  Paid?: boolean;
-  CustomerMobile?: string;
-  TransactionCode?: string;
-}
+// Re-export SasaPay callback type for backward compatibility
+export type PaymentCallbackData = SasaPayC2BCallbackData;
 
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
-  private readonly baseUrl = 'https://payments.riftfi.xyz';
+  private readonly isDevEnvironment: boolean;
 
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
-  ) {}
+    private sasaPayService: SasaPayService,
+  ) {
+    this.isDevEnvironment =
+      this.configService.get('NODE_ENV') === 'development';
+  }
 
   /**
    * Generate unique transaction reference with menodao_ prefix
@@ -43,43 +43,7 @@ export class PaymentService {
   }
 
   /**
-   * Normalize phone number to Kenyan format (254XXXXXXXXX)
-   */
-  private normalizePhoneNumber(phone: string): string {
-    let normalized = phone.replace(/[\s\-\(\)\+]/g, '');
-    if (normalized.startsWith('0')) {
-      normalized = '254' + normalized.substring(1);
-    }
-    if (!normalized.startsWith('254')) {
-      normalized = '254' + normalized;
-    }
-    return normalized;
-  }
-
-  /**
-   * Generate RSA signature for Rift Fiat Wallet API
-   */
-  private generateSignature(
-    method: string,
-    url: string,
-    timestamp: string,
-    nonce: string,
-    merchantCode: string,
-    body: string,
-    privateKey: string,
-  ): string {
-    const normalizedKey = privateKey.replace(/\\n/g, '\n');
-    const signatureString = `${method}\n${url}\n${timestamp}\n${nonce}\n${merchantCode}\n${body}\n`;
-
-    const sign = crypto.createSign('SHA256');
-    sign.update(signatureString);
-    sign.end();
-
-    return sign.sign(normalizedKey, 'base64');
-  }
-
-  /**
-   * Initiate M-Pesa STK Push via Rift Fiat Wallet
+   * Initiate M-Pesa STK Push via SasaPay C2B API
    */
   async initiateSTKPush(
     memberId: string,
@@ -88,14 +52,14 @@ export class PaymentService {
     contributionId: string,
     description: string = 'MenoDAO Contribution',
   ): Promise<PaymentResult> {
-    const merchantCode = this.configService.get<string>('RIFT_MERCHANT_CODE');
-    const privateKey = this.configService.get<string>('RIFT_PRIVATE_KEY');
-    const apiBaseUrl =
-      this.configService.get<string>('API_BASE_URL') ||
-      'https://api.menodao.org';
+    // In dev environment without SasaPay configured, use mock payment
+    if (this.isDevEnvironment && !this.sasaPayService.isConfigured()) {
+      this.logger.warn('[DEV] SasaPay not configured — using mock STK push');
+      return this.mockSTKPush(contributionId, phoneNumber, amount);
+    }
 
-    if (!merchantCode || !privateKey) {
-      this.logger.error('Rift merchant credentials not configured');
+    if (!this.sasaPayService.isConfigured()) {
+      this.logger.error('SasaPay is not configured');
       return {
         success: false,
         error: 'Payment service not configured. Please contact support.',
@@ -103,77 +67,44 @@ export class PaymentService {
     }
 
     try {
-      const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
       const transactionRef = this.generateTransactionRef();
-      const timestamp = Date.now().toString();
-      const nonce = crypto.randomBytes(16).toString('hex');
-
-      const callbackUrl = `${apiBaseUrl}/contributions/callback`;
-      const validationUrl = `${apiBaseUrl}/contributions/validation`;
-
-      const requestBody = {
-        phone_number: normalizedPhone,
-        amount: Math.round(amount),
-        currency: 'KES',
-        description: `${description} - ${transactionRef}`,
-        network: 'Safaricom',
-        callback_url: callbackUrl,
-        validation_url: validationUrl,
-        account_reference: transactionRef,
-      };
-
-      const bodyString = JSON.stringify(requestBody);
-      const url = '/v1/c2b/collect';
-
-      const signature = this.generateSignature(
-        'POST',
-        url,
-        timestamp,
-        nonce,
-        merchantCode,
-        bodyString,
-        privateKey,
-      );
+      const normalizedPhone =
+        this.sasaPayService.normalizePhoneNumber(phoneNumber);
 
       this.logger.log(
-        `Initiating STK Push for ${normalizedPhone}, amount: ${amount}`,
+        `Initiating SasaPay STK Push for ${normalizedPhone}, amount: ${amount}, ref: ${transactionRef}`,
       );
 
-      const response = await axios.post(`${this.baseUrl}${url}`, bodyString, {
-        headers: {
-          'Content-Type': 'application/json',
-          'R-Merchant-Code': merchantCode,
-          'R-Signature': signature,
-          'R-Timestamp': timestamp,
-          'R-Nonce-Str': nonce,
-        },
-        transformRequest: [(data) => data],
-      });
+      const response = await this.sasaPayService.requestPayment(
+        phoneNumber,
+        amount,
+        transactionRef,
+        `${description} - ${transactionRef}`,
+      );
 
-      const riftResponse = response.data;
+      if (response.status) {
+        const checkoutRequestId = response.CheckoutRequestID;
+        const merchantRequestId = response.MerchantRequestID;
 
-      if (riftResponse.success) {
-        const checkoutRequestId =
-          riftResponse.checkout_request_id || riftResponse.CheckoutRequestID;
-        const transactionCode =
-          riftResponse.transaction_code || riftResponse.MerchantRequestID;
-
-        // Update contribution with payment reference
+        // Update contribution with payment reference and SasaPay IDs
         await this.prisma.contribution.update({
           where: { id: contributionId },
           data: {
             paymentRef: transactionRef,
             metadata: {
               checkoutRequestId,
-              transactionCode,
+              merchantRequestId,
               phoneNumber: normalizedPhone,
               initiatedAt: new Date().toISOString(),
+              provider: 'sasapay',
+              responseCode: response.ResponseCode,
+              customerMessage: response.CustomerMessage,
             },
           },
         });
 
         this.logger.log(
-          `STK Push initiated successfully. Ref: ${transactionRef}`,
+          `SasaPay STK Push initiated. Ref: ${transactionRef}, CheckoutRequestID: ${checkoutRequestId}`,
         );
 
         return {
@@ -181,22 +112,18 @@ export class PaymentService {
           transactionId: contributionId,
           reference: transactionRef,
           checkoutRequestId,
+          merchantRequestId,
         };
       } else {
-        this.logger.error(`STK Push failed: ${riftResponse.message}`);
+        this.logger.error(`SasaPay STK Push failed: ${response.detail}`);
         return {
           success: false,
-          error: riftResponse.message || 'Payment initiation failed',
+          error: response.detail || 'Payment initiation failed',
         };
       }
     } catch (error) {
-      this.logger.error(`STK Push error: ${error.message}`);
-      if (axios.isAxiosError(error) && error.response) {
-        return {
-          success: false,
-          error: error.response.data?.message || 'Payment service error',
-        };
-      }
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`STK Push error: ${errMsg}`);
       return {
         success: false,
         error: 'Failed to initiate payment. Please try again.',
@@ -205,34 +132,69 @@ export class PaymentService {
   }
 
   /**
-   * Validate incoming payment (called by payment provider before processing)
+   * [DEV ONLY] Mock STK push for testing without SasaPay credentials
+   */
+  private async mockSTKPush(
+    contributionId: string,
+    phoneNumber: string,
+    amount: number,
+  ): Promise<PaymentResult> {
+    const transactionRef = this.generateTransactionRef();
+    const mockCheckoutId = `MOCK_CHECKOUT_${Date.now()}`;
+    const mockMerchantId = `MOCK_MERCHANT_${Date.now()}`;
+
+    await this.prisma.contribution.update({
+      where: { id: contributionId },
+      data: {
+        paymentRef: transactionRef,
+        metadata: {
+          checkoutRequestId: mockCheckoutId,
+          merchantRequestId: mockMerchantId,
+          phoneNumber,
+          amount,
+          initiatedAt: new Date().toISOString(),
+          provider: 'mock',
+        },
+      },
+    });
+
+    this.logger.warn(`[DEV] Mock STK Push: ref=${transactionRef}`);
+
+    return {
+      success: true,
+      transactionId: contributionId,
+      reference: transactionRef,
+      checkoutRequestId: mockCheckoutId,
+      merchantRequestId: mockMerchantId,
+    };
+  }
+
+  /**
+   * Validate incoming payment (called by SasaPay before processing)
    */
   async validatePayment(
     data: PaymentCallbackData,
   ): Promise<{ valid: boolean; message: string }> {
     try {
-      const { MerchantRequestID, CheckoutRequestID, TransAmount } = data;
+      const { CheckoutRequestID, MerchantRequestID } = data;
 
       this.logger.log(
-        `Validating payment: ${MerchantRequestID || CheckoutRequestID}`,
+        `Validating payment: CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}`,
       );
 
-      // Find the contribution by checkout request ID or transaction code
-      const contribution = await this.prisma.contribution.findFirst({
-        where: {
-          OR: [{ paymentRef: { startsWith: 'menodao_' } }],
-          status: 'PENDING',
-        },
-      });
+      // Find the contribution by checkoutRequestId stored in metadata
+      const contribution = await this.findContributionByCallback(data);
 
       if (!contribution) {
-        this.logger.warn('No pending contribution found for validation');
+        this.logger.warn(
+          `No pending contribution found for CheckoutRequestID=${CheckoutRequestID}`,
+        );
         return { valid: false, message: 'Transaction not found' };
       }
 
       // Validate amount matches
       const expectedAmount = contribution.amount;
-      const receivedAmount = parseFloat(TransAmount || '0');
+      const receivedAmount = data.Amount || 0;
 
       if (Math.abs(expectedAmount - receivedAmount) > 1) {
         this.logger.warn(
@@ -243,45 +205,44 @@ export class PaymentService {
 
       return { valid: true, message: 'Validation successful' };
     } catch (error) {
-      this.logger.error(`Validation error: ${error.message}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Validation error: ${errMsg}`);
       return { valid: false, message: 'Validation failed' };
     }
   }
 
   /**
-   * Process payment callback (confirmation from payment provider)
+   * Process payment callback (confirmation from SasaPay)
    */
   async processCallback(
     data: PaymentCallbackData,
   ): Promise<{ success: boolean; message: string }> {
     try {
+      this.logger.log(`Processing SasaPay callback: ${JSON.stringify(data)}`);
+
       const {
-        MerchantRequestID,
         CheckoutRequestID,
+        MerchantRequestID,
         ResultCode,
-        Paid,
-        TransAmount,
-        CustomerMobile,
-        TransactionCode,
+        ResultDesc,
+        Amount,
+        MpesaReceiptNumber,
+        PhoneNumber,
+        TransactionDate,
       } = data;
 
-      this.logger.log(`Processing callback: ${JSON.stringify(data)}`);
-
-      // Find contribution by metadata
-      const contribution = await this.prisma.contribution.findFirst({
-        where: {
-          paymentRef: { startsWith: 'menodao_' },
-          status: 'PENDING',
-        },
-        include: { member: true },
-      });
+      // Find contribution by SasaPay callback identifiers
+      const contribution = await this.findContributionByCallback(data);
 
       if (!contribution) {
-        this.logger.warn('No pending contribution found for callback');
+        this.logger.warn(
+          `No pending contribution found for callback: CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}`,
+        );
         return { success: false, message: 'Transaction not found' };
       }
 
-      const isSuccess = ResultCode === '0' && Paid === true;
+      // SasaPay: ResultCode '0' means success
+      const isSuccess = ResultCode === '0';
 
       if (isSuccess) {
         // Update contribution to completed
@@ -291,16 +252,20 @@ export class PaymentService {
             status: 'COMPLETED',
             metadata: {
               ...((contribution.metadata as object) || {}),
-              transactionCode: TransactionCode,
-              customerMobile: CustomerMobile,
+              mpesaReceiptNumber: MpesaReceiptNumber,
+              transactionCode: MpesaReceiptNumber, // Backward compat
+              customerMobile: PhoneNumber,
+              transactionDate: TransactionDate,
               completedAt: new Date().toISOString(),
               resultCode: ResultCode,
+              resultDesc: ResultDesc,
+              confirmedAmount: Amount,
             },
           },
         });
 
         this.logger.log(
-          `Payment completed for contribution ${contribution.id}`,
+          `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
         return { success: true, message: 'Payment processed successfully' };
       } else {
@@ -313,20 +278,73 @@ export class PaymentService {
               ...((contribution.metadata as object) || {}),
               failedAt: new Date().toISOString(),
               resultCode: ResultCode,
-              resultDesc: data.ResultDesc,
+              resultDesc: ResultDesc,
             },
           },
         });
 
         this.logger.warn(
-          `Payment failed for contribution ${contribution.id}: ${data.ResultDesc}`,
+          `Payment failed for contribution ${contribution.id}: ${ResultDesc}`,
         );
         return { success: true, message: 'Payment failure recorded' };
       }
     } catch (error) {
-      this.logger.error(`Callback processing error: ${error.message}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Callback processing error: ${errMsg}`);
       return { success: false, message: 'Callback processing failed' };
     }
+  }
+
+  /**
+   * Find contribution by SasaPay callback identifiers
+   * Matches CheckoutRequestID or MerchantRequestID stored in metadata
+   */
+  private async findContributionByCallback(data: PaymentCallbackData) {
+    const { CheckoutRequestID, MerchantRequestID } = data;
+
+    // Try to find by CheckoutRequestID in metadata first (most reliable)
+    if (CheckoutRequestID) {
+      const contribution = await this.prisma.contribution.findFirst({
+        where: {
+          status: 'PENDING',
+          metadata: {
+            path: ['checkoutRequestId'],
+            equals: CheckoutRequestID,
+          },
+        },
+        include: { member: true },
+      });
+
+      if (contribution) return contribution;
+    }
+
+    // Fallback: find by MerchantRequestID in metadata
+    if (MerchantRequestID) {
+      const contribution = await this.prisma.contribution.findFirst({
+        where: {
+          status: 'PENDING',
+          metadata: {
+            path: ['merchantRequestId'],
+            equals: MerchantRequestID,
+          },
+        },
+        include: { member: true },
+      });
+
+      if (contribution) return contribution;
+    }
+
+    // Last resort: find most recent pending contribution with menodao_ ref
+    const contribution = await this.prisma.contribution.findFirst({
+      where: {
+        paymentRef: { startsWith: 'menodao_' },
+        status: 'PENDING',
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { member: true },
+    });
+
+    return contribution;
   }
 
   /**
@@ -346,11 +364,13 @@ export class PaymentService {
 
     const metadata = contribution.metadata as {
       transactionCode?: string;
+      mpesaReceiptNumber?: string;
     } | null;
 
     return {
       status: contribution.status,
-      transactionCode: metadata?.transactionCode,
+      transactionCode:
+        metadata?.mpesaReceiptNumber || metadata?.transactionCode,
     };
   }
 }

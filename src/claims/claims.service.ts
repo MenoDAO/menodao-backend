@@ -2,10 +2,17 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import {
+  SasaPayService,
+  SasaPayB2CCallbackData,
+} from '../sasapay/sasapay.service';
 import { ClaimType, ClaimStatus } from '@prisma/client';
+import * as crypto from 'crypto';
 
 // Claim limits by tier (per year)
 const CLAIM_LIMITS = {
@@ -16,10 +23,18 @@ const CLAIM_LIMITS = {
 
 @Injectable()
 export class ClaimsService {
+  private readonly logger = new Logger(ClaimsService.name);
+  private readonly isDevEnvironment: boolean;
+
   constructor(
     private prisma: PrismaService,
     private blockchainService: BlockchainService,
-  ) {}
+    private sasaPayService: SasaPayService,
+    private configService: ConfigService,
+  ) {
+    this.isDevEnvironment =
+      this.configService.get('NODE_ENV') === 'development';
+  }
 
   async createClaim(
     memberId: string,
@@ -80,7 +95,7 @@ export class ClaimsService {
   }
 
   /**
-   * Approve a pending claim — validates limits, updates status, then triggers mock disbursal
+   * Approve a pending claim — validates limits, updates status, then triggers disbursal
    */
   async approveClaim(claimId: string) {
     const claim = await this.prisma.claim.findUnique({
@@ -136,7 +151,7 @@ export class ClaimsService {
       include: { member: true },
     });
 
-    // Trigger mock disbursal automatically
+    // Trigger disbursal automatically
     await this.processDisbursement(claimId);
 
     return approved;
@@ -176,7 +191,8 @@ export class ClaimsService {
   }
 
   /**
-   * Process mock disbursal — placeholder for real fiat payment integration
+   * Process disbursal via SasaPay B2C API
+   * Falls back to mock disbursal in dev environment if SasaPay is not configured
    */
   async processDisbursement(claimId: string) {
     const claim = await this.prisma.claim.findUnique({
@@ -197,19 +213,209 @@ export class ClaimsService {
       );
     }
 
+    // Generate unique disbursal reference
+    const disbursalRef = `menodao_claim_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+
     // Update status to processing
     await this.prisma.claim.update({
       where: { id: claimId },
-      data: { status: ClaimStatus.PROCESSING },
+      data: {
+        status: ClaimStatus.PROCESSING,
+        txHash: disbursalRef, // Store ref temporarily as txHash
+      },
     });
 
-    // --- MOCK DISBURSAL ---
-    // TODO: Replace with actual fiat payment API (M-Pesa B2C, bank transfer, etc.)
-    // For now, simulate a successful payment with a mock transaction hash
+    // Use mock disbursal if SasaPay is not configured (dev environment)
+    if (!this.sasaPayService.isConfigured()) {
+      if (this.isDevEnvironment) {
+        this.logger.warn(
+          `[DEV] SasaPay not configured — using mock disbursal for claim ${claimId}`,
+        );
+        return this.mockDisbursement(claimId, disbursalRef);
+      } else {
+        this.logger.error(
+          'SasaPay not configured — cannot process disbursal in production',
+        );
+        throw new BadRequestException(
+          'Payment service not configured. Please contact support.',
+        );
+      }
+    }
+
+    // Initiate SasaPay B2C disbursal
+    try {
+      const memberPhone = claim.member.phoneNumber;
+      if (!memberPhone) {
+        throw new BadRequestException(
+          'Member phone number is required for disbursal',
+        );
+      }
+
+      this.logger.log(
+        `Initiating SasaPay B2C disbursal: claim=${claimId}, amount=${claim.amount}, phone=${memberPhone}, ref=${disbursalRef}`,
+      );
+
+      const response = await this.sasaPayService.sendMoney(
+        memberPhone,
+        claim.amount,
+        disbursalRef,
+        `MenoDAO Claim Disbursal - ${claim.claimType}`,
+      );
+
+      if (response.status) {
+        // Store SasaPay response IDs in metadata for callback matching
+        await this.prisma.claim.update({
+          where: { id: claimId },
+          data: {
+            txHash: disbursalRef,
+          },
+        });
+
+        this.logger.log(
+          `B2C disbursal initiated for claim ${claimId}: MerchantRequestID=${response.MerchantRequestID}`,
+        );
+
+        return {
+          success: true,
+          claimId,
+          disbursalRef,
+          merchantRequestId: response.MerchantRequestID,
+          message: 'Disbursal initiated — will be confirmed via callback',
+        };
+      } else {
+        // Revert to approved status on failure
+        await this.prisma.claim.update({
+          where: { id: claimId },
+          data: {
+            status: ClaimStatus.APPROVED,
+            txHash: null,
+          },
+        });
+
+        this.logger.error(
+          `B2C disbursal failed for claim ${claimId}: ${response.detail}`,
+        );
+        throw new BadRequestException(`Disbursal failed: ${response.detail}`);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+
+      // Revert to approved on unexpected error
+      await this.prisma.claim.update({
+        where: { id: claimId },
+        data: {
+          status: ClaimStatus.APPROVED,
+          txHash: null,
+        },
+      });
+
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`B2C disbursal error for claim ${claimId}: ${errMsg}`);
+      throw new BadRequestException(
+        'Disbursal failed. Please try again later.',
+      );
+    }
+  }
+
+  /**
+   * Handle B2C disbursal callback from SasaPay
+   * On success: marks claim as DISBURSED
+   */
+  async handleDisbursalCallback(
+    data: SasaPayB2CCallbackData,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      this.logger.log(
+        `Processing B2C disbursal callback: ${JSON.stringify(data)}`,
+      );
+
+      const { ResultCode, ResultDesc, MpesaReceiptNumber, Amount } = data;
+
+      // Find the processing claim by txHash (disbursal reference)
+      const claim = await this.findClaimByCallback();
+
+      if (!claim) {
+        this.logger.warn(
+          `No processing claim found for B2C callback: ${JSON.stringify(data)}`,
+        );
+        return { success: false, message: 'Claim not found' };
+      }
+
+      // SasaPay: ResultCode '0' means success
+      const isSuccess = ResultCode === '0';
+
+      if (isSuccess) {
+        // Mark claim as disbursed
+        await this.prisma.claim.update({
+          where: { id: claim.id },
+          data: {
+            status: ClaimStatus.DISBURSED,
+            txHash: MpesaReceiptNumber || claim.txHash,
+            processedAt: new Date(),
+          },
+        });
+
+        this.logger.log(
+          `Claim ${claim.id} disbursed successfully. M-Pesa receipt: ${MpesaReceiptNumber}, amount: ${Amount}`,
+        );
+
+        return {
+          success: true,
+          message: 'Disbursal confirmed successfully',
+        };
+      } else {
+        // Revert claim to approved on disbursal failure
+        await this.prisma.claim.update({
+          where: { id: claim.id },
+          data: {
+            status: ClaimStatus.APPROVED,
+            txHash: null,
+          },
+        });
+
+        this.logger.warn(
+          `Disbursal failed for claim ${claim.id}: ${ResultDesc}`,
+        );
+
+        return {
+          success: true,
+          message: `Disbursal failure recorded: ${ResultDesc}`,
+        };
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Disbursal callback error: ${errMsg}`);
+      return {
+        success: false,
+        message: 'Disbursal callback processing failed',
+      };
+    }
+  }
+
+  /**
+   * Find claim by B2C callback data
+   */
+  private async findClaimByCallback() {
+    // Find claim in PROCESSING status (most recent)
+    const claim = await this.prisma.claim.findFirst({
+      where: {
+        status: ClaimStatus.PROCESSING,
+        txHash: { startsWith: 'menodao_claim_' },
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: { member: true },
+    });
+
+    return claim;
+  }
+
+  /**
+   * [DEV ONLY] Mock disbursal for testing
+   */
+  private async mockDisbursement(claimId: string, disbursalRef: string) {
     const mockTxHash = `MOCK_DISBURSEMENT_${Date.now()}_${claimId.slice(-6)}`;
 
-    // Update claim as disbursed
-    return this.prisma.claim.update({
+    await this.prisma.claim.update({
       where: { id: claimId },
       data: {
         status: ClaimStatus.DISBURSED,
@@ -217,6 +423,16 @@ export class ClaimsService {
         processedAt: new Date(),
       },
     });
+
+    this.logger.warn(`[DEV] Mock disbursal completed: ${mockTxHash}`);
+
+    return {
+      success: true,
+      claimId,
+      disbursalRef,
+      txHash: mockTxHash,
+      message: '[DEV] Mock disbursal completed',
+    };
   }
 
   async getMemberClaims(memberId: string) {

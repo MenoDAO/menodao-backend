@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClaimsService } from './claims.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { SasaPayService } from '../sasapay/sasapay.service';
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('ClaimsService', () => {
@@ -16,6 +18,7 @@ describe('ClaimsService', () => {
     claim: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -25,12 +28,27 @@ describe('ClaimsService', () => {
     processDisbursement: jest.fn(),
   };
 
+  const mockSasaPayService = {
+    isConfigured: jest.fn().mockReturnValue(false),
+    sendMoney: jest.fn(),
+    normalizePhoneNumber: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'NODE_ENV') return 'development';
+      return undefined;
+    }),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ClaimsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: BlockchainService, useValue: mockBlockchainService },
+        { provide: SasaPayService, useValue: mockSasaPayService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 

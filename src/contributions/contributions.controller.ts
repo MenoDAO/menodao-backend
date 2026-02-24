@@ -12,20 +12,29 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { ContributionsService } from './contributions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
+import { ClaimsService } from '../claims/claims.service';
+import {
+  SasaPayC2BCallbackData,
+  SasaPayB2CCallbackData,
+} from '../sasapay/sasapay.service';
 
 @ApiTags('Contributions')
 @Controller('contributions')
 export class ContributionsController {
   private readonly logger = new Logger(ContributionsController.name);
 
-  constructor(private contributionsService: ContributionsService) {}
+  constructor(
+    private contributionsService: ContributionsService,
+    private claimsService: ClaimsService,
+  ) {}
 
   @Get('summary')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get contribution summary for current member' })
-  async getSummary(@Request() req) {
-    return this.contributionsService.getSummary(req.user.id);
+  async getSummary(@Request() req: any) {
+    const user = req.user as { id: string };
+    return this.contributionsService.getSummary(user.id);
   }
 
   @Post('pay')
@@ -47,9 +56,10 @@ export class ContributionsController {
       required: ['amount'],
     },
   })
-  async initiatePayment(@Request() req, @Body() dto: InitiatePaymentDto) {
+  async initiatePayment(@Request() req: any, @Body() dto: InitiatePaymentDto) {
+    const user = req.user as { id: string };
     return this.contributionsService.initiatePayment(
-      req.user.id,
+      user.id,
       dto.amount,
       'MPESA',
       dto.phoneNumber,
@@ -60,8 +70,9 @@ export class ContributionsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Check payment status for a contribution' })
-  async checkStatus(@Request() req, @Param('id') id: string) {
-    return this.contributionsService.checkPaymentStatus(id, req.user.id);
+  async checkStatus(@Request() req: any, @Param('id') id: string) {
+    const user = req.user as { id: string };
+    return this.contributionsService.checkPaymentStatus(id, user.id);
   }
 
   @Post('validation')
@@ -84,9 +95,33 @@ export class ContributionsController {
     summary: 'Payment confirmation callback (called by payment provider)',
   })
   async handleCallback(@Body() payload: any) {
-    this.logger.log('Callback request received');
-    const result =
-      await this.contributionsService.handlePaymentCallback(payload);
+    this.logger.log('SasaPay callback received');
+
+    // Distinguish between C2B (STK Push) and B2C/B2B (Disbursal)
+    // C2B usually has CustomerMobile or TransAmount
+    // B2C/B2B usually has RecipientAccountNumber or ReceiverPhoneNumber
+    const isB2C = !!(
+      payload.RecipientAccountNumber ||
+      payload.ReceiverPhoneNumber ||
+      payload.TransactionAmount
+    );
+
+    if (isB2C) {
+      this.logger.log('Routing to ClaimsService (B2C/B2B)');
+      const result = await this.claimsService.handleDisbursalCallback(
+        payload as SasaPayB2CCallbackData,
+      );
+      return {
+        ResultCode: result.success ? '0' : '1',
+        ResultDesc: result.message,
+      };
+    }
+
+    // Default to C2B
+    this.logger.log('Routing to ContributionsService (C2B)');
+    const result = await this.contributionsService.handlePaymentCallback(
+      payload as SasaPayC2BCallbackData,
+    );
 
     return {
       ResultCode: result.success ? '0' : '1',

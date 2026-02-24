@@ -7,6 +7,7 @@ import {
   UseGuards,
   Request,
   Query,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -24,6 +25,8 @@ import { ClaimStatus } from '@prisma/client';
 @ApiTags('Claims')
 @Controller('claims')
 export class ClaimsController {
+  private readonly logger = new Logger(ClaimsController.name);
+
   constructor(private claimsService: ClaimsService) {}
 
   @Get()
