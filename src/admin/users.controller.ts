@@ -7,13 +7,18 @@ import {
 } from '@nestjs/swagger';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { Delete } from '@nestjs/common';
 
 @ApiTags('Admin - Users')
 @Controller('admin/users')
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 export class UsersController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private subscriptionsService: SubscriptionsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all members with pagination' })
@@ -135,5 +140,11 @@ export class UsersController {
         nftCount: user.nfts.length,
       },
     };
+  }
+
+  @Delete(':id/subscription')
+  @ApiOperation({ summary: 'Delete a members subscription' })
+  async deleteSubscription(@Param('id') id: string) {
+    return this.subscriptionsService.removeSubscription(id);
   }
 }

@@ -403,4 +403,29 @@ export class SubscriptionsService {
       message: '[DEV] Subscription activated via mock payment',
     };
   }
+
+  /**
+   * Remove a subscription for a member
+   * Admin-only functionality
+   */
+  async removeSubscription(memberId: string) {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    await this.prisma.subscription.delete({
+      where: { memberId },
+    });
+
+    this.logger.log(`Subscription for member ${memberId} removed by admin`);
+
+    return {
+      success: true,
+      message: 'Subscription removed successfully',
+    };
+  }
 }

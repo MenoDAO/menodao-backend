@@ -10,11 +10,13 @@ import { UsersController } from './users.controller';
 import { PaymentsController } from './payments.controller';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
     PrismaModule,
     AnalyticsModule,
+    SubscriptionsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
