@@ -203,7 +203,7 @@ export class ContributionsService {
     const result = await this.paymentService.processCallback(payload);
 
     // If payment was successful, activate subscription and record on blockchain
-    if (result.success && payload.ResultCode === '0' && payload.Paid) {
+    if (result.success && payload.ResultCode === '0') {
       try {
         // Find the completed contribution
         const contribution = await this.prisma.contribution.findFirst({
