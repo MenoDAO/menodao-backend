@@ -116,8 +116,13 @@ echo "📍 Desired Count: $DESIRED_COUNT"
 echo ""
 
 # Get execution role ARN
-EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution"
-TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task"
+if [ "$ENV" == "prod" ]; then
+    EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution-production"
+    TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task-production"
+else
+    EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution-dev"
+    TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task-dev"
+fi
 
 # Get secrets ARN
 SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_PREFIX}/app"

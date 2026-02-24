@@ -118,6 +118,27 @@ export class SasaPayService {
         'https://api.menodao.org';
     }
 
+    // Securely log the status of each config key
+    const missingKeys: string[] = [];
+    if (!this.clientId) missingKeys.push('SASAPAY_CLIENT_ID');
+    if (!this.clientSecret) missingKeys.push('SASAPAY_CLIENT_SECRET');
+    if (!this.merchantCode) missingKeys.push('SASAPAY_MERCHANT_CODE');
+
+    if (missingKeys.length > 0) {
+      this.logger.warn(
+        `SasaPay is MISSING required keys: ${missingKeys.join(', ')}`,
+      );
+      // Log available SASAPAY_ environment variables (just the names)
+      const envKeys = Object.keys(process.env).filter((k) =>
+        k.startsWith('SASAPAY_'),
+      );
+      this.logger.log(
+        `Available SASAPAY environment keys: ${envKeys.join(', ')}`,
+      );
+    } else {
+      this.logger.log('SasaPay is fully configured with all required keys');
+    }
+
     if (!this.isConfigured()) {
       this.logger.warn(
         'SasaPay is NOT fully configured. C2B/B2C features will be DISABLED or run in MOCK mode.',
