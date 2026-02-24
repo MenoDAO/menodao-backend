@@ -11,4 +11,9 @@ export class UpdateMemberDto {
   @IsString()
   @IsOptional()
   location?: string;
+
+  @ApiPropertyOptional({ example: 'celo', enum: ['celo', 'base', 'polygon'] })
+  @IsString()
+  @IsOptional()
+  preferredChain?: string;
 }

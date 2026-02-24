@@ -225,9 +225,6 @@ export class BlockchainService {
     tier: PackageTier,
     chainId?: ChainId,
   ): Promise<string> {
-    const targetChain = chainId || this.defaultChain;
-    const chain = this.getChain(targetChain);
-
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
     });
@@ -235,6 +232,10 @@ export class BlockchainService {
     if (!member) {
       throw new Error('Member not found');
     }
+
+    const targetChain =
+      chainId || (member.preferredChain as ChainId) || this.defaultChain;
+    const chain = this.getChain(targetChain);
 
     // Get or create custodial wallet
     const walletAddress = await this.getOrCreateWallet(memberId);
@@ -463,9 +464,6 @@ export class BlockchainService {
     amountKES: number,
     chainId?: ChainId,
   ): Promise<string> {
-    const targetChain = chainId || this.defaultChain;
-    const chain = this.getChain(targetChain);
-
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
     });
@@ -473,6 +471,10 @@ export class BlockchainService {
     if (!member) {
       throw new Error('Member not found');
     }
+
+    const targetChain =
+      chainId || (member.preferredChain as ChainId) || this.defaultChain;
+    const chain = this.getChain(targetChain);
 
     const walletAddress =
       member.walletAddress || (await this.getOrCreateWallet(memberId));
@@ -537,9 +539,6 @@ export class BlockchainService {
     claimId: string,
     chainId?: ChainId,
   ): Promise<string> {
-    const targetChain = chainId || this.defaultChain;
-    const chain = this.getChain(targetChain);
-
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
     });
@@ -547,6 +546,10 @@ export class BlockchainService {
     if (!member) {
       throw new Error('Member not found');
     }
+
+    const targetChain =
+      chainId || (member.preferredChain as ChainId) || this.defaultChain;
+    const chain = this.getChain(targetChain);
 
     const walletAddress =
       member.walletAddress || (await this.getOrCreateWallet(memberId));
@@ -636,5 +639,19 @@ export class BlockchainService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Set preferred chain for a member
+   */
+  async setPreferredChain(memberId: string, chainId: ChainId) {
+    if (!CHAIN_CONFIGS[chainId]) {
+      throw new Error(`Chain ${chainId} is not supported`);
+    }
+
+    return this.prisma.member.update({
+      where: { id: memberId },
+      data: { preferredChain: chainId },
+    });
   }
 }
