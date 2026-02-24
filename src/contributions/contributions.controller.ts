@@ -100,10 +100,11 @@ export class ContributionsController {
     // Distinguish between C2B (STK Push) and B2C/B2B (Disbursal)
     // C2B usually has CustomerMobile or TransAmount
     // B2C/B2B usually has RecipientAccountNumber or ReceiverPhoneNumber
+    const body = payload as Record<string, any>;
     const isB2C = !!(
-      payload.RecipientAccountNumber ||
-      payload.ReceiverPhoneNumber ||
-      payload.TransactionAmount
+      body.RecipientAccountNumber ||
+      body.ReceiverPhoneNumber ||
+      body.TransactionAmount
     );
 
     if (isB2C) {
