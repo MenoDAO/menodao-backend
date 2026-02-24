@@ -83,7 +83,7 @@ else
     CPU="256"
     MEMORY="512"
     DESIRED_COUNT="${SCALE:-1}"
-    LOG_GROUP="/ecs/menodao-api-dev"
+    LOG_GROUP="/ecs/menodao-api"
     SECRETS_ARN_NAME="menodao/api-stg/secrets"
 fi
 
@@ -180,7 +180,7 @@ cat > /tmp/task-definition.json <<EOF
                 "options": {
                     "awslogs-group": "${LOG_GROUP}",
                     "awslogs-region": "${REGION}",
-                    "awslogs-stream-prefix": "ecs"
+                    "awslogs-stream-prefix": "${ENV}"
                 }
             },
             "healthCheck": {
