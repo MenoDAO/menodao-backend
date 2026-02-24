@@ -75,7 +75,7 @@ if [ "$ENV" == "prod" ]; then
     MEMORY="1024"
     DESIRED_COUNT="${SCALE:-2}"
     LOG_GROUP="/ecs/menodao-api-prod"
-    SECRETS_ARN_PREFIX="menodao/prod"
+    SECRETS_ARN_NAME="menodao/api/secrets"
 else
     SERVICE_NAME="menodao-api-dev"
     TASK_FAMILY="menodao-api-dev"
@@ -84,7 +84,7 @@ else
     MEMORY="512"
     DESIRED_COUNT="${SCALE:-1}"
     LOG_GROUP="/ecs/menodao-api-dev"
-    SECRETS_ARN_PREFIX="menodao/dev"
+    SECRETS_ARN_NAME="menodao/api-stg/secrets"
 fi
 
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
@@ -120,7 +120,7 @@ EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution-role"
 TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task-role"
 
 # Get secrets ARN
-SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_PREFIX}/app"
+SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_NAME}"
 
 # Determine NODE_ENV
 NODE_ENV_VAL="development"
@@ -161,8 +161,8 @@ cat > /tmp/task-definition.json <<EOF
                 {"name": "JWT_SECRET", "valueFrom": "${SECRETS_ARN}:JWT_SECRET::"},
                 {"name": "POLYGON_RPC_URL", "valueFrom": "${SECRETS_ARN}:POLYGON_RPC_URL::"},
                 {"name": "PRIVATE_KEY", "valueFrom": "${SECRETS_ARN}:PRIVATE_KEY::"},
-                {"name": "SMS_API_KEY", "valueFrom": "${SECRETS_ARN}:SMS_API_KEY::"},
-                {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_USERNAME::"},
+                {"name": "SMS_API_KEY", "valueFrom": "${SECRETS_ARN}:SMS_PROVIDER_API_KEY::"},
+                {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_PROVIDER_PARTNER_ID::"},
                 {"name": "SASAPAY_CLIENT_ID", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_ID::"},
                 {"name": "SASAPAY_CLIENT_SECRET", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_SECRET::"},
                 {"name": "SASAPAY_MERCHANT_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_MERCHANT_CODE::"},
