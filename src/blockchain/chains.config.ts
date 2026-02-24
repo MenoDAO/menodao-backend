@@ -108,6 +108,6 @@ export function getChainConfig(
 }
 
 /**
- * Default chain for MenoDAO (Polygon for low fees)
+ * Default chain for MenoDAO (Celo for low fees and African focus)
  */
-export const DEFAULT_CHAIN: ChainId = 'polygon';
+export const DEFAULT_CHAIN: ChainId = 'celo';

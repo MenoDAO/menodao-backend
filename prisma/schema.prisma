@@ -17,6 +17,7 @@ model Member {
   walletAddress   String?  @unique
   isVerified      Boolean  @default(false)
   branch          String?
+  preferredChain  String?  @default("celo")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -242,10 +243,12 @@ model StaffUser {
   isActive     Boolean   @default(true)
   lastLogin    DateTime?
   branch       String?
+  clinicId     String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   visits       Visit[]
+  clinic       Clinic?   @relation(fields: [clinicId], references: [id])
 }
 
 enum StaffRole {
@@ -379,4 +382,62 @@ model SiteVisit {
   @@index([createdAt])
   @@index([utmSource])
   @@index([sessionId])
+}
+
+// Clinic registration status
+enum ClinicStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+// X-Ray capability
+enum XRayCapability {
+  NONE
+  PERIAPICAL
+  OPG
+}
+
+// Partner clinic model
+model Clinic {
+  id                     String         @id @default(uuid())
+  // Section 1: Clinic Details
+  name                   String
+  subCounty              String
+  physicalLocation       String
+  googleMapsLink         String?
+  operatingHours         String
+  operatesOnWeekends     Boolean        @default(false)
+  // Section 2: Contacts
+  leadDentistName        String
+  ownerPhone             String
+  managerName            String?
+  whatsappNumber         String
+  email                  String?
+  // Section 3: Payment & Settlement
+  mpesaTillOrPaybill     String
+  tillPaybillName        String
+  bankAccountName        String?
+  bankAccountNumber      String?
+  // Section 4: Capacity & Compliance
+  kmpdcRegNumber         String?
+  activeDentalChairs     Int            @default(1)
+  xrayCapability         XRayCapability @default(NONE)
+  specializedServices    Json?          // ["ORTHODONTIST", "MAXILLOFACIAL", "PEDIATRIC"]
+  // Section 5: Agreement
+  agreedToRateCard       Boolean        @default(false)
+  agreedToNoChargePolicy Boolean        @default(false)
+  // Admin fields
+  status                 ClinicStatus   @default(PENDING)
+  rejectionReason        String?
+  approvedAt             DateTime?
+  approvedBy             String?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  // Relations
+  staffUsers             StaffUser[]
+
+  @@index([status])
+  @@index([subCounty])
 }

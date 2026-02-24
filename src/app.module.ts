@@ -17,6 +17,7 @@ import { ProceduresModule } from './procedures/procedures.module';
 import { StaffModule } from './staff/staff.module';
 import { VisitsModule } from './visits/visits.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { ClinicsModule } from './clinics/clinics.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     BlockchainModule,
     AdminModule,
     NotificationsModule,
+    ClinicsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
