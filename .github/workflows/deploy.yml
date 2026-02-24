@@ -1,11 +1,6 @@
 name: Deploy Backend
 
-on:
   push:
-    branches:
-      - main
-      - dev
-  pull_request:
     branches:
       - main
       - dev
@@ -82,7 +77,7 @@ jobs:
   docker-build:
     needs: build
     runs-on: ubuntu-latest
-    if: (github.event_name == 'push' || github.event_name == 'pull_request') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.base_ref == 'main' || github.base_ref == 'dev')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     outputs:
       image: ${{ steps.build-image.outputs.image }}
     steps:
@@ -125,7 +120,7 @@ jobs:
   deploy-dev:
     needs: docker-build
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/dev' || github.base_ref == 'dev') && (github.event_name == 'push' || github.event_name == 'pull_request')
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
     environment:
       name: dev
       url: https://dev-api.menodao.org
@@ -409,7 +404,7 @@ jobs:
   deploy-production:
     needs: docker-build
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' || github.base_ref == 'main') && (github.event_name == 'push' || github.event_name == 'pull_request')
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: production
       url: https://api.menodao.org
