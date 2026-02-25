@@ -33,6 +33,12 @@ export class ClinicsController {
   async register(@Body() dto: RegisterClinicDto) {
     return this.clinicsService.registerClinic(dto);
   }
+
+  @Get('ping')
+  @ApiOperation({ summary: 'Check if clinics controller is alive' })
+  async ping() {
+    return { status: 'ok', timestamp: new Date().toISOString() };
+  }
 }
 
 @ApiTags('Admin Clinics')
