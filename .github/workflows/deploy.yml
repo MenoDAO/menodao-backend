@@ -366,7 +366,7 @@ jobs:
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_SERVICE_PROD }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
             --query taskDefinition > task-definition.json
 
       - name: Fill in the new image ID
