@@ -17,7 +17,12 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "migrate:validate": "node scripts/validate-database.js",
+    "migrate:deploy": "npm run migrate:validate && prisma migrate deploy",
+    "db:validate": "node scripts/validate-database.js"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
