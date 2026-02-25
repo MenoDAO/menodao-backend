@@ -14,7 +14,9 @@ env:
   ECS_CLUSTER_PROD: menodao-production
   ECS_CLUSTER_DEV: menodao-dev
   ECS_SERVICE_PROD: menodao-backend-production
+  ECS_TASK_DEFINITION_PROD: menodao-backend-production
   ECS_SERVICE_DEV: menodao-backend-dev
+  ECS_TASK_DEFINITION_DEV: menodao-backend-dev
   CONTAINER_NAME: menodao-backend
 
 jobs:
@@ -424,7 +426,7 @@ jobs:
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_SERVICE_PROD }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
             --query taskDefinition > task-definition.json
 
       - name: Fill in the new image ID in the Amazon ECS task definition
