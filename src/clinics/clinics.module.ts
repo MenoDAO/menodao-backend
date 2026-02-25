@@ -6,9 +6,11 @@ import {
 } from './clinics.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
+import { SmsModule } from '../sms/sms.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule],
+  imports: [PrismaModule, AuthModule, SmsModule, AdminModule],
   controllers: [ClinicsController, AdminClinicsController],
   providers: [ClinicsService],
   exports: [ClinicsService],
