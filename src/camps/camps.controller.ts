@@ -1,59 +1,126 @@
-import { Controller, Get, Post, Delete, Param, Query, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { CampsService } from './camps.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import {
+  CreateCampDto,
+  UpdateCampDto,
+  AssignMemberDto,
+} from './dto/create-camp.dto';
+import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
+import { JwtOrStaffAuthGuard } from '../auth/guards/jwt-or-staff-auth.guard';
 
 @ApiTags('Camps')
 @Controller('camps')
+@ApiBearerAuth()
 export class CampsController {
-  constructor(private campsService: CampsService) {}
+  constructor(private readonly campsService: CampsService) {}
+
+  // ── Staff-only endpoints ──────────────────────────────────
+
+  @Post()
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Create a new camp' })
+  create(@Body() createCampDto: CreateCampDto) {
+    return this.campsService.create(createCampDto);
+  }
+
+  // ── Accessible to both members and staff ──────────────────
 
   @Get()
-  @ApiOperation({ summary: 'Get all upcoming dental camps' })
-  async getUpcoming() {
+  @UseGuards(JwtOrStaffAuthGuard)
+  @ApiOperation({ summary: 'List all camps' })
+  findAll() {
+    return this.campsService.findAll();
+  }
+
+  @Get('upcoming')
+  @UseGuards(JwtOrStaffAuthGuard)
+  @ApiOperation({ summary: 'List upcoming active camps' })
+  getUpcoming() {
     return this.campsService.getUpcomingCamps();
   }
 
   @Get('nearby')
-  @ApiOperation({ summary: 'Find camps near a location' })
-  @ApiQuery({ name: 'lat', required: true, type: Number })
-  @ApiQuery({ name: 'lng', required: true, type: Number })
-  @ApiQuery({ name: 'radius', required: false, type: Number, description: 'Radius in km (default: 50)' })
-  async findNearby(
-    @Query('lat') lat: number,
-    @Query('lng') lng: number,
-    @Query('radius') radius = 50,
+  @UseGuards(JwtOrStaffAuthGuard)
+  @ApiOperation({ summary: 'Find camps nearby a coordinate' })
+  @ApiQuery({ name: 'lat', type: Number })
+  @ApiQuery({ name: 'lon', type: Number })
+  @ApiQuery({ name: 'radius', type: Number, required: false })
+  findNearby(
+    @Query('lat') lat: string,
+    @Query('lon') lon: string,
+    @Query('radius') radius: string = '50',
   ) {
-    return this.campsService.findNearby(+lat, +lng, +radius);
+    return this.campsService.findNearby(
+      parseFloat(lat),
+      parseFloat(lon),
+      parseFloat(radius),
+    );
   }
 
-  @Get('my-registrations')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get my camp registrations' })
-  async getMyRegistrations(@Request() req) {
-    return this.campsService.getMemberRegistrations(req.user.id);
+  @Get('member/:memberId')
+  @UseGuards(JwtOrStaffAuthGuard)
+  @ApiOperation({ summary: 'Get all camp registrations for a member' })
+  getMemberRegistrations(@Param('memberId') memberId: string) {
+    return this.campsService.getMemberRegistrations(memberId);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get camp details' })
-  async getCamp(@Param('id') id: string) {
+  @UseGuards(JwtOrStaffAuthGuard)
+  @ApiOperation({ summary: 'Get camp details with capacity info' })
+  findOne(@Param('id') id: string) {
     return this.campsService.getCamp(id);
   }
 
-  @Post(':id/register')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Register for a camp' })
-  async register(@Request() req, @Param('id') campId: string) {
-    return this.campsService.registerForCamp(req.user.id, campId);
+  // ── Staff-only write endpoints ────────────────────────────
+
+  @Patch(':id')
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Update a camp' })
+  update(@Param('id') id: string, @Body() updateCampDto: UpdateCampDto) {
+    return this.campsService.update(id, updateCampDto);
   }
 
-  @Delete(':id/register')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Cancel camp registration' })
-  async cancelRegistration(@Request() req, @Param('id') campId: string) {
-    return this.campsService.cancelRegistration(req.user.id, campId);
+  @Delete(':id')
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Deactivate a camp' })
+  remove(@Param('id') id: string) {
+    return this.campsService.remove(id);
+  }
+
+  @Post(':id/register')
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Register a member for a camp' })
+  register(@Param('id') id: string, @Body() dto: AssignMemberDto) {
+    return this.campsService.registerForCamp(dto.memberId, id);
+  }
+
+  @Post(':id/assign')
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Legacy endpoint to assign a member' })
+  assignMember(@Param('id') id: string, @Body() dto: AssignMemberDto) {
+    return this.campsService.registerForCamp(dto.memberId, id);
+  }
+
+  @Post(':id/cancel')
+  @UseGuards(StaffAuthGuard)
+  @ApiOperation({ summary: 'Cancel a member registration' })
+  cancel(@Param('id') id: string, @Body() dto: AssignMemberDto) {
+    return this.campsService.cancelRegistration(dto.memberId, id);
   }
 }

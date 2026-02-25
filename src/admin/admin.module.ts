@@ -9,17 +9,29 @@ import { StatsService } from './stats.service';
 import { UsersController } from './users.controller';
 import { PaymentsController } from './payments.controller';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
+import { AnalyticsModule } from '../analytics/analytics.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
     PrismaModule,
+    AnalyticsModule,
+    SubscriptionsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '24h' },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET environment variable is not set. Cannot start the application.',
+          );
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '24h' },
+        };
+      },
     }),
   ],
   controllers: [
@@ -28,11 +40,7 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
     UsersController,
     PaymentsController,
   ],
-  providers: [
-    AdminService,
-    StatsService,
-    AdminAuthGuard,
-  ],
+  providers: [AdminService, StatsService, AdminAuthGuard],
   exports: [AdminService, AdminAuthGuard],
 })
 export class AdminModule {}

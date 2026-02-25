@@ -63,28 +63,29 @@ if [ -z "$ENV" ]; then
 fi
 
 # Configuration
-CLUSTER_NAME="menodao"
 REGION="${AWS_REGION:-us-east-1}"
 ECR_REPOSITORY="menodao-backend"
 
 if [ "$ENV" == "prod" ]; then
-    SERVICE_NAME="menodao-api"
-    TASK_FAMILY="menodao-api"
+    CLUSTER_NAME="menodao-production"
+    SERVICE_NAME="menodao-backend-production"
+    TASK_FAMILY="menodao-backend-production"
     DEFAULT_TAG="prod-latest"
     CPU="512"
     MEMORY="1024"
     DESIRED_COUNT="${SCALE:-2}"
-    LOG_GROUP="/ecs/menodao-api-prod"
-    SECRETS_ARN_PREFIX="menodao/prod"
+    LOG_GROUP="/ecs/menodao-production"
+    SECRETS_ARN_NAME="menodao/production/app"
 else
-    SERVICE_NAME="menodao-api-dev"
-    TASK_FAMILY="menodao-api-dev"
+    CLUSTER_NAME="menodao-dev"
+    SERVICE_NAME="menodao-backend-dev"
+    TASK_FAMILY="menodao-backend-dev"
     DEFAULT_TAG="dev-latest"
     CPU="256"
     MEMORY="512"
     DESIRED_COUNT="${SCALE:-1}"
-    LOG_GROUP="/ecs/menodao-api-dev"
-    SECRETS_ARN_PREFIX="menodao/dev"
+    LOG_GROUP="/ecs/menodao-dev"
+    SECRETS_ARN_NAME="menodao/dev/app"
 fi
 
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
@@ -116,11 +117,17 @@ echo "📍 Desired Count: $DESIRED_COUNT"
 echo ""
 
 # Get execution role ARN
-EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution"
-TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task"
+EXECUTION_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-execution-role"
+TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/menodao-ecs-task-role"
 
 # Get secrets ARN
-SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_PREFIX}/app"
+SECRETS_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRETS_ARN_NAME}"
+
+# Determine NODE_ENV
+NODE_ENV_VAL="development"
+if [ "$ENV" == "prod" ]; then
+    NODE_ENV_VAL="production"
+fi
 
 # Create task definition
 echo "📝 Creating task definition..."
@@ -141,33 +148,46 @@ cat > /tmp/task-definition.json <<EOF
             "essential": true,
             "portMappings": [
                 {
-                    "containerPort": 3001,
-                    "hostPort": 3001,
+                    "containerPort": 3000,
+                    "hostPort": 3000,
                     "protocol": "tcp"
                 }
             ],
             "environment": [
-                {"name": "NODE_ENV", "value": "${ENV == 'prod' ? 'production' : 'development'}"},
-                {"name": "PORT", "value": "3001"}
+                {"name": "NODE_ENV", "value": "${NODE_ENV_VAL}"},
+                {"name": "PORT", "value": "3000"}
             ],
             "secrets": [
                 {"name": "DATABASE_URL", "valueFrom": "${SECRETS_ARN}:DATABASE_URL::"},
                 {"name": "JWT_SECRET", "valueFrom": "${SECRETS_ARN}:JWT_SECRET::"},
                 {"name": "POLYGON_RPC_URL", "valueFrom": "${SECRETS_ARN}:POLYGON_RPC_URL::"},
                 {"name": "PRIVATE_KEY", "valueFrom": "${SECRETS_ARN}:PRIVATE_KEY::"},
-                {"name": "SMS_API_KEY", "valueFrom": "${SECRETS_ARN}:SMS_API_KEY::"},
-                {"name": "SMS_USERNAME", "valueFrom": "${SECRETS_ARN}:SMS_USERNAME::"}
+                {"name": "SMS_PROVIDER_URL", "valueFrom": "${SECRETS_ARN}:SMS_PROVIDER_URL::"},
+                {"name": "SMS_PROVIDER_API_KEY", "valueFrom": "${SECRETS_ARN}:SMS_PROVIDER_API_KEY::"},
+                {"name": "SMS_PROVIDER_PARTNER_ID", "valueFrom": "${SECRETS_ARN}:SMS_PROVIDER_PARTNER_ID::"},
+                {"name": "SMS_SENDER_ID", "valueFrom": "${SECRETS_ARN}:SMS_SENDER_ID::"},
+                {"name": "SASAPAY_CLIENT_ID", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_ID::"},
+                {"name": "SASAPAY_CLIENT_SECRET", "valueFrom": "${SECRETS_ARN}:SASAPAY_CLIENT_SECRET::"},
+                {"name": "SASAPAY_MERCHANT_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_MERCHANT_CODE::"},
+                {"name": "SASAPAY_BASE_URL", "valueFrom": "${SECRETS_ARN}:SASAPAY_BASE_URL::"},
+                {"name": "SASAPAY_NETWORK_CODE", "valueFrom": "${SECRETS_ARN}:SASAPAY_NETWORK_CODE::"},
+                {"name": "API_BASE_URL", "valueFrom": "${SECRETS_ARN}:API_BASE_URL::"},
+                {"name": "API_BASE_URL_DEV", "valueFrom": "${SECRETS_ARN}:API_BASE_URL_DEV::"},
+                {"name": "DB_HOST", "valueFrom": "${SECRETS_ARN}:DB_HOST::"},
+                {"name": "DB_NAME", "valueFrom": "${SECRETS_ARN}:DB_NAME::"},
+                {"name": "DB_USER", "valueFrom": "${SECRETS_ARN}:DB_USER::"},
+                {"name": "DB_PASSWORD", "valueFrom": "${SECRETS_ARN}:DB_PASSWORD::"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-group": "${LOG_GROUP}",
                     "awslogs-region": "${REGION}",
-                    "awslogs-stream-prefix": "ecs"
+                    "awslogs-stream-prefix": "${ENV}"
                 }
             },
             "healthCheck": {
-                "command": ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1"],
+                "command": ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"],
                 "interval": 30,
                 "timeout": 5,
                 "retries": 3,
@@ -178,12 +198,6 @@ cat > /tmp/task-definition.json <<EOF
 }
 EOF
 
-# Fix the environment value in the JSON
-if [ "$ENV" == "prod" ]; then
-    sed -i 's/\${ENV == '\''prod'\'' ? '\''production'\'' : '\''development'\''}/production/g' /tmp/task-definition.json
-else
-    sed -i 's/\${ENV == '\''prod'\'' ? '\''production'\'' : '\''development'\''}/development/g' /tmp/task-definition.json
-fi
 
 TASK_DEF_ARN=$(aws ecs register-task-definition \
     --cli-input-json file:///tmp/task-definition.json \

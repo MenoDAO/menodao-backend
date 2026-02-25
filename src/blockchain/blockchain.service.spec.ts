@@ -48,9 +48,9 @@ describe('BlockchainService', () => {
     it('should throw if member not found', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue(null);
 
-      await expect(service.mintMembershipNFT('invalid-id', 'GOLD')).rejects.toThrow(
-        'Member not found',
-      );
+      await expect(
+        service.mintMembershipNFT('invalid-id', 'GOLD'),
+      ).rejects.toThrow('Member not found');
     });
 
     it('should create NFT record in mock mode', async () => {
@@ -96,9 +96,9 @@ describe('BlockchainService', () => {
     it('should throw if member not found', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue(null);
 
-      await expect(service.recordContribution('invalid-id', 500)).rejects.toThrow(
-        'Member not found',
-      );
+      await expect(
+        service.recordContribution('invalid-id', 500),
+      ).rejects.toThrow('Member not found');
     });
 
     it('should create blockchain transaction record', async () => {
@@ -111,7 +111,9 @@ describe('BlockchainService', () => {
       const result = await service.recordContribution('member-1', 500);
 
       expect(result).toMatch(/^0x/);
-      expect(mockPrismaService.blockchainTransaction.create).toHaveBeenCalledWith({
+      expect(
+        mockPrismaService.blockchainTransaction.create,
+      ).toHaveBeenCalledWith({
         data: expect.objectContaining({
           txType: 'CONTRIBUTION',
           amount: '500',
@@ -138,10 +140,16 @@ describe('BlockchainService', () => {
       });
       mockPrismaService.blockchainTransaction.create.mockResolvedValue({});
 
-      const result = await service.processDisbursement('member-1', 5000, 'claim-1');
+      const result = await service.processDisbursement(
+        'member-1',
+        5000,
+        'claim-1',
+      );
 
       expect(result).toMatch(/^0x/);
-      expect(mockPrismaService.blockchainTransaction.create).toHaveBeenCalledWith({
+      expect(
+        mockPrismaService.blockchainTransaction.create,
+      ).toHaveBeenCalledWith({
         data: expect.objectContaining({
           txType: 'CLAIM_DISBURSEMENT',
           amount: '5000',
@@ -158,18 +166,24 @@ describe('BlockchainService', () => {
         txHash: '0x123',
         txType: 'CONTRIBUTION',
       };
-      mockPrismaService.blockchainTransaction.findUnique.mockResolvedValue(mockTx);
+      mockPrismaService.blockchainTransaction.findUnique.mockResolvedValue(
+        mockTx,
+      );
 
       const result = await service.getTransaction('0x123');
 
       expect(result).toEqual(mockTx);
-      expect(mockPrismaService.blockchainTransaction.findUnique).toHaveBeenCalledWith({
+      expect(
+        mockPrismaService.blockchainTransaction.findUnique,
+      ).toHaveBeenCalledWith({
         where: { txHash: '0x123' },
       });
     });
 
     it('should return null for non-existent transaction', async () => {
-      mockPrismaService.blockchainTransaction.findUnique.mockResolvedValue(null);
+      mockPrismaService.blockchainTransaction.findUnique.mockResolvedValue(
+        null,
+      );
 
       const result = await service.getTransaction('0xnonexistent');
 
@@ -183,7 +197,9 @@ describe('BlockchainService', () => {
         { id: 'tx-1', txHash: '0x123' },
         { id: 'tx-2', txHash: '0x456' },
       ];
-      mockPrismaService.blockchainTransaction.findMany.mockResolvedValue(mockTxs);
+      mockPrismaService.blockchainTransaction.findMany.mockResolvedValue(
+        mockTxs,
+      );
       mockPrismaService.blockchainTransaction.count.mockResolvedValue(100);
 
       const result = await service.getAllTransactions(1, 50);
@@ -203,7 +219,9 @@ describe('BlockchainService', () => {
 
       await service.getAllTransactions(3, 50);
 
-      expect(mockPrismaService.blockchainTransaction.findMany).toHaveBeenCalledWith(
+      expect(
+        mockPrismaService.blockchainTransaction.findMany,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           skip: 100,
           take: 50,
@@ -217,7 +235,9 @@ describe('BlockchainService', () => {
 
       await service.getAllTransactions();
 
-      expect(mockPrismaService.blockchainTransaction.findMany).toHaveBeenCalledWith(
+      expect(
+        mockPrismaService.blockchainTransaction.findMany,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           orderBy: { createdAt: 'desc' },
         }),

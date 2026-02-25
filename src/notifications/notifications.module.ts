@@ -4,7 +4,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminModule } from '../admin/admin.module';
 import { NotificationsService } from './notifications.service';
-import { NotificationsController, AlertsController } from './notifications.controller';
+import {
+  NotificationsController,
+  AlertsController,
+} from './notifications.controller';
 
 @Module({
   imports: [
@@ -13,9 +16,15 @@ import { NotificationsController, AlertsController } from './notifications.contr
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET environment variable is not set. Cannot start the application.',
+          );
+        }
+        return { secret };
+      },
     }),
   ],
   controllers: [NotificationsController, AlertsController],

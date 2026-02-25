@@ -67,7 +67,9 @@ describe('MembersService', () => {
     it('should throw NotFoundException if member not found', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue(null);
 
-      await expect(service.findById('invalid-id')).rejects.toThrow(NotFoundException);
+      await expect(service.findById('invalid-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -99,7 +101,9 @@ describe('MembersService', () => {
         { id: 'c1', amount: 500 },
         { id: 'c2', amount: 500 },
       ];
-      mockPrismaService.contribution.findMany.mockResolvedValue(mockContributions);
+      mockPrismaService.contribution.findMany.mockResolvedValue(
+        mockContributions,
+      );
       mockPrismaService.contribution.count.mockResolvedValue(10);
 
       const result = await service.getContributionHistory('member-1', 1, 20);
@@ -150,10 +154,10 @@ describe('MembersService', () => {
 
   describe('getTransactionHistory', () => {
     it('should return paginated blockchain transactions', async () => {
-      const mockTxs = [
-        { id: 'tx1', txHash: '0x123', txType: 'CONTRIBUTION' },
-      ];
-      mockPrismaService.blockchainTransaction.findMany.mockResolvedValue(mockTxs);
+      const mockTxs = [{ id: 'tx1', txHash: '0x123', txType: 'CONTRIBUTION' }];
+      mockPrismaService.blockchainTransaction.findMany.mockResolvedValue(
+        mockTxs,
+      );
       mockPrismaService.blockchainTransaction.count.mockResolvedValue(25);
 
       const result = await service.getTransactionHistory('member-1', 1, 20);

@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
@@ -66,11 +71,14 @@ export class AuthService {
 
     if (!smsResult.success) {
       // Log the error but don't expose internal details
-      console.error(`[AuthService] Failed to send OTP to ${normalizedPhone}: ${smsResult.error}`);
-      
+      console.error(
+        `[AuthService] Failed to send OTP to ${normalizedPhone}: ${smsResult.error}`,
+      );
+
       // Throw appropriate error based on the failure type
       throw new ServiceUnavailableException(
-        smsResult.error || 'Failed to send verification code. Please try again later.',
+        smsResult.error ||
+          'Failed to send verification code. Please try again later.',
       );
     }
 
@@ -80,7 +88,10 @@ export class AuthService {
   /**
    * Verify OTP and return JWT token
    */
-  async verifyOtp(phoneNumber: string, code: string): Promise<{ accessToken: string; member: any }> {
+  async verifyOtp(
+    phoneNumber: string,
+    code: string,
+  ): Promise<{ accessToken: string; member: any }> {
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
 
     // Find valid OTP

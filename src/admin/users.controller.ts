@@ -1,21 +1,35 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { Delete } from '@nestjs/common';
 
 @ApiTags('Admin - Users')
 @Controller('admin/users')
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 export class UsersController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private subscriptionsService: SubscriptionsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all members with pagination' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'tier', required: false, enum: ['BRONZE', 'SILVER', 'GOLD'] })
+  @ApiQuery({
+    name: 'tier',
+    required: false,
+    enum: ['BRONZE', 'SILVER', 'GOLD'],
+  })
   async listUsers(
     @Query('page') page?: number,
     @Query('limit') limit?: number,
@@ -27,7 +41,7 @@ export class UsersController {
     const skip = (pageNum - 1) * limitNum;
 
     const where: any = {};
-    
+
     if (search) {
       where.OR = [
         { phoneNumber: { contains: search } },
@@ -126,5 +140,11 @@ export class UsersController {
         nftCount: user.nfts.length,
       },
     };
+  }
+
+  @Delete(':id/subscription')
+  @ApiOperation({ summary: 'Delete a members subscription' })
+  async deleteSubscription(@Param('id') id: string) {
+    return this.subscriptionsService.removeSubscription(id);
   }
 }

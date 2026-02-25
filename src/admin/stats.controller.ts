@@ -1,6 +1,12 @@
 import { Controller, Get, UseGuards, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { StatsService } from './stats.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 
 @ApiTags('Admin - Stats')
@@ -8,7 +14,10 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 export class StatsController {
-  constructor(private statsService: StatsService) {}
+  constructor(
+    private statsService: StatsService,
+    private analyticsService: AnalyticsService,
+  ) {}
 
   @Get('overview')
   @ApiOperation({ summary: 'Get dashboard overview statistics' })
@@ -46,5 +55,12 @@ export class StatsController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getRecentPayments(@Query('limit') limit?: number) {
     return this.statsService.getRecentPayments(limit || 10);
+  }
+
+  @Get('site-visits')
+  @ApiOperation({ summary: 'Get site visit analytics metrics' })
+  @ApiQuery({ name: 'days', required: false, type: Number })
+  async getSiteVisits(@Query('days') days?: number) {
+    return this.analyticsService.getMetrics(days || 30);
   }
 }

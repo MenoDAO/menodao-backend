@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClaimsService } from './claims.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { SasaPayService } from '../sasapay/sasapay.service';
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('ClaimsService', () => {
@@ -16,6 +18,7 @@ describe('ClaimsService', () => {
     claim: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -25,12 +28,27 @@ describe('ClaimsService', () => {
     processDisbursement: jest.fn(),
   };
 
+  const mockSasaPayService = {
+    isConfigured: jest.fn().mockReturnValue(false),
+    sendMoney: jest.fn(),
+    normalizePhoneNumber: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'NODE_ENV') return 'development';
+      return undefined;
+    }),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ClaimsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: BlockchainService, useValue: mockBlockchainService },
+        { provide: SasaPayService, useValue: mockSasaPayService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 
@@ -75,7 +93,12 @@ describe('ClaimsService', () => {
       ]);
 
       await expect(
-        service.createClaim('member-1', 'CLEANING', 'Professional cleaning', 1000),
+        service.createClaim(
+          'member-1',
+          'CLEANING',
+          'Professional cleaning',
+          1000,
+        ),
       ).rejects.toThrow('reached your annual claim limit');
     });
 
@@ -166,19 +189,46 @@ describe('ClaimsService', () => {
       );
     });
 
-    it('should update claim status to approved', async () => {
-      mockPrismaService.claim.findUnique.mockResolvedValue({
-        id: 'claim-1',
-        status: 'PENDING',
-      });
-      mockPrismaService.claim.update.mockResolvedValue({
-        id: 'claim-1',
-        status: 'APPROVED',
-      });
+    it('should approve claim, validate limits, and trigger disbursal', async () => {
+      // First findUnique for approveClaim (include member + subscription)
+      mockPrismaService.claim.findUnique
+        .mockResolvedValueOnce({
+          id: 'claim-1',
+          status: 'PENDING',
+          memberId: 'member-1',
+          amount: 1000,
+          member: { id: 'member-1', subscription: { tier: 'GOLD' } },
+        })
+        // Second findUnique for processDisbursement
+        .mockResolvedValueOnce({
+          id: 'claim-1',
+          status: 'APPROVED',
+          memberId: 'member-1',
+          amount: 1000,
+          member: { id: 'member-1' },
+        });
+      mockPrismaService.claim.findMany.mockResolvedValue([]);
+      mockPrismaService.claim.update
+        .mockResolvedValueOnce({ id: 'claim-1', status: 'APPROVED' }) // approve
+        .mockResolvedValueOnce({ id: 'claim-1', status: 'PROCESSING' }) // processing
+        .mockResolvedValueOnce({ id: 'claim-1', status: 'DISBURSED' }); // disbursed
 
       const result = await service.approveClaim('claim-1');
 
       expect(result.status).toBe('APPROVED');
+    });
+
+    it('should throw if claim is not pending', async () => {
+      mockPrismaService.claim.findUnique.mockResolvedValue({
+        id: 'claim-1',
+        status: 'APPROVED',
+        memberId: 'member-1',
+        member: {},
+      });
+
+      await expect(service.approveClaim('claim-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -203,7 +253,7 @@ describe('ClaimsService', () => {
       );
     });
 
-    it('should process disbursement on blockchain', async () => {
+    it('should process mock disbursal with generated txHash', async () => {
       mockPrismaService.claim.findUnique.mockResolvedValue({
         id: 'claim-1',
         status: 'APPROVED',
@@ -213,34 +263,77 @@ describe('ClaimsService', () => {
       });
       mockPrismaService.claim.update
         .mockResolvedValueOnce({ status: 'PROCESSING' })
-        .mockResolvedValueOnce({ status: 'DISBURSED', txHash: '0x123' });
-      mockBlockchainService.processDisbursement.mockResolvedValue('0x123');
+        .mockResolvedValueOnce({
+          status: 'DISBURSED',
+          txHash: 'MOCK_DISBURSEMENT_123_claim-',
+        });
 
-      await service.processDisbursement('claim-1');
+      const result = await service.processDisbursement('claim-1');
 
-      expect(mockBlockchainService.processDisbursement).toHaveBeenCalledWith(
-        'member-1',
-        5000,
-        'claim-1',
-      );
+      // Should NOT call blockchain
+      expect(mockBlockchainService.processDisbursement).not.toHaveBeenCalled();
+      // Should update to PROCESSING then DISBURSED
+      expect(mockPrismaService.claim.update).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('rejectClaim', () => {
+    it('should throw if claim not found', async () => {
+      mockPrismaService.claim.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.rejectClaim('invalid-id', 'Some reason'),
+      ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw if blockchain disbursement fails', async () => {
+    it('should throw if claim is not pending', async () => {
       mockPrismaService.claim.findUnique.mockResolvedValue({
         id: 'claim-1',
         status: 'APPROVED',
-        memberId: 'member-1',
-        amount: 5000,
-        member: { id: 'member-1' },
       });
-      mockPrismaService.claim.update.mockResolvedValue({ status: 'PROCESSING' });
-      mockBlockchainService.processDisbursement.mockRejectedValue(
-        new Error('Blockchain error'),
+
+      await expect(
+        service.rejectClaim('claim-1', 'Not eligible'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw if reason is empty', async () => {
+      mockPrismaService.claim.findUnique.mockResolvedValue({
+        id: 'claim-1',
+        status: 'PENDING',
+      });
+
+      await expect(service.rejectClaim('claim-1', '')).rejects.toThrow(
+        'rejection reason is required',
+      );
+    });
+
+    it('should reject claim with reason', async () => {
+      mockPrismaService.claim.findUnique.mockResolvedValue({
+        id: 'claim-1',
+        status: 'PENDING',
+      });
+      mockPrismaService.claim.update.mockResolvedValue({
+        id: 'claim-1',
+        status: 'REJECTED',
+        rejectionReason: 'Insufficient documentation',
+      });
+
+      const result = await service.rejectClaim(
+        'claim-1',
+        'Insufficient documentation',
       );
 
-      await expect(service.processDisbursement('claim-1')).rejects.toThrow(
-        'Disbursement processing failed',
-      );
+      expect(result.status).toBe('REJECTED');
+      expect(mockPrismaService.claim.update).toHaveBeenCalledWith({
+        where: { id: 'claim-1' },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: 'Insufficient documentation',
+          processedAt: expect.any(Date),
+        },
+        include: { member: true },
+      });
     });
   });
 
@@ -249,7 +342,7 @@ describe('ClaimsService', () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         tier: 'SILVER', // 4 claims, 15000 KES limit
       });
-      
+
       const yearStart = new Date(new Date().getFullYear(), 0, 1);
       const mockClaims = [
         { id: 'cl1', amount: 3000, status: 'DISBURSED', createdAt: new Date() },

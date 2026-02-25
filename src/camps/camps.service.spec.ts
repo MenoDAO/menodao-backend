@@ -75,9 +75,9 @@ describe('CampsService', () => {
 
     it('should sort camps by distance', async () => {
       const mockCamps = [
-        { id: 'c1', name: 'Camp 10km', latitude: -1.20, longitude: 36.82 },
+        { id: 'c1', name: 'Camp 10km', latitude: -1.2, longitude: 36.82 },
         { id: 'c2', name: 'Camp 5km', latitude: -1.25, longitude: 36.82 },
-        { id: 'c3', name: 'Camp 20km', latitude: -1.10, longitude: 36.82 },
+        { id: 'c3', name: 'Camp 20km', latitude: -1.1, longitude: 36.82 },
       ];
       mockPrismaService.camp.findMany.mockResolvedValue(mockCamps);
 
@@ -85,7 +85,9 @@ describe('CampsService', () => {
 
       // Results should be sorted by distance
       for (let i = 1; i < result.length; i++) {
-        expect(result[i].distanceKm).toBeGreaterThanOrEqual(result[i - 1].distanceKm);
+        expect(result[i].distanceKm).toBeGreaterThanOrEqual(
+          result[i - 1].distanceKm,
+        );
       }
     });
 
@@ -105,7 +107,9 @@ describe('CampsService', () => {
     it('should throw NotFoundException if camp not found', async () => {
       mockPrismaService.camp.findUnique.mockResolvedValue(null);
 
-      await expect(service.getCamp('invalid-id')).rejects.toThrow(NotFoundException);
+      await expect(service.getCamp('invalid-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should return camp with spots remaining', async () => {
@@ -130,9 +134,9 @@ describe('CampsService', () => {
         _count: { registrations: 50 },
       });
 
-      await expect(
-        service.registerForCamp('member-1', 'c1'),
-      ).rejects.toThrow('fully booked');
+      await expect(service.registerForCamp('member-1', 'c1')).rejects.toThrow(
+        'fully booked',
+      );
     });
 
     it('should throw if already registered', async () => {
@@ -147,9 +151,9 @@ describe('CampsService', () => {
         memberId: 'member-1',
       });
 
-      await expect(
-        service.registerForCamp('member-1', 'c1'),
-      ).rejects.toThrow('already registered');
+      await expect(service.registerForCamp('member-1', 'c1')).rejects.toThrow(
+        'already registered',
+      );
     });
 
     it('should create registration successfully', async () => {
@@ -184,7 +188,9 @@ describe('CampsService', () => {
         { id: 'r1', camp: { id: 'c1', name: 'Camp A', startDate: new Date() } },
         { id: 'r2', camp: { id: 'c2', name: 'Camp B', startDate: new Date() } },
       ];
-      mockPrismaService.campRegistration.findMany.mockResolvedValue(mockRegistrations);
+      mockPrismaService.campRegistration.findMany.mockResolvedValue(
+        mockRegistrations,
+      );
 
       const result = await service.getMemberRegistrations('member-1');
 

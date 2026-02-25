@@ -1,5 +1,19 @@
-import { Controller, Post, Get, Body, Query, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Query,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBody,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../admin/guards/admin-auth.guard';
@@ -18,7 +32,11 @@ export class NotificationsController {
       type: 'object',
       properties: {
         token: { type: 'string', description: 'FCM device token' },
-        platform: { type: 'string', enum: ['web', 'android', 'ios'], description: 'Device platform' },
+        platform: {
+          type: 'string',
+          enum: ['web', 'android', 'ios'],
+          description: 'Device platform',
+        },
       },
       required: ['token', 'platform'],
     },
@@ -74,7 +92,8 @@ export class AlertsController {
   })
   async sendNotification(
     @Request() req,
-    @Body() body: { title: string; body: string; data?: Record<string, string> },
+    @Body()
+    body: { title: string; body: string; data?: Record<string, string> },
   ) {
     return this.notificationsService.sendToAll(
       body.title,

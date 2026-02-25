@@ -1,5 +1,20 @@
-import { Controller, Get, Post, Param, Query, Body, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Body,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+  ApiBearerAuth,
+  ApiBody,
+} from '@nestjs/swagger';
 import { BlockchainService } from './blockchain.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -15,7 +30,9 @@ export class BlockchainController {
   }
 
   @Get('transactions')
-  @ApiOperation({ summary: 'Get all blockchain transactions (public audit log)' })
+  @ApiOperation({
+    summary: 'Get all blockchain transactions (public audit log)',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getAllTransactions(
@@ -34,13 +51,16 @@ export class BlockchainController {
   @Get('wallet')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get or create custodial wallet for current member' })
+  @ApiOperation({
+    summary: 'Get or create custodial wallet for current member',
+  })
   async getWallet(@Request() req) {
     const address = await this.blockchainService.getOrCreateWallet(req.user.id);
-    return { 
+    return {
       address,
       type: 'custodial',
-      message: 'This is your custodial wallet. Connect an external wallet to claim your NFTs.',
+      message:
+        'This is your custodial wallet. Connect an external wallet to claim your NFTs.',
     };
   }
 
@@ -60,8 +80,8 @@ export class BlockchainController {
     schema: {
       type: 'object',
       properties: {
-        externalWallet: { 
-          type: 'string', 
+        externalWallet: {
+          type: 'string',
           example: '0x1234567890abcdef1234567890abcdef12345678',
           description: 'External wallet address to transfer NFT to',
         },
@@ -82,7 +102,8 @@ export class BlockchainController {
     return {
       success: true,
       txHash,
-      message: 'NFT claimed successfully. It will appear in your external wallet shortly.',
+      message:
+        'NFT claimed successfully. It will appear in your external wallet shortly.',
     };
   }
 }

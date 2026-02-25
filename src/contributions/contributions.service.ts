@@ -1,7 +1,17 @@
-import { Injectable, BadRequestException, NotFoundException, Logger, forwardRef, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  Logger,
+  forwardRef,
+  Inject,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
-import { PaymentService, PaymentCallbackData } from '../payments/payment.service';
+import {
+  PaymentService,
+  PaymentCallbackData,
+} from '../payments/payment.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { PaymentStatus } from '@prisma/client';
 
@@ -20,7 +30,12 @@ export class ContributionsService {
   /**
    * Initiate a contribution payment via M-Pesa STK Push
    */
-  async initiatePayment(memberId: string, amount: number, paymentMethod: string, phoneNumber?: string) {
+  async initiatePayment(
+    memberId: string,
+    amount: number,
+    paymentMethod: string,
+    phoneNumber?: string,
+  ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
@@ -38,17 +53,23 @@ export class ContributionsService {
     // Use member's phone if not provided
     const paymentPhone = phoneNumber || member.phoneNumber;
     if (!paymentPhone) {
-      throw new BadRequestException('Phone number is required for M-Pesa payment');
+      throw new BadRequestException(
+        'Phone number is required for M-Pesa payment',
+      );
     }
 
     // Get the actual charge amount from subscriptions service (uses dev pricing in dev environment)
     const packages = this.subscriptionsService.getPackages();
-    const memberPackage = packages.find(p => p.tier === member.subscription?.tier);
-    
+    const memberPackage = packages.find(
+      (p) => p.tier === member.subscription?.tier,
+    );
+
     // Use the actual charge amount (dev pricing) instead of the frontend amount
     const actualAmount = memberPackage?.actualCharge ?? amount;
-    
-    this.logger.log(`Payment for ${member.subscription.tier}: display=${amount}, actual=${actualAmount}`);
+
+    this.logger.log(
+      `Payment for ${member.subscription.tier}: display=${amount}, actual=${actualAmount}`,
+    );
 
     // Validate amount (use minimum 1 for dev environment)
     if (actualAmount < 1) {
@@ -86,10 +107,14 @@ export class ContributionsService {
         data: { status: PaymentStatus.FAILED },
       });
 
-      throw new BadRequestException(paymentResult.error || 'Payment initiation failed');
+      throw new BadRequestException(
+        paymentResult.error || 'Payment initiation failed',
+      );
     }
 
-    this.logger.log(`Payment initiated for member ${memberId}, contribution ${contribution.id}`);
+    this.logger.log(
+      `Payment initiated for member ${memberId}, contribution ${contribution.id}`,
+    );
 
     return {
       contributionId: contribution.id,
@@ -98,7 +123,8 @@ export class ContributionsService {
       status: 'PENDING',
       reference: paymentResult.reference,
       checkoutRequestId: paymentResult.checkoutRequestId,
-      message: 'Please check your phone and enter M-Pesa PIN to complete payment',
+      message:
+        'Please check your phone and enter M-Pesa PIN to complete payment',
     };
   }
 
@@ -147,7 +173,10 @@ export class ContributionsService {
       where: { memberId, status: PaymentStatus.COMPLETED },
     });
 
-    const totalContributed = contributions.reduce((sum, c) => sum + c.amount, 0);
+    const totalContributed = contributions.reduce(
+      (sum, c) => sum + c.amount,
+      0,
+    );
     const monthsContributed = contributions.length;
 
     return {
@@ -170,11 +199,11 @@ export class ContributionsService {
    */
   async handlePaymentCallback(payload: PaymentCallbackData) {
     this.logger.log('Payment callback received');
-    
+
     const result = await this.paymentService.processCallback(payload);
 
     // If payment was successful, activate subscription and record on blockchain
-    if (result.success && payload.ResultCode === '0' && payload.Paid) {
+    if (result.success && payload.ResultCode === '0') {
       try {
         // Find the completed contribution
         const contribution = await this.prisma.contribution.findFirst({
@@ -188,9 +217,16 @@ export class ContributionsService {
 
         if (contribution) {
           // Activate subscription if not already active
-          if (contribution.member?.subscription && !contribution.member.subscription.isActive) {
-            await this.subscriptionsService.activateSubscription(contribution.memberId);
-            this.logger.log(`Subscription activated for member ${contribution.memberId}`);
+          if (
+            contribution.member?.subscription &&
+            !contribution.member.subscription.isActive
+          ) {
+            await this.subscriptionsService.activateSubscription(
+              contribution.memberId,
+            );
+            this.logger.log(
+              `Subscription activated for member ${contribution.memberId}`,
+            );
           }
 
           // Record on blockchain

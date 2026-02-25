@@ -24,7 +24,9 @@ export class NotificationsService implements OnModuleInit {
     const clientEmail = this.configService.get<string>('FIREBASE_CLIENT_EMAIL');
 
     if (!projectId || !privateKey || !clientEmail) {
-      this.logger.warn('Firebase credentials not configured. Push notifications disabled.');
+      this.logger.warn(
+        'Firebase credentials not configured. Push notifications disabled.',
+      );
       return;
     }
 
@@ -101,7 +103,7 @@ export class NotificationsService implements OnModuleInit {
   ): Promise<{ success: boolean; sentTo: number; errors: number }> {
     if (!this.isFirebaseConfigured) {
       this.logger.warn('Firebase not configured, skipping push notification');
-      
+
       // Still log the notification attempt
       await this.prisma.notification.create({
         data: {
@@ -112,7 +114,7 @@ export class NotificationsService implements OnModuleInit {
           sentBy: adminUsername || 'system',
         },
       });
-      
+
       return { success: false, sentTo: 0, errors: 0 };
     }
 
@@ -123,7 +125,7 @@ export class NotificationsService implements OnModuleInit {
 
     if (deviceTokens.length === 0) {
       this.logger.log('No device tokens registered');
-      
+
       await this.prisma.notification.create({
         data: {
           title,
@@ -133,7 +135,7 @@ export class NotificationsService implements OnModuleInit {
           sentBy: adminUsername || 'system',
         },
       });
-      
+
       return { success: true, sentTo: 0, errors: 0 };
     }
 
@@ -145,7 +147,7 @@ export class NotificationsService implements OnModuleInit {
     const batchSize = 500;
     for (let i = 0; i < tokens.length; i += batchSize) {
       const batch = tokens.slice(i, i + batchSize);
-      
+
       try {
         const response = await admin.messaging().sendEachForMulticast({
           tokens: batch,
@@ -163,7 +165,10 @@ export class NotificationsService implements OnModuleInit {
 
         // Remove invalid tokens
         response.responses.forEach((resp, idx) => {
-          if (!resp.success && resp.error?.code === 'messaging/registration-token-not-registered') {
+          if (
+            !resp.success &&
+            resp.error?.code === 'messaging/registration-token-not-registered'
+          ) {
             this.removeDeviceToken(batch[idx]).catch(() => {});
           }
         });
@@ -184,7 +189,9 @@ export class NotificationsService implements OnModuleInit {
       },
     });
 
-    this.logger.log(`Push notification sent: ${successCount} success, ${errorCount} failed`);
+    this.logger.log(
+      `Push notification sent: ${successCount} success, ${errorCount} failed`,
+    );
     return { success: true, sentTo: successCount, errors: errorCount };
   }
 
@@ -212,7 +219,7 @@ export class NotificationsService implements OnModuleInit {
     }
 
     const tokens = deviceTokens.map((d) => d.token);
-    
+
     try {
       const response = await admin.messaging().sendEachForMulticast({
         tokens,

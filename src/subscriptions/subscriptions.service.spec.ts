@@ -52,13 +52,13 @@ describe('SubscriptionsService', () => {
       const packages = service.getPackages();
 
       expect(packages).toHaveLength(3);
-      expect(packages.map(p => p.tier)).toEqual(['BRONZE', 'SILVER', 'GOLD']);
-      
-      const bronze = packages.find(p => p.tier === 'BRONZE');
+      expect(packages.map((p) => p.tier)).toEqual(['BRONZE', 'SILVER', 'GOLD']);
+
+      const bronze = packages.find((p) => p.tier === 'BRONZE');
       expect(bronze?.monthlyPrice).toBe(350);
       expect(bronze?.benefits).toContain('Annual dental checkup');
 
-      const gold = packages.find(p => p.tier === 'GOLD');
+      const gold = packages.find((p) => p.tier === 'GOLD');
       expect(gold?.monthlyPrice).toBe(700);
       expect(gold?.benefits).toContain('Family discounts');
     });

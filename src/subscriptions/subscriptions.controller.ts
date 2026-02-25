@@ -1,5 +1,27 @@
-import { Controller, Get, Post, Body, UseGuards, Request, Query, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  Request,
+  Query,
+  UnauthorizedException,
+} from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
+
+interface RequestWithUser extends ExpressRequest {
+  user: {
+    id: string;
+    email?: string;
+  };
+}
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from './subscriptions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,7 +46,7 @@ export class SubscriptionsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current member subscription' })
-  async getCurrent(@Request() req) {
+  async getCurrent(@Request() req: RequestWithUser) {
     return this.subscriptionsService.getSubscription(req.user.id);
   }
 
@@ -32,7 +54,7 @@ export class SubscriptionsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Subscribe to a package' })
-  async subscribe(@Request() req, @Body() dto: SubscribeDto) {
+  async subscribe(@Request() req: RequestWithUser, @Body() dto: SubscribeDto) {
     return this.subscriptionsService.subscribe(req.user.id, dto.tier);
   }
 
@@ -40,7 +62,7 @@ export class SubscriptionsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Upgrade to a higher tier package' })
-  async upgrade(@Request() req, @Body() dto: UpgradeDto) {
+  async upgrade(@Request() req: RequestWithUser, @Body() dto: UpgradeDto) {
     return this.subscriptionsService.upgrade(req.user.id, dto.newTier);
   }
 
@@ -55,5 +77,16 @@ export class SubscriptionsController {
     }
 
     return this.subscriptionsService.deactivateUnpaidSubscriptions();
+  }
+
+  @Post('dev/mock-payment')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[DEV ONLY] Mock a successful payment to activate subscription',
+  })
+  async mockPayment(@Request() req: ExpressRequest, @Body() dto: SubscribeDto) {
+    const userId = (req as any).user?.id;
+    return this.subscriptionsService.mockPaymentAndActivate(userId, dto.tier);
   }
 }

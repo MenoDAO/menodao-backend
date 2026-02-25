@@ -35,40 +35,40 @@ export class StatsService {
     ] = await Promise.all([
       // Total members
       this.prisma.member.count(),
-      
+
       // New members today
       this.prisma.member.count({
         where: { createdAt: { gte: startOfDay } },
       }),
-      
+
       // New members this week
       this.prisma.member.count({
         where: { createdAt: { gte: startOfWeek } },
       }),
-      
+
       // New members this month
       this.prisma.member.count({
         where: { createdAt: { gte: startOfMonth } },
       }),
-      
+
       // Active subscriptions
       this.prisma.subscription.count({
         where: { isActive: true },
       }),
-      
+
       // Subscriptions by tier
       this.prisma.subscription.groupBy({
         by: ['tier'],
         _count: true,
         where: { isActive: true },
       }),
-      
+
       // Total revenue (all completed contributions)
       this.prisma.contribution.aggregate({
         _sum: { amount: true },
         where: { status: 'COMPLETED' },
       }),
-      
+
       // Revenue this month
       this.prisma.contribution.aggregate({
         _sum: { amount: true },
@@ -77,12 +77,12 @@ export class StatsService {
           createdAt: { gte: startOfMonth },
         },
       }),
-      
+
       // Pending payments
       this.prisma.contribution.count({
         where: { status: 'PENDING' },
       }),
-      
+
       // Completed payments this month
       this.prisma.contribution.count({
         where: {
@@ -90,7 +90,7 @@ export class StatsService {
           createdAt: { gte: startOfMonth },
         },
       }),
-      
+
       // Failed payments this month
       this.prisma.contribution.count({
         where: {
@@ -98,17 +98,17 @@ export class StatsService {
           createdAt: { gte: startOfMonth },
         },
       }),
-      
+
       // SMS count today
       this.prisma.smsLog.count({
         where: { createdAt: { gte: startOfDay } },
       }),
-      
+
       // SMS count this week
       this.prisma.smsLog.count({
         where: { createdAt: { gte: startOfWeek } },
       }),
-      
+
       // SMS count this month
       this.prisma.smsLog.count({
         where: { createdAt: { gte: startOfMonth } },
@@ -170,7 +170,7 @@ export class StatsService {
       last30Days.map(async (date) => {
         const nextDay = new Date(date);
         nextDay.setDate(nextDay.getDate() + 1);
-        
+
         const count = await this.prisma.member.count({
           where: {
             createdAt: {
@@ -179,7 +179,7 @@ export class StatsService {
             },
           },
         });
-        
+
         return {
           date: date.toISOString().split('T')[0],
           count,
@@ -220,7 +220,7 @@ export class StatsService {
       last30Days.map(async (date) => {
         const nextDay = new Date(date);
         nextDay.setDate(nextDay.getDate() + 1);
-        
+
         const [completed, failed, revenue] = await Promise.all([
           this.prisma.contribution.count({
             where: {
@@ -242,7 +242,7 @@ export class StatsService {
             },
           }),
         ]);
-        
+
         return {
           date: date.toISOString().split('T')[0],
           completed,
@@ -287,17 +287,21 @@ export class StatsService {
       // SMS counts by period
       Promise.all([
         this.prisma.smsLog.count({ where: { createdAt: { gte: startOfDay } } }),
-        this.prisma.smsLog.count({ where: { createdAt: { gte: startOfWeek } } }),
-        this.prisma.smsLog.count({ where: { createdAt: { gte: startOfMonth } } }),
+        this.prisma.smsLog.count({
+          where: { createdAt: { gte: startOfWeek } },
+        }),
+        this.prisma.smsLog.count({
+          where: { createdAt: { gte: startOfMonth } },
+        }),
         this.prisma.smsLog.count(),
       ]),
-      
+
       // SMS by status
       this.prisma.smsLog.groupBy({
         by: ['status'],
         _count: true,
       }),
-      
+
       // Recent SMS logs
       this.prisma.smsLog.findMany({
         orderBy: { createdAt: 'desc' },

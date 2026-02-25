@@ -12,12 +12,20 @@ import { SmsModule } from '../sms/sms.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret',
-        signOptions: {
-          expiresIn: 604800, // 7 days in seconds
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET environment variable is not set. Cannot start the application.',
+          );
+        }
+        return {
+          secret,
+          signOptions: {
+            expiresIn: 604800, // 7 days in seconds
+          },
+        };
+      },
       inject: [ConfigService],
     }),
     SmsModule,

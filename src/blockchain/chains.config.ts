@@ -80,9 +80,16 @@ export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
 /**
  * Get chain config by ID
  */
-export function getChainConfig(chainId: ChainId, useTestnet = false): ChainConfig & { activeChainId: number; activeRpcUrl: string; activeExplorerUrl: string } {
+export function getChainConfig(
+  chainId: ChainId,
+  useTestnet = false,
+): ChainConfig & {
+  activeChainId: number;
+  activeRpcUrl: string;
+  activeExplorerUrl: string;
+} {
   const config = CHAIN_CONFIGS[chainId];
-  
+
   if (useTestnet && config.testnet) {
     return {
       ...config,
@@ -91,7 +98,7 @@ export function getChainConfig(chainId: ChainId, useTestnet = false): ChainConfi
       activeExplorerUrl: config.testnet.explorerUrl,
     };
   }
-  
+
   return {
     ...config,
     activeChainId: config.chainId,
@@ -101,6 +108,6 @@ export function getChainConfig(chainId: ChainId, useTestnet = false): ChainConfi
 }
 
 /**
- * Default chain for MenoDAO (Polygon for low fees)
+ * Default chain for MenoDAO (Celo for low fees and African focus)
  */
-export const DEFAULT_CHAIN: ChainId = 'polygon';
+export const DEFAULT_CHAIN: ChainId = 'celo';

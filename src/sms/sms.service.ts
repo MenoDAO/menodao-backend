@@ -47,7 +47,8 @@ export class SmsService {
     const providerUrl = this.configService.get<string>('SMS_PROVIDER_URL');
     const apiKey = this.configService.get<string>('SMS_PROVIDER_API_KEY');
     const partnerId = this.configService.get<string>('SMS_PROVIDER_PARTNER_ID');
-    const shortcode = this.configService.get<string>('SMS_SENDER_ID') || 'MenoDAO';
+    const shortcode =
+      this.configService.get<string>('SMS_SENDER_ID') || 'MenoDAO';
     const nodeEnv = this.configService.get<string>('NODE_ENV');
 
     // In development, just log the message (unless SMS is explicitly configured)
@@ -97,11 +98,13 @@ export class SmsService {
       };
 
       this.logger.log(`Sending SMS to ${normalizedPhone}`);
-      this.logger.debug(`SMS Data: ${JSON.stringify({
-        mobile: smsData.mobile,
-        shortcode: smsData.shortcode,
-        messageLength: message.length,
-      })}`);
+      this.logger.debug(
+        `SMS Data: ${JSON.stringify({
+          mobile: smsData.mobile,
+          shortcode: smsData.shortcode,
+          messageLength: message.length,
+        })}`,
+      );
 
       // Send POST request to provider
       const response = await axios.post(providerUrl, smsData, {
@@ -122,7 +125,9 @@ export class SmsService {
           smsResponse['response-code'] === 200 ||
           smsResponse['response-code'] === '200'
         ) {
-          this.logger.log(`SMS sent successfully to ${normalizedPhone}. Message ID: ${smsResponse.messageid}`);
+          this.logger.log(
+            `SMS sent successfully to ${normalizedPhone}. Message ID: ${smsResponse.messageid}`,
+          );
           await this.logSms(normalizedPhone, message, 'SENT');
           return {
             success: true,
@@ -130,12 +135,18 @@ export class SmsService {
             responseCode: smsResponse['response-code'],
           };
         } else {
-          const errorDesc = smsResponse['response-description'] || 'SMS sending failed';
-          this.logger.error(`SMS failed: ${errorDesc} (code: ${smsResponse['response-code']})`);
+          const errorDesc =
+            smsResponse['response-description'] || 'SMS sending failed';
+          this.logger.error(
+            `SMS failed: ${errorDesc} (code: ${smsResponse['response-code']})`,
+          );
           await this.logSms(normalizedPhone, message, 'FAILED', errorDesc);
           return {
             success: false,
-            error: this.mapProviderError(smsResponse['response-code'], errorDesc),
+            error: this.mapProviderError(
+              smsResponse['response-code'],
+              errorDesc,
+            ),
             responseCode: smsResponse['response-code'],
           };
         }
@@ -145,10 +156,14 @@ export class SmsService {
         await this.logSms(normalizedPhone, message, 'SENT');
         return {
           success: true,
-          messageId: response.data.messageId || response.data.id || String(Date.now()),
+          messageId:
+            response.data.messageId || response.data.id || String(Date.now()),
         };
       } else {
-        const errorMessage = response.data.error || response.data.message || 'Unexpected response format';
+        const errorMessage =
+          response.data.error ||
+          response.data.message ||
+          'Unexpected response format';
         this.logger.error(`SMS failed: ${errorMessage}`);
         await this.logSms(normalizedPhone, message, 'FAILED', errorMessage);
         return {
@@ -297,5 +312,26 @@ export class SmsService {
   ): Promise<SMSResult> {
     const message = `Your MenoDAO ${claimType} claim has been ${status.toLowerCase()}. Check the app for details.`;
     return this.sendSms(phoneNumber, message);
+  }
+  /**
+   * Send bulk SMS to multiple recipients
+   */
+  async sendBulkSms(
+    phoneNumbers: string[],
+    message: string,
+  ): Promise<{ total: number; successful: number; failed: number }> {
+    let successful = 0;
+    let failed = 0;
+
+    for (const phone of phoneNumbers) {
+      const result = await this.sendSms(phone, message);
+      if (result.success) {
+        successful++;
+      } else {
+        failed++;
+      }
+    }
+
+    return { total: phoneNumbers.length, successful, failed };
   }
 }

@@ -8,7 +8,6 @@ echo "🚀 MenoDAO ECS Cluster Provisioning"
 echo "===================================="
 
 # Configuration
-CLUSTER_NAME="menodao"
 REGION="${AWS_REGION:-us-east-1}"
 
 # Check AWS CLI
@@ -27,35 +26,35 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 echo "📍 AWS Account: $ACCOUNT_ID"
 echo "📍 Region: $REGION"
-echo "📍 Cluster Name: $CLUSTER_NAME"
 echo ""
 
-# Check if cluster already exists
-if aws ecs describe-clusters --clusters $CLUSTER_NAME --region $REGION --query "clusters[?status=='ACTIVE']" --output text | grep -q $CLUSTER_NAME; then
-    echo "ℹ️  ECS cluster '$CLUSTER_NAME' already exists"
-else
-    echo "📦 Creating ECS cluster..."
-    aws ecs create-cluster \
-        --cluster-name $CLUSTER_NAME \
-        --capacity-providers FARGATE FARGATE_SPOT \
-        --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1,base=1 \
-        --settings name=containerInsights,value=enabled \
-        --configuration executeCommandConfiguration={logging=DEFAULT} \
-        --region $REGION
-    echo "✅ ECS cluster created: $CLUSTER_NAME"
-fi
+# Provision clusters
+for ENV in "dev" "production"; do
+    CLUSTER_NAME="menodao-${ENV}"
+    echo "🏗️  Processing cluster: $CLUSTER_NAME"
+    
+    # Check if cluster already exists
+    if aws ecs describe-clusters --clusters $CLUSTER_NAME --region $REGION --query "clusters[?status=='ACTIVE']" --output text | grep -q $CLUSTER_NAME; then
+        echo "ℹ️  ECS cluster '$CLUSTER_NAME' already exists"
+    else
+        echo "📦 Creating ECS cluster..."
+        aws ecs create-cluster \
+            --cluster-name $CLUSTER_NAME \
+            --capacity-providers FARGATE FARGATE_SPOT \
+            --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1,base=1 \
+            --settings name=containerInsights,value=enabled \
+            --configuration executeCommandConfiguration={logging=DEFAULT} \
+            --region $REGION
+        echo "✅ ECS cluster created: $CLUSTER_NAME"
+    fi
 
-# Create CloudWatch log groups
-echo ""
-echo "📝 Setting up CloudWatch log groups..."
-
-for ENV in "dev" "prod"; do
-    LOG_GROUP="/ecs/menodao-api-${ENV}"
+    # Create CloudWatch log groups
+    LOG_GROUP="/ecs/menodao-${ENV}"
     if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --region $REGION --query "logGroups[?logGroupName=='$LOG_GROUP']" --output text | grep -q "$LOG_GROUP"; then
         echo "ℹ️  Log group already exists: $LOG_GROUP"
     else
         aws logs create-log-group --log-group-name "$LOG_GROUP" --region $REGION
-        RETENTION=$([[ "$ENV" == "prod" ]] && echo 30 || echo 7)
+        RETENTION=$([[ "$ENV" == "production" ]] && echo 30 || echo 7)
         aws logs put-retention-policy --log-group-name "$LOG_GROUP" --retention-in-days $RETENTION --region $REGION
         echo "✅ Log group created: $LOG_GROUP (retention: ${RETENTION} days)"
     fi

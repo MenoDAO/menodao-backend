@@ -16,6 +16,8 @@ model Member {
   location        String?
   walletAddress   String?  @unique
   isVerified      Boolean  @default(false)
+  branch          String?
+  preferredChain  String?  @default("celo")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -27,6 +29,8 @@ model Member {
   otpCodes        OTPCode[]
   transactions    BlockchainTransaction[]
   deviceTokens    DeviceToken[]
+  visits          Visit[]
+  campRegistrations CampRegistration[]
 }
 
 // OTP codes for SMS authentication
@@ -100,8 +104,10 @@ model Claim {
   description     String
   amount          Int         // Amount in KES
   status          ClaimStatus @default(PENDING)
+  rejectionReason String?     // Reason provided by staff when rejecting
   txHash          String?     // Blockchain transaction hash for disbursement
   campId          String?
+  visitId         String?     // Link to visit if created from staff dashboard
   processedAt     DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -109,6 +115,7 @@ model Claim {
   member          Member      @relation(fields: [memberId], references: [id])
   memberId        String
   camp            Camp?       @relation(fields: [campId], references: [id])
+  visit           Visit?      @relation(fields: [visitId], references: [id])
 }
 
 enum ClaimType {
@@ -171,6 +178,7 @@ model CampRegistration {
   campId      String
   memberId    String
   camp        Camp     @relation(fields: [campId], references: [id])
+  member      Member   @relation(fields: [memberId], references: [id])
 
   @@unique([campId, memberId])
 }
@@ -225,6 +233,95 @@ model AdminUser {
   updatedAt    DateTime  @updatedAt
 }
 
+// Staff user for clinic/camp staff access
+model StaffUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  fullName     String
+  role         StaffRole @default(STAFF)
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+  branch       String?
+  clinicId     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  visits       Visit[]
+  clinic       Clinic?   @relation(fields: [clinicId], references: [id])
+}
+
+enum StaffRole {
+  STAFF  // Can check-in and add claims
+  ADMIN  // Can override limits and void claims
+}
+
+// Patient visit record
+model Visit {
+  id              String          @id @default(uuid())
+  memberId        String
+  staffId         String          // Staff who checked in the patient
+  status          VisitStatus     @default(OPEN)
+  totalCost       Int             @default(0) // Total cost of procedures in KES
+  checkedInAt     DateTime        @default(now())
+  dischargedAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  member          Member          @relation(fields: [memberId], references: [id])
+  staff           StaffUser       @relation(fields: [staffId], references: [id])
+  procedures      VisitProcedure[]
+  claims          Claim[]
+  
+  // Clinical data for SACCO/Insurance and data privacy compliance
+  chiefComplaint  String?
+  medicalHistory  String?
+  vitals          Json?           // { bp: string, pulse: number, temp: number }
+  clinicalNotes   String?
+  hasConsent      Boolean         @default(false)
+  
+  @@index([memberId])
+  @@index([staffId])
+  @@index([status])
+}
+
+enum VisitStatus {
+  OPEN      // Patient checked in, treatment in progress
+  DISCHARGED // Visit completed and closed
+  CANCELLED // Visit cancelled
+}
+
+// Dental procedure definitions
+model Procedure {
+  id              String      @id @default(uuid())
+  code            String      @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
+  name            String      // e.g., "Consultation", "Simple Extraction"
+  description     String?
+  cost            Int         // Cost in KES
+  allowedTiers    Json        // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  visitProcedures VisitProcedure[]
+}
+
+// Join table: Visit-Procedure relationship
+model VisitProcedure {
+  id          String   @id @default(uuid())
+  visitId     String
+  procedureId String
+  cost        Int      // Cost at time of procedure (in case prices change)
+  addedAt     DateTime @default(now())
+  addedBy     String   // Staff ID who added the procedure
+
+  visit       Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  procedure   Procedure @relation(fields: [procedureId], references: [id])
+
+  @@index([visitId])
+  @@index([procedureId])
+}
+
 // Device tokens for push notifications
 model DeviceToken {
   id        String   @id @default(uuid())
@@ -267,4 +364,80 @@ enum SmsStatus {
   PENDING
   SENT
   FAILED
+}
+
+// Site visit tracking for landing page analytics
+model SiteVisit {
+  id          String   @id @default(uuid())
+  page        String   // URL path visited
+  referrer    String?  // HTTP referrer
+  utmSource   String?  // utm_source param
+  utmMedium   String?  // utm_medium param
+  utmCampaign String?  // utm_campaign param
+  userAgent   String?
+  ip          String?  // Hashed for privacy
+  sessionId   String?  // Client-side session ID to group visits
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([utmSource])
+  @@index([sessionId])
+}
+
+// Clinic registration status
+enum ClinicStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+// X-Ray capability
+enum XRayCapability {
+  NONE
+  PERIAPICAL
+  OPG
+}
+
+// Partner clinic model
+model Clinic {
+  id                     String         @id @default(uuid())
+  // Section 1: Clinic Details
+  name                   String
+  subCounty              String
+  physicalLocation       String
+  googleMapsLink         String?
+  operatingHours         String
+  operatesOnWeekends     Boolean        @default(false)
+  // Section 2: Contacts
+  leadDentistName        String
+  ownerPhone             String
+  managerName            String?
+  whatsappNumber         String
+  email                  String?
+  // Section 3: Payment & Settlement
+  mpesaTillOrPaybill     String
+  tillPaybillName        String
+  bankAccountName        String?
+  bankAccountNumber      String?
+  // Section 4: Capacity & Compliance
+  kmpdcRegNumber         String?
+  activeDentalChairs     Int            @default(1)
+  xrayCapability         XRayCapability @default(NONE)
+  specializedServices    Json?          // ["ORTHODONTIST", "MAXILLOFACIAL", "PEDIATRIC"]
+  // Section 5: Agreement
+  agreedToRateCard       Boolean        @default(false)
+  agreedToNoChargePolicy Boolean        @default(false)
+  // Admin fields
+  status                 ClinicStatus   @default(PENDING)
+  rejectionReason        String?
+  approvedAt             DateTime?
+  approvedBy             String?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  // Relations
+  staffUsers             StaffUser[]
+
+  @@index([status])
+  @@index([subCounty])
 }
