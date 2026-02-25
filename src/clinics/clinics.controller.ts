@@ -21,57 +21,51 @@ import { AdminAuthGuard } from '../admin/guards/admin-auth.guard';
 import { ClinicStatus } from '@prisma/client';
 
 @ApiTags('Clinics')
-@Controller()
+@Controller('clinics')
 export class ClinicsController {
   constructor(private readonly clinicsService: ClinicsService) {}
 
-  // ── Public endpoint (no auth) ─────────────────────────────
-
-  @Post('clinics/register')
+  @Post('register')
   @HttpCode(201)
   @ApiOperation({ summary: 'Register a new partner clinic (public)' })
   async register(@Body() dto: RegisterClinicDto) {
     return this.clinicsService.registerClinic(dto);
   }
+}
 
-  // ── Admin endpoints ───────────────────────────────────────
+@ApiTags('Admin Clinics')
+@Controller('admin/clinics')
+@UseGuards(AdminAuthGuard)
+@ApiBearerAuth()
+export class AdminClinicsController {
+  constructor(private readonly clinicsService: ClinicsService) {}
 
-  @Get('admin/clinics')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
+  @Get()
   @ApiOperation({ summary: 'List clinics (admin)' })
   @ApiQuery({ name: 'status', required: false, enum: ClinicStatus })
   async listClinics(@Query('status') status?: ClinicStatus) {
     return this.clinicsService.listClinics(status);
   }
 
-  @Get('admin/clinics/:id')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
+  @Get(':id')
   @ApiOperation({ summary: 'Get clinic details (admin)' })
   async getClinic(@Param('id') id: string) {
     return this.clinicsService.getClinic(id);
   }
 
-  @Post('admin/clinics/:id/approve')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
+  @Post(':id/approve')
   @ApiOperation({ summary: 'Approve a clinic and generate staff credentials' })
   async approveClinic(@Param('id') id: string, @Request() req: any) {
     return this.clinicsService.approveClinic(id, req.admin.id);
   }
 
-  @Post('admin/clinics/:id/suspend')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
+  @Post(':id/suspend')
   @ApiOperation({ summary: 'Suspend a clinic' })
   async suspendClinic(@Param('id') id: string) {
     return this.clinicsService.suspendClinic(id);
   }
 
-  @Post('admin/clinics/:id/reject')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
+  @Post(':id/reject')
   @ApiOperation({ summary: 'Reject a clinic application' })
   async rejectClinic(@Param('id') id: string, @Body('reason') reason: string) {
     return this.clinicsService.rejectClinic(id, reason);
