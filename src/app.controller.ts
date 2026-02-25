@@ -22,8 +22,8 @@ export class AppController {
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
-      version: process.env.npm_package_version || '1.0.0',
-      deployedAt: '2026-02-25T09:15:00Z', // DEBUG: Final version marker
+      version: '1.0.1',
+      deployedAt: '2026-02-25T06:54:00Z', // FINAL FIX
     };
   }
 }
