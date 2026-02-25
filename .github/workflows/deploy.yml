@@ -11,9 +11,10 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: menodao-backend
-  ECS_CLUSTER: menodao
-  ECS_SERVICE_PROD: menodao-api
-  ECS_SERVICE_DEV: menodao-api-dev
+  ECS_CLUSTER_PROD: menodao-production
+  ECS_CLUSTER_DEV: menodao-dev
+  ECS_SERVICE_PROD: menodao-backend-production
+  ECS_SERVICE_DEV: menodao-backend-dev
   CONTAINER_NAME: menodao-backend
 
 jobs:
@@ -155,13 +156,13 @@ jobs:
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE_DEV }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
 
       - name: Run database migrations
         run: |
           aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER }} \
+            --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition ${{ env.ECS_SERVICE_DEV }}-migrate \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
             --launch-type FARGATE || true
@@ -226,7 +227,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '✅ ECS cluster provisioned!\n\n🏗️ Cluster: `menodao`\n\nThis provisioning was triggered by `/provision` command.'
+              body: '✅ ECS clusters provisioned!\n\n🏗️ Clusters: `menodao-dev` and `menodao-production`\n\nThis provisioning was triggered by `/provision` command.'
             })
 
   # Deploy to dev via PR comment
@@ -296,7 +297,7 @@ jobs:
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE_DEV }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
 
       - name: Comment on PR
@@ -379,13 +380,13 @@ jobs:
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE_PROD }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          cluster: ${{ env.ECS_CLUSTER_PROD }}
           wait-for-service-stability: true
 
       - name: Run database migrations
         run: |
           aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER }} \
+            --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition ${{ env.ECS_SERVICE_PROD }}-migrate \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
             --launch-type FARGATE || true
@@ -439,13 +440,13 @@ jobs:
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE_PROD }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          cluster: ${{ env.ECS_CLUSTER_PROD }}
           wait-for-service-stability: true
 
       - name: Run database migrations
         run: |
           aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER }} \
+            --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition ${{ env.ECS_SERVICE_PROD }}-migrate \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
             --launch-type FARGATE || true

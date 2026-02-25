@@ -63,28 +63,29 @@ if [ -z "$ENV" ]; then
 fi
 
 # Configuration
-CLUSTER_NAME="menodao"
 REGION="${AWS_REGION:-us-east-1}"
 ECR_REPOSITORY="menodao-backend"
 
 if [ "$ENV" == "prod" ]; then
-    SERVICE_NAME="menodao-api"
-    TASK_FAMILY="menodao-api"
+    CLUSTER_NAME="menodao-production"
+    SERVICE_NAME="menodao-backend-production"
+    TASK_FAMILY="menodao-backend-production"
     DEFAULT_TAG="prod-latest"
     CPU="512"
     MEMORY="1024"
     DESIRED_COUNT="${SCALE:-2}"
-    LOG_GROUP="/ecs/menodao-api-prod"
-    SECRETS_ARN_NAME="menodao/api/secrets"
+    LOG_GROUP="/ecs/menodao-production"
+    SECRETS_ARN_NAME="menodao/production/app"
 else
-    SERVICE_NAME="menodao-api-dev"
-    TASK_FAMILY="menodao-api-dev"
+    CLUSTER_NAME="menodao-dev"
+    SERVICE_NAME="menodao-backend-dev"
+    TASK_FAMILY="menodao-backend-dev"
     DEFAULT_TAG="dev-latest"
     CPU="256"
     MEMORY="512"
     DESIRED_COUNT="${SCALE:-1}"
-    LOG_GROUP="/ecs/menodao-api"
-    SECRETS_ARN_NAME="menodao/api-stg/secrets"
+    LOG_GROUP="/ecs/menodao-dev"
+    SECRETS_ARN_NAME="menodao/dev/app"
 fi
 
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
