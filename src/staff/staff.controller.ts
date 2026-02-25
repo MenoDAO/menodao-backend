@@ -136,4 +136,12 @@ export class StaffController {
       dto.newPassword,
     );
   }
+
+  @Get('clinics')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List approved clinics (staff view)' })
+  async getClinics(@Request() req: AuthenticatedRequest) {
+    return this.staffService.getClinics();
+  }
 }

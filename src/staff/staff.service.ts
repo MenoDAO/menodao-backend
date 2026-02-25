@@ -383,4 +383,26 @@ export class StaffService implements OnModuleInit {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async getClinics() {
+    // Return only approved clinics for staff view
+    return this.prisma.clinic.findMany({
+      where: {
+        status: 'APPROVED',
+      },
+      select: {
+        id: true,
+        name: true,
+        subCounty: true,
+        ward: true,
+        contactPerson: true,
+        contactPhone: true,
+        contactEmail: true,
+        status: true,
+        createdAt: true,
+        approvedAt: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
 }
