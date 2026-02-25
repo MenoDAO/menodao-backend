@@ -23,7 +23,9 @@ import { ClinicStatus } from '@prisma/client';
 @ApiTags('Clinics')
 @Controller('clinics')
 export class ClinicsController {
-  constructor(private readonly clinicsService: ClinicsService) {}
+  constructor(private readonly clinicsService: ClinicsService) {
+    console.log('✅ ClinicsController (Public) initialized at /clinics');
+  }
 
   @Post('register')
   @HttpCode(201)
@@ -38,7 +40,9 @@ export class ClinicsController {
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 export class AdminClinicsController {
-  constructor(private readonly clinicsService: ClinicsService) {}
+  constructor(private readonly clinicsService: ClinicsService) {
+    console.log('✅ AdminClinicsController initialized at /admin/clinics');
+  }
 
   @Get()
   @ApiOperation({ summary: 'List clinics (admin)' })
@@ -55,7 +59,10 @@ export class AdminClinicsController {
 
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve a clinic and generate staff credentials' })
-  async approveClinic(@Param('id') id: string, @Request() req: any) {
+  async approveClinic(
+    @Param('id') id: string,
+    @Request() req: { admin: { id: string } },
+  ) {
     return this.clinicsService.approveClinic(id, req.admin.id);
   }
 
