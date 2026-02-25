@@ -77,98 +77,105 @@ export class VisitsService {
    * Search member by phone number and return status
    */
   async searchMember(phoneNumber: string): Promise<SearchMemberResult> {
-    const rawInput = phoneNumber.trim();
-    this.logger.log(`Searching for member: ${rawInput}`);
+    try {
+      const rawInput = phoneNumber.trim();
+      this.logger.log(`Searching for member: ${rawInput}`);
 
-    // Normalize phone number to standard format (+254...)
-    const normalized = this.normalizePhoneNumber(rawInput);
-    const suffix = rawInput.length >= 9 ? rawInput.slice(-9) : rawInput;
+      // Normalize phone number to standard format (+254...)
+      const normalized = this.normalizePhoneNumber(rawInput);
+      const suffix = rawInput.length >= 9 ? rawInput.slice(-9) : rawInput;
 
-    const orConditions: Record<string, any>[] = [
-      { phoneNumber: normalized },
-      { phoneNumber: rawInput },
-      {
-        phoneNumber: normalized.startsWith('+')
-          ? normalized.substring(1)
-          : '+' + normalized,
-      },
-    ];
+      const orConditions: Record<string, any>[] = [
+        { phoneNumber: normalized },
+        { phoneNumber: rawInput },
+        {
+          phoneNumber: normalized.startsWith('+')
+            ? normalized.substring(1)
+            : '+' + normalized,
+        },
+      ];
 
-    if (suffix.length >= 7) {
-      orConditions.push({ phoneNumber: { endsWith: suffix } });
-    }
+      if (suffix.length >= 7) {
+        orConditions.push({ phoneNumber: { endsWith: suffix } });
+      }
 
-    // Try to find by multiple conditions
-    const member = await this.prisma.member.findFirst({
-      where: {
-        OR: orConditions,
-      },
-      include: {
-        subscription: true,
-        claims: {
-          where: {
-            status: { in: [ClaimStatus.APPROVED, ClaimStatus.DISBURSED] },
+      // Try to find by multiple conditions
+      const member = await this.prisma.member.findFirst({
+        where: {
+          OR: orConditions,
+        },
+        include: {
+          subscription: true,
+          claims: {
+            where: {
+              status: { in: [ClaimStatus.APPROVED, ClaimStatus.DISBURSED] },
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!member) {
-      this.logger.warn(
-        `Member not found for input: ${rawInput} (Normalized: ${normalized}, Suffix: ${suffix}, Conditions: ${JSON.stringify(orConditions)})`,
+      if (!member) {
+        this.logger.warn(
+          `Member not found for input: ${rawInput} (Normalized: ${normalized}, Suffix: ${suffix})`,
+        );
+        return {
+          found: false,
+          message:
+            'Member not found. Please verify the phone number or ask the patient to register.',
+        };
+      }
+
+      this.logger.log(
+        `Member found: ${member.fullName || 'Unnamed'} (${member.phoneNumber})`,
       );
-      return {
-        found: false,
-        message:
-          'Member not found. Please verify the phone number or ask the patient to register.',
-      };
-    }
 
-    this.logger.log(
-      `Member found: ${member.fullName || 'Unnamed'} (${member.phoneNumber})`,
-    );
+      if (!member.subscription || !member.subscription.isActive) {
+        return {
+          found: true,
+          active: false,
+          member: {
+            id: member.id,
+            phoneNumber: member.phoneNumber,
+            fullName: member.fullName,
+          },
+          message: 'No active subscription',
+        };
+      }
 
-    if (!member.subscription || !member.subscription.isActive) {
+      // Calculate remaining claim limit
+      const tier = member.subscription.tier;
+      const allocatedLimit = CLAIM_LIMITS[tier];
+      const totalClaimed = member.claims.reduce(
+        (sum, claim) => sum + claim.amount,
+        0,
+      );
+      const remainingLimit = Math.max(0, allocatedLimit - totalClaimed);
+
       return {
         found: true,
-        active: false,
+        active: true,
         member: {
           id: member.id,
           phoneNumber: member.phoneNumber,
           fullName: member.fullName,
+          tier: tier,
         },
-        message: 'No active subscription',
+        subscription: {
+          tier: tier,
+          isActive: member.subscription.isActive,
+        },
+        claimLimit: {
+          allocated: allocatedLimit,
+          used: totalClaimed,
+          remaining: remainingLimit,
+        },
       };
+    } catch (error) {
+      this.logger.error('Error searching for member:', error);
+      throw new BadRequestException(
+        'Failed to search for member. Please try again.',
+      );
     }
-
-    // Calculate remaining claim limit
-    const tier = member.subscription.tier;
-    const allocatedLimit = CLAIM_LIMITS[tier];
-    const totalClaimed = member.claims.reduce(
-      (sum, claim) => sum + claim.amount,
-      0,
-    );
-    const remainingLimit = Math.max(0, allocatedLimit - totalClaimed);
-
-    return {
-      found: true,
-      active: true,
-      member: {
-        id: member.id,
-        phoneNumber: member.phoneNumber,
-        fullName: member.fullName,
-        tier: tier,
-      },
-      subscription: {
-        tier: tier,
-        isActive: member.subscription.isActive,
-      },
-      claimLimit: {
-        allocated: allocatedLimit,
-        used: totalClaimed,
-        remaining: remainingLimit,
-      },
-    };
   }
 
   /**

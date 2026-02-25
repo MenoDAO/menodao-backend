@@ -84,6 +84,7 @@ export class StaffController {
     const staff = await this.staffService.getProfile(req.staff.id);
 
     // If staff belongs to a clinic, only show members who have visited that clinic
+    // Otherwise show all members (for non-clinic staff)
     return this.staffService.getMembers({
       branch,
       clinicId: staff?.clinicId || undefined,

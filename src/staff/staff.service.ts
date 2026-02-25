@@ -318,44 +318,50 @@ export class StaffService implements OnModuleInit {
   }
 
   async getMembers(filters: { branch?: string; clinicId?: string }) {
-    const where: any = {};
+    try {
+      const where: any = {};
 
-    // If clinicId is provided, only show members who have visited this clinic
-    if (filters.clinicId) {
-      where.visits = {
-        some: {
-          staff: {
-            clinicId: filters.clinicId,
+      // If clinicId is provided, only show members who have visited this clinic
+      if (filters.clinicId) {
+        where.visits = {
+          some: {
+            staff: {
+              clinicId: filters.clinicId,
+            },
+          },
+        };
+      } else if (filters.branch) {
+        where.branch = filters.branch;
+      }
+
+      const members = await this.prisma.member.findMany({
+        where,
+        select: {
+          id: true,
+          fullName: true,
+          phoneNumber: true,
+          branch: true,
+          subscription: {
+            select: {
+              tier: true,
+            },
           },
         },
-      };
-    } else if (filters.branch) {
-      where.branch = filters.branch;
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return members.map((m) => ({
+        id: m.id,
+        fullName: m.fullName,
+        phoneNumber: m.phoneNumber,
+        branch: m.branch,
+        tier: m.subscription?.tier || 'BRONZE',
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching members:', error);
+      // Return empty array instead of throwing to prevent breaking the UI
+      return [];
     }
-
-    const members = await this.prisma.member.findMany({
-      where,
-      select: {
-        id: true,
-        fullName: true,
-        phoneNumber: true,
-        branch: true,
-        subscription: {
-          select: {
-            tier: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return members.map((m) => ({
-      id: m.id,
-      fullName: m.fullName,
-      phoneNumber: m.phoneNumber,
-      branch: m.branch,
-      tier: m.subscription?.tier || 'BRONZE',
-    }));
   }
 
   async getStaffUsers(filters: { branch?: string; role?: StaffRole }) {
