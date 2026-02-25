@@ -83,10 +83,24 @@ export class StaffService implements OnModuleInit {
     password: string,
   ): Promise<{
     accessToken: string;
-    staff: { id: string; username: string; fullName: string; role: string };
+    staff: {
+      id: string;
+      username: string;
+      fullName: string;
+      role: string;
+      clinicId?: string;
+    };
   }> {
     const staff = await this.prisma.staffUser.findUnique({
       where: { username },
+      include: {
+        clinic: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (!staff || !staff.isActive) {
@@ -109,6 +123,7 @@ export class StaffService implements OnModuleInit {
       sub: staff.id,
       username: staff.username,
       role: staff.role,
+      clinicId: staff.clinicId,
       type: 'staff',
     };
 
@@ -123,6 +138,7 @@ export class StaffService implements OnModuleInit {
         username: staff.username,
         fullName: staff.fullName,
         role: staff.role,
+        clinicId: staff.clinicId || undefined,
       },
     };
   }
@@ -165,11 +181,16 @@ export class StaffService implements OnModuleInit {
   /**
    * Verify staff JWT token
    */
-  async validateStaffToken(payload: { sub: string; type: string }): Promise<{
+  async validateStaffToken(payload: {
+    sub: string;
+    type: string;
+    clinicId?: string;
+  }): Promise<{
     id: string;
     username: string;
     fullName: string;
     role: string;
+    clinicId?: string;
   } | null> {
     if (payload.type !== 'staff') {
       return null;
@@ -182,6 +203,7 @@ export class StaffService implements OnModuleInit {
         username: true,
         fullName: true,
         role: true,
+        clinicId: true,
         isActive: true,
       },
     });
@@ -195,6 +217,7 @@ export class StaffService implements OnModuleInit {
       username: staff.username,
       fullName: staff.fullName,
       role: staff.role,
+      clinicId: staff.clinicId || undefined,
     };
   }
 
@@ -210,8 +233,16 @@ export class StaffService implements OnModuleInit {
         fullName: true,
         role: true,
         branch: true,
+        clinicId: true,
         lastLogin: true,
         createdAt: true,
+        clinic: {
+          select: {
+            id: true,
+            name: true,
+            subCounty: true,
+          },
+        },
       },
     });
 
@@ -286,11 +317,24 @@ export class StaffService implements OnModuleInit {
     };
   }
 
-  async getMembers(filters: { branch?: string }) {
+  async getMembers(filters: { branch?: string; clinicId?: string }) {
+    const where: any = {};
+
+    // If clinicId is provided, only show members who have visited this clinic
+    if (filters.clinicId) {
+      where.visits = {
+        some: {
+          staff: {
+            clinicId: filters.clinicId,
+          },
+        },
+      };
+    } else if (filters.branch) {
+      where.branch = filters.branch;
+    }
+
     const members = await this.prisma.member.findMany({
-      where: {
-        branch: filters.branch,
-      },
+      where,
       select: {
         id: true,
         fullName: true,

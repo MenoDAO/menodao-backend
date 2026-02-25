@@ -75,12 +75,19 @@ export class StaffController {
   @Get('members')
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'List all members (Staff access)' })
+  @ApiOperation({ summary: 'List members associated with this clinic' })
   async getMembers(
     @Request() req: AuthenticatedRequest,
     @Query('branch') branch?: string,
   ) {
-    return this.staffService.getMembers({ branch });
+    // Get staff details to check clinic association
+    const staff = await this.staffService.getProfile(req.staff.id);
+
+    // If staff belongs to a clinic, only show members who have visited that clinic
+    return this.staffService.getMembers({
+      branch,
+      clinicId: staff?.clinicId || undefined,
+    });
   }
 
   @Post('enroll')

@@ -232,6 +232,10 @@ export class VisitsService {
     const vm = v.member;
     const tier = vm.subscription?.tier || PackageTier.BRONZE;
 
+    this.logger.log(
+      `Check-in successful for member ${vm.phoneNumber} by staff ${staffId}`,
+    );
+
     return {
       visit: {
         id: v.id,
