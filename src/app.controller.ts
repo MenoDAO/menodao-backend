@@ -16,13 +16,14 @@ export class AppController {
     timestamp: string;
     environment: string;
     version: string;
+    deployedAt?: string;
   } {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
       version: process.env.npm_package_version || '1.0.0',
-      deployedAt: '2026-02-25T09:00:00Z', // DEBUG: Version marker
+      deployedAt: '2026-02-25T09:15:00Z', // DEBUG: Final version marker
     };
   }
 }
