@@ -78,7 +78,13 @@ export class AdminService implements OnModuleInit {
       type: 'admin',
     };
 
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new UnauthorizedException('JWT_SECRET is not configured');
+    }
+
     const accessToken = this.jwtService.sign(payload, {
+      secret,
       expiresIn: '24h', // Longer expiry for admin sessions
     });
 

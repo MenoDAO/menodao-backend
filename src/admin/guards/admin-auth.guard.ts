@@ -36,7 +36,11 @@ export class AdminAuthGuard implements CanActivate {
         );
       }
 
-      const payload = await this.jwtService.verifyAsync(token, { secret });
+      // Verify token with explicit secret and options
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret,
+        ignoreExpiration: false,
+      });
 
       if (payload.type !== 'admin') {
         throw new UnauthorizedException('Invalid token type');
@@ -54,6 +58,8 @@ export class AdminAuthGuard implements CanActivate {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
+      // Log the actual error for debugging
+      console.error('Admin auth error:', error);
       throw new UnauthorizedException('Invalid or expired token');
     }
   }

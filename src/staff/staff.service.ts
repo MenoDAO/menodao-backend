@@ -127,7 +127,13 @@ export class StaffService implements OnModuleInit {
       type: 'staff',
     };
 
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new UnauthorizedException('JWT_SECRET is not configured');
+    }
+
     const accessToken = this.jwtService.sign(payload, {
+      secret,
       expiresIn: '8h', // 8 hour expiry for staff sessions
     });
 

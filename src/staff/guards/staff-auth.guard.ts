@@ -35,7 +35,12 @@ export class StaffAuthGuard implements CanActivate {
           'Server configuration error: JWT_SECRET is not set',
         );
       }
-      const payload = await this.jwtService.verifyAsync(token, { secret });
+
+      // Verify token with explicit secret and options
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret,
+        ignoreExpiration: false,
+      });
 
       if (payload.type !== 'staff') {
         throw new UnauthorizedException('Invalid token type');
@@ -50,6 +55,8 @@ export class StaffAuthGuard implements CanActivate {
       request.staff = staff;
       return true;
     } catch (error) {
+      // Log the actual error for debugging
+      console.error('Staff auth error:', error);
       throw new UnauthorizedException('Invalid or expired token');
     }
   }
