@@ -4,14 +4,13 @@ import {
   ExecutionContext,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AdminService } from '../admin.service';
+import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AdminAuthGuard implements CanActivate {
   constructor(
-    private jwtService: JwtService,
     private configService: ConfigService,
     private adminService: AdminService,
   ) {}
@@ -36,11 +35,8 @@ export class AdminAuthGuard implements CanActivate {
         );
       }
 
-      // Verify token with explicit secret and options
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret,
-        ignoreExpiration: false,
-      });
+      // Verify token using jsonwebtoken directly
+      const payload = jwt.verify(token, secret) as any;
 
       if (payload.type !== 'admin') {
         throw new UnauthorizedException('Invalid token type');
@@ -58,7 +54,6 @@ export class AdminAuthGuard implements CanActivate {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      // Log the actual error for debugging
       console.error('Admin auth error:', error);
       throw new UnauthorizedException('Invalid or expired token');
     }
