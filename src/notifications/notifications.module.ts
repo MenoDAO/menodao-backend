@@ -10,23 +10,7 @@ import {
 } from './notifications.controller';
 
 @Module({
-  imports: [
-    PrismaModule,
-    forwardRef(() => AdminModule),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET');
-        if (!secret) {
-          throw new Error(
-            'JWT_SECRET environment variable is not set. Cannot start the application.',
-          );
-        }
-        return { secret };
-      },
-    }),
-  ],
+  imports: [PrismaModule, forwardRef(() => AdminModule)],
   controllers: [NotificationsController, AlertsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

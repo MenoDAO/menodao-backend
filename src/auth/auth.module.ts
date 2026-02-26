@@ -8,30 +8,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { SmsModule } from '../sms/sms.module';
 
 @Module({
-  imports: [
-    PassportModule.register({ defaultStrategy: 'jwt' }),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET');
-        if (!secret) {
-          throw new Error(
-            'JWT_SECRET environment variable is not set. Cannot start the application.',
-          );
-        }
-        return {
-          secret,
-          signOptions: {
-            expiresIn: 604800, // 7 days in seconds
-          },
-        };
-      },
-      inject: [ConfigService],
-    }),
-    SmsModule,
-  ],
+  imports: [PassportModule.register({ defaultStrategy: 'jwt' }), SmsModule],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule],
+  exports: [AuthService],
 })
 export class AuthModule {}

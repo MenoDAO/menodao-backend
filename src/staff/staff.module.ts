@@ -8,29 +8,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SmsModule } from '../sms/sms.module';
 
 @Module({
-  imports: [
-    PrismaModule,
-    SmsModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET');
-        if (!secret) {
-          throw new Error(
-            'JWT_SECRET environment variable is not set. Cannot start the application.',
-          );
-        }
-        return {
-          secret,
-          signOptions: { expiresIn: '8h' },
-        };
-      },
-      inject: [ConfigService],
-    }),
-  ],
+  imports: [PrismaModule, SmsModule],
   controllers: [StaffController],
   providers: [StaffService, StaffAuthGuard],
-  exports: [StaffService, StaffAuthGuard, JwtModule],
+  exports: [StaffService, StaffAuthGuard],
 })
 export class StaffModule {
   constructor() {

@@ -13,27 +13,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
-  imports: [
-    PrismaModule,
-    AnalyticsModule,
-    SubscriptionsModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET');
-        if (!secret) {
-          throw new Error(
-            'JWT_SECRET environment variable is not set. Cannot start the application.',
-          );
-        }
-        return {
-          secret,
-          signOptions: { expiresIn: '24h' },
-        };
-      },
-    }),
-  ],
+  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule],
   controllers: [
     AdminController,
     StatsController,
