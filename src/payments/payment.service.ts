@@ -192,9 +192,10 @@ export class PaymentService {
         return { valid: false, message: 'Transaction not found' };
       }
 
-      // Validate amount matches
+      // Validate amount matches - handle different field names
       const expectedAmount = contribution.amount;
-      const receivedAmount = data.Amount || 0;
+      const receivedAmount =
+        data.Amount || (data.TransAmount ? parseFloat(data.TransAmount) : 0);
 
       if (Math.abs(expectedAmount - receivedAmount) > 1) {
         this.logger.warn(
@@ -220,16 +221,24 @@ export class PaymentService {
     try {
       this.logger.log(`Processing SasaPay callback: ${JSON.stringify(data)}`);
 
-      const {
-        CheckoutRequestID,
-        MerchantRequestID,
-        ResultCode,
-        ResultDesc,
-        Amount,
-        MpesaReceiptNumber,
-        PhoneNumber,
-        TransactionDate,
-      } = data;
+      const { CheckoutRequestID, MerchantRequestID, ResultCode, ResultDesc } =
+        data;
+
+      // Extract amount from various possible fields
+      const amount =
+        data.Amount ||
+        (data.TransAmount ? parseFloat(data.TransAmount) : undefined);
+
+      // Extract receipt number from various possible fields
+      const receiptNumber =
+        data.MpesaReceiptNumber || data.TransactionCode || data.TransID;
+
+      // Extract phone number from various possible fields
+      const phoneNumber =
+        data.PhoneNumber || data.CustomerMobile || data.MSISDN;
+
+      // Extract transaction date/time
+      const transactionDate = data.TransactionDate || data.TransTime;
 
       // Find contribution by SasaPay callback identifiers
       const contribution = await this.findContributionByCallback(data);
@@ -241,8 +250,8 @@ export class PaymentService {
         return { success: false, message: 'Transaction not found' };
       }
 
-      // SasaPay: ResultCode '0' means success
-      const isSuccess = ResultCode === '0';
+      // SasaPay: ResultCode '0' means success, or Paid=true
+      const isSuccess = ResultCode === '0' || data.Paid === true;
 
       if (isSuccess) {
         // Update contribution to completed
@@ -252,20 +261,21 @@ export class PaymentService {
             status: 'COMPLETED',
             metadata: {
               ...((contribution.metadata as object) || {}),
-              mpesaReceiptNumber: MpesaReceiptNumber,
-              transactionCode: MpesaReceiptNumber, // Backward compat
-              customerMobile: PhoneNumber,
-              transactionDate: TransactionDate,
+              mpesaReceiptNumber: receiptNumber,
+              transactionCode: receiptNumber, // Backward compat
+              customerMobile: phoneNumber,
+              transactionDate: transactionDate,
               completedAt: new Date().toISOString(),
               resultCode: ResultCode,
               resultDesc: ResultDesc,
-              confirmedAmount: Amount,
+              confirmedAmount: amount,
+              fullCallbackData: data, // Store full callback for debugging
             },
           },
         });
 
         this.logger.log(
-          `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
+          `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${receiptNumber}`,
         );
         return { success: true, message: 'Payment processed successfully' };
       } else {
