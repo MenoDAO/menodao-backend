@@ -49,3 +49,6 @@ secrets/
 *.key
 *.crt
 credentials.json
+
+# BFG Repo Cleaner reports
+..bfg-report/
