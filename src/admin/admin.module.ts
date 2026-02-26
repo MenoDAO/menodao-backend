@@ -1,6 +1,4 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Module, Global } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -12,6 +10,7 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
+@Global()
 @Module({
   imports: [PrismaModule, AnalyticsModule, SubscriptionsModule],
   controllers: [
