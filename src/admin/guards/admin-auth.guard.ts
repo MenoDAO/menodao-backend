@@ -5,12 +5,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { AdminService } from '../admin.service';
 
 @Injectable()
 export class AdminAuthGuard implements CanActivate {
   constructor(
     private jwtService: JwtService,
+    private configService: ConfigService,
     private adminService: AdminService,
   ) {}
 
@@ -27,7 +29,14 @@ export class AdminAuthGuard implements CanActivate {
     const token = authHeader.substring(7);
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new UnauthorizedException(
+          'Server configuration error: JWT_SECRET is not set',
+        );
+      }
+
+      const payload = await this.jwtService.verifyAsync(token, { secret });
 
       if (payload.type !== 'admin') {
         throw new UnauthorizedException('Invalid token type');
