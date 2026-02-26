@@ -13,20 +13,8 @@ import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { getJwtConfig } from '../common/jwt.config';
 
-@Global()
 @Module({
-  imports: [
-    PrismaModule,
-    AnalyticsModule,
-    SubscriptionsModule,
-    ConfigModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: getJwtConfig,
-      global: true,
-    }),
-  ],
+  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule, ConfigModule],
   controllers: [
     AdminController,
     StatsController,
@@ -34,6 +22,6 @@ import { getJwtConfig } from '../common/jwt.config';
     PaymentsController,
   ],
   providers: [AdminService, StatsService, AdminAuthGuard],
-  exports: [AdminService, AdminAuthGuard, JwtModule],
+  exports: [AdminService, AdminAuthGuard],
 })
 export class AdminModule {}

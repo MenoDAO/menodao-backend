@@ -9,20 +9,10 @@ import { SmsModule } from '../sms/sms.module';
 import { getJwtConfig } from '../common/jwt.config';
 
 @Module({
-  imports: [
-    PrismaModule,
-    SmsModule,
-    ConfigModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: getJwtConfig,
-      global: true,
-    }),
-  ],
+  imports: [PrismaModule, SmsModule, ConfigModule],
   controllers: [StaffController],
   providers: [StaffService, StaffAuthGuard],
-  exports: [StaffService, StaffAuthGuard, JwtModule],
+  exports: [StaffService, StaffAuthGuard],
 })
 export class StaffModule {
   constructor() {

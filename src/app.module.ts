@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -19,12 +20,19 @@ import { VisitsModule } from './visits/visits.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicsModule } from './clinics/clinics.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { getJwtConfig } from './common/jwt.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+    }),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: getJwtConfig,
+      inject: [ConfigService],
+      global: true,
     }),
     PrismaModule,
     ClinicsModule,
