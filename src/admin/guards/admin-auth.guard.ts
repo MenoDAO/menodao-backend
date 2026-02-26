@@ -29,7 +29,15 @@ export class AdminAuthGuard implements CanActivate {
 
     try {
       const secret = this.configService.get<string>('JWT_SECRET');
+      console.log(
+        '[AdminAuthGuard] JWT_SECRET exists:',
+        !!secret,
+        'length:',
+        secret?.length,
+      );
+
       if (!secret) {
+        console.error('[AdminAuthGuard] JWT_SECRET is undefined or empty');
         throw new UnauthorizedException(
           'Server configuration error: JWT_SECRET is not set',
         );
@@ -54,7 +62,7 @@ export class AdminAuthGuard implements CanActivate {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      console.error('Admin auth error:', error);
+      console.error('[AdminAuthGuard] Auth error:', error.message);
       throw new UnauthorizedException('Invalid or expired token');
     }
   }
