@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -11,10 +11,29 @@ import { PaymentsController } from './payments.controller';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
-import { getJwtConfig } from '../common/jwt.config';
 
 @Module({
-  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule, ConfigModule],
+  imports: [
+    PrismaModule,
+    AnalyticsModule,
+    SubscriptionsModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET environment variable is not set. Cannot start the application.',
+          );
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '24h' },
+        };
+      },
+    }),
+  ],
   controllers: [
     AdminController,
     StatsController,
