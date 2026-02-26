@@ -34,9 +34,9 @@ aws secretsmanager update-secret \
   --secret-id menodao/dev/app \
   --secret-string "$(cat <<EOF
 {
-  "DATABASE_URL": "postgresql://***REMOVED***:PASSWORD@masterpg.../menodao_dev?sslmode=require",
+  "DATABASE_URL": "postgresql://username:password@host/menodao_dev?sslmode=require",
   "NODE_ENV": "development",
-  "JWT_SECRET": "***REMOVED***"
+  "JWT_SECRET": "your-dev-jwt-secret"
 }
 EOF
 )" \
@@ -50,9 +50,9 @@ aws secretsmanager update-secret \
   --secret-id menodao/production/app \
   --secret-string "$(cat <<EOF
 {
-  "DATABASE_URL": "postgresql://***REMOVED***:PASSWORD@masterpg.../menodao_prod?sslmode=require",
+  "DATABASE_URL": "postgresql://username:password@host/menodao_prod?sslmode=require",
   "NODE_ENV": "production",
-  "JWT_SECRET": "GENERATE_NEW_PROD_SECRET"
+  "JWT_SECRET": "your-production-jwt-secret"
 }
 EOF
 )" \

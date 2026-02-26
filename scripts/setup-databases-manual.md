@@ -5,7 +5,7 @@ Since the automated script requires interactive password input, here are the man
 ## Step 1: Connect to PostgreSQL
 
 ```bash
-psql -h ***REMOVED*** -U ***REMOVED*** -d postgres
+psql -h your-database-host.rds.amazonaws.com -U your-db-username -d postgres
 ```
 
 ## Step 2: Rename Current Database to Dev
@@ -27,14 +27,14 @@ ALTER DATABASE menodao RENAME TO menodao_dev;
 CREATE DATABASE menodao_prod;
 
 -- Grant permissions
-GRANT ALL PRIVILEGES ON DATABASE menodao_prod TO ***REMOVED***;
+GRANT ALL PRIVILEGES ON DATABASE menodao_prod TO your_db_username;
 ```
 
 ## Step 4: Run Migrations on Production
 
 ```bash
-# Set environment variable
-export DATABASE_URL="postgresql://***REMOVED***:***REMOVED***@***REMOVED***:5432/menodao_prod?sslmode=require"
+# Set environment variable (replace with your actual credentials)
+export DATABASE_URL="postgresql://username:password@host:5432/menodao_prod?sslmode=require"
 
 # Run migrations
 npx prisma migrate deploy
@@ -44,7 +44,7 @@ npx prisma migrate deploy
 
 ```bash
 # List databases
-psql -h ***REMOVED*** -U ***REMOVED*** -d postgres -c "\l"
+psql -h your-database-host.rds.amazonaws.com -U your-db-username -d postgres -c "\l"
 ```
 
 You should see:
