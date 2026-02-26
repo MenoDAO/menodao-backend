@@ -269,7 +269,7 @@ export class PaymentService {
               resultCode: ResultCode,
               resultDesc: ResultDesc,
               confirmedAmount: amount,
-              fullCallbackData: data, // Store full callback for debugging
+              fullCallbackData: JSON.parse(JSON.stringify(data)), // Store full callback for debugging
             },
           },
         });
