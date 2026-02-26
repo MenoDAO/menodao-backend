@@ -6,26 +6,18 @@ import { StaffService } from './staff.service';
 import { StaffAuthGuard } from './guards/staff-auth.guard';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SmsModule } from '../sms/sms.module';
+import { getJwtConfig } from '../common/jwt.config';
 
 @Module({
   imports: [
     PrismaModule,
     SmsModule,
+    ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET');
-        if (!secret) {
-          throw new Error(
-            'JWT_SECRET environment variable is not set. Cannot start the application.',
-          );
-        }
-        return {
-          secret,
-          signOptions: { expiresIn: '8h' },
-        };
-      },
       inject: [ConfigService],
+      useFactory: getJwtConfig,
+      global: true,
     }),
   ],
   controllers: [StaffController],
