@@ -56,7 +56,7 @@ describe('SubscriptionsService', () => {
 
       const bronze = packages.find((p) => p.tier === 'BRONZE');
       expect(bronze?.monthlyPrice).toBe(350);
-      expect(bronze?.benefits).toContain('Annual dental checkup');
+      expect(bronze?.benefits).toContain('MenoBronze Package');
 
       const gold = packages.find((p) => p.tier === 'GOLD');
       expect(gold?.monthlyPrice).toBe(700);
@@ -87,18 +87,28 @@ describe('SubscriptionsService', () => {
         tier: 'SILVER',
         monthlyAmount: 550,
         isActive: false,
+        paymentFrequency: 'MONTHLY',
+        subscriptionStartDate: new Date(),
+        annualCapUsed: 0,
+        annualCapLimit: 10000,
+        procedureUsageCount: {},
+        lastResetDate: new Date(),
       });
 
       const result = await service.subscribe('member-1', 'SILVER');
 
-      expect(mockPrismaService.subscription.create).toHaveBeenCalledWith({
-        data: {
-          memberId: 'member-1',
-          tier: 'SILVER',
-          monthlyAmount: 550,
-          isActive: false,
-        },
-      });
+      expect(mockPrismaService.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            memberId: 'member-1',
+            tier: 'SILVER',
+            monthlyAmount: 550,
+            isActive: false,
+            paymentFrequency: 'MONTHLY',
+            annualCapLimit: 10000,
+          }),
+        }),
+      );
       expect(result.paymentRequired).toBe(true);
       expect(result.subscription.tier).toBe('SILVER');
     });
@@ -194,7 +204,7 @@ describe('SubscriptionsService', () => {
       const result = await service.getSubscription('member-1');
 
       expect(result?.tier).toBe('GOLD');
-      expect(result?.benefits).toContain('Quarterly dental checkups');
+      expect(result?.benefits).toContain('MenoGold Package');
       expect(result?.benefits).toContain('Family discounts');
     });
   });
