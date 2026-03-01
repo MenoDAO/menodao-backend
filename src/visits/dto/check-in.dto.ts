@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
@@ -6,7 +6,10 @@ import {
   IsOptional,
   IsObject,
   IsBoolean,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { QuestionnaireDto } from './questionnaire.dto';
 
 export class CheckInDto {
   @ApiProperty({ example: '0712345678' })
@@ -50,4 +53,13 @@ export class CheckInDto {
   @IsBoolean()
   @IsNotEmpty()
   hasConsent: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Comprehensive Dental Check-Up Questionnaire (CDCQ-v1) data',
+    type: QuestionnaireDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QuestionnaireDto)
+  questionnaire?: QuestionnaireDto;
 }

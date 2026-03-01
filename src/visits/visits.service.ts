@@ -225,6 +225,23 @@ export class VisitsService {
         vitals: dto.vitals,
         clinicalNotes: dto.clinicalNotes,
         hasConsent: dto.hasConsent,
+        // Create questionnaire data if provided
+        ...(dto.questionnaire && {
+          questionnaire: {
+            create: {
+              ...dto.questionnaire,
+              // Calculate DMFT score if all components provided
+              ...(dto.questionnaire.decayedTeeth !== undefined &&
+                dto.questionnaire.missingTeeth !== undefined &&
+                dto.questionnaire.filledTeeth !== undefined && {
+                  dmftScore:
+                    (dto.questionnaire.decayedTeeth || 0) +
+                    (dto.questionnaire.missingTeeth || 0) +
+                    (dto.questionnaire.filledTeeth || 0),
+                }),
+            },
+          },
+        }),
       },
       include: {
         member: {
@@ -232,6 +249,7 @@ export class VisitsService {
             subscription: true,
           },
         },
+        questionnaire: true,
       },
     });
 
