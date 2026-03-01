@@ -42,78 +42,66 @@ export class ProceduresService implements OnModuleInit {
 
   /**
    * Initialize default procedures if they don't exist
+   * Protocol v5.0 Rate Card - Final for March 20th Launch
    */
   private async initializeProcedures() {
     const procedures: ProcedureDefinition[] = [
-      // Bronze tier procedures
+      // MenoBronze tier procedures
       {
         code: 'CONSULT',
         name: 'Consultation',
         description: 'General dental consultation',
-        cost: 500,
+        cost: 1000, // Updated to v5.0 rate card
         allowedTiers: [
           PackageTier.BRONZE,
           PackageTier.SILVER,
           PackageTier.GOLD,
         ],
       },
-      {
-        code: 'SCREEN_BASIC',
-        name: 'Basic Screening',
-        description: 'Basic dental screening',
-        cost: 300,
-        allowedTiers: [
-          PackageTier.BRONZE,
-          PackageTier.SILVER,
-          PackageTier.GOLD,
-        ],
-      },
-      {
-        code: 'PAIN_RELIEF',
-        name: 'Pain Relief (Panadol)',
-        description: 'Pain relief medication',
-        cost: 200,
-        allowedTiers: [
-          PackageTier.BRONZE,
-          PackageTier.SILVER,
-          PackageTier.GOLD,
-        ],
-      },
-      // Silver tier procedures (includes all Bronze)
       {
         code: 'EXTRACT_SIMPLE',
         name: 'Simple Extraction',
         description: 'Simple tooth extraction',
-        cost: 800,
-        allowedTiers: [PackageTier.SILVER, PackageTier.GOLD],
+        cost: 1500, // Updated to v5.0 rate card
+        allowedTiers: [
+          PackageTier.BRONZE,
+          PackageTier.SILVER,
+          PackageTier.GOLD,
+        ],
       },
       {
-        code: 'FILLING_L1',
-        name: 'Filling (Level 1)',
-        description: 'Basic dental filling',
-        cost: 1200,
+        code: 'SCALING_POLISHING',
+        name: 'Scaling & Polishing',
+        description: 'Professional teeth cleaning',
+        cost: 3500, // Updated to v5.0 rate card
+        allowedTiers: [
+          PackageTier.BRONZE,
+          PackageTier.SILVER,
+          PackageTier.GOLD,
+        ],
+      },
+      // MenoSilver tier procedures (includes all Bronze)
+      {
+        code: 'FILLING_COMPOSITE',
+        name: 'Composite Filling',
+        description: 'Tooth-colored composite filling',
+        cost: 4000, // Updated to v5.0 rate card
         allowedTiers: [PackageTier.SILVER, PackageTier.GOLD],
       },
-      // Gold tier procedures (includes all Silver and Bronze)
+      // MenoGold tier procedures (includes all Silver and Bronze)
       {
-        code: 'EXTRACT_COMPLEX',
-        name: 'Complex Extraction',
-        description: 'Complex tooth extraction',
-        cost: 1500,
+        code: 'ROOT_CANAL_ANTERIOR',
+        name: 'Anterior Root Canal',
+        description: 'Root canal treatment for front teeth',
+        cost: 10000, // Updated to v5.0 rate card
         allowedTiers: [PackageTier.GOLD],
       },
       {
-        code: 'XRAY',
-        name: 'X-Ray',
-        description: 'Dental X-Ray imaging',
-        cost: 1000,
-        allowedTiers: [PackageTier.GOLD],
-      },
-      {
-        code: 'ROOT_CANAL_EMERGENCY',
-        name: 'Root Canal (Emergency)',
-        description: 'Emergency root canal treatment',
-        cost: 5000,
+        code: 'ANTIBIOTIC_THERAPY',
+        name: 'Antibiotic Therapy',
+        description:
+          'Includes: 5-day course of antibiotics (Amoxicillin/Metronidazole) + pain management (Ibuprofen/Paracetamol)',
+        cost: 1000, // Updated to v5.0 rate card
         allowedTiers: [PackageTier.GOLD],
       },
     ];

@@ -9,41 +9,90 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { PackageTier } from '@prisma/client';
 
-// Package pricing in KES (production)
-const PACKAGE_PRICES: Record<PackageTier, number> = {
-  BRONZE: 350,
-  SILVER: 550,
-  GOLD: 700,
-};
+// Package pricing in KES (Protocol v5.0 - March 20th Launch)
+const PACKAGE_PRICES: Record<PackageTier, { monthly: number; annual: number }> =
+  {
+    BRONZE: { monthly: 350, annual: 4200 },
+    SILVER: { monthly: 550, annual: 6600 },
+    GOLD: { monthly: 700, annual: 8400 },
+  };
 
 // Dev environment pricing (for testing)
-const DEV_PACKAGE_PRICES: Record<PackageTier, number> = {
-  BRONZE: 3,
-  SILVER: 5,
-  GOLD: 7,
+const DEV_PACKAGE_PRICES: Record<
+  PackageTier,
+  { monthly: number; annual: number }
+> = {
+  BRONZE: { monthly: 3, annual: 42 },
+  SILVER: { monthly: 5, annual: 66 },
+  GOLD: { monthly: 7, annual: 84 },
 };
 
-// Package benefits
+// Annual financial caps per tier
+const ANNUAL_CAPS: Record<PackageTier, number> = {
+  BRONZE: 6000,
+  SILVER: 10000,
+  GOLD: 15000,
+};
+
+// Frequency limits per tier per year
+const FREQUENCY_LIMITS: Record<PackageTier, Record<string, number>> = {
+  BRONZE: {
+    CONSULT: 1,
+    EXTRACT_SIMPLE: 1,
+    SCALING_POLISHING: 1,
+    FILLING_COMPOSITE: 0, // LOCKED
+    ROOT_CANAL_ANTERIOR: 0, // LOCKED
+    ANTIBIOTIC_THERAPY: 0, // LOCKED
+  },
+  SILVER: {
+    CONSULT: 1,
+    EXTRACT_SIMPLE: 1,
+    SCALING_POLISHING: 1,
+    FILLING_COMPOSITE: 1,
+    ROOT_CANAL_ANTERIOR: 0, // LOCKED
+    ANTIBIOTIC_THERAPY: 0, // LOCKED
+  },
+  GOLD: {
+    CONSULT: 2,
+    EXTRACT_SIMPLE: 2,
+    SCALING_POLISHING: 2,
+    FILLING_COMPOSITE: 2,
+    ROOT_CANAL_ANTERIOR: 1,
+    ANTIBIOTIC_THERAPY: 999, // Unlimited (within cap)
+  },
+};
+
+// Package benefits with updated tier names
 const PACKAGE_BENEFITS: Record<PackageTier, string[]> = {
   BRONZE: [
-    'Annual dental checkup',
-    'Basic cleaning',
+    'MenoBronze Package',
+    '1 Consultation per year',
+    '1 Simple Extraction per year',
+    '1 Scaling & Polishing per year',
+    'Annual cap: KES 6,000',
     'Access to dental camps',
     'Member NFT badge',
   ],
   SILVER: [
-    'Bi-annual dental checkups',
-    'Professional cleaning',
-    'One filling per year',
+    'MenoSilver Package',
+    '1 Consultation per year',
+    '1 Simple Extraction per year',
+    '1 Scaling & Polishing per year',
+    '1 Composite Filling per year',
+    'Annual cap: KES 10,000',
     'Access to dental camps',
     'Priority booking',
     'Silver NFT badge',
   ],
   GOLD: [
-    'Quarterly dental checkups',
-    'Professional cleaning',
-    'Two fillings per year',
-    'One extraction per year',
+    'MenoGold Package',
+    '2 Consultations per year',
+    '2 Simple Extractions per year',
+    '2 Scaling & Polishing per year',
+    '2 Composite Fillings per year',
+    '1 Anterior Root Canal per year',
+    'Unlimited Antibiotic Therapy (within cap)',
+    'Annual cap: KES 15,000',
     'Access to dental camps',
     'VIP priority booking',
     'Gold NFT badge',
@@ -69,29 +118,42 @@ export class SubscriptionsService {
   }
 
   /**
-   * Get the appropriate price for a tier based on environment
+   * Get the appropriate price for a tier based on environment and payment frequency
    */
-  private getPrice(tier: PackageTier): number {
+  private getPrice(
+    tier: PackageTier,
+    frequency: 'monthly' | 'annual' = 'monthly',
+  ): number {
     return this.isDevEnvironment
-      ? DEV_PACKAGE_PRICES[tier]
-      : PACKAGE_PRICES[tier];
+      ? DEV_PACKAGE_PRICES[tier][frequency]
+      : PACKAGE_PRICES[tier][frequency];
   }
 
   /**
    * Get the display price (always show production prices to users)
    */
-  private getDisplayPrice(tier: PackageTier): number {
-    return PACKAGE_PRICES[tier];
+  private getDisplayPrice(
+    tier: PackageTier,
+    frequency: 'monthly' | 'annual' = 'monthly',
+  ): number {
+    return PACKAGE_PRICES[tier][frequency];
   }
 
   getPackages() {
-    return Object.entries(PACKAGE_PRICES).map(([tier, price]) => ({
+    return Object.entries(PACKAGE_PRICES).map(([tier, prices]) => ({
       tier,
-      monthlyPrice: price,
+      displayName: `Meno${tier.charAt(0) + tier.slice(1).toLowerCase()}`, // MenoBronze, MenoSilver, MenoGold
+      monthlyPrice: prices.monthly,
+      annualPrice: prices.annual,
+      annualCap: ANNUAL_CAPS[tier as PackageTier],
+      frequencyLimits: FREQUENCY_LIMITS[tier as PackageTier],
       // In dev, show actual charge amount for testing
-      actualCharge: this.isDevEnvironment
-        ? DEV_PACKAGE_PRICES[tier as PackageTier]
-        : price,
+      actualMonthlyCharge: this.isDevEnvironment
+        ? DEV_PACKAGE_PRICES[tier as PackageTier].monthly
+        : prices.monthly,
+      actualAnnualCharge: this.isDevEnvironment
+        ? DEV_PACKAGE_PRICES[tier as PackageTier].annual
+        : prices.annual,
       benefits: PACKAGE_BENEFITS[tier as PackageTier],
       isDevPricing: this.isDevEnvironment,
     }));
@@ -101,11 +163,18 @@ export class SubscriptionsService {
    * Create a pending subscription (awaiting payment)
    * The subscription becomes active only after payment is confirmed
    */
-  async subscribe(memberId: string, tier: PackageTier) {
+  async subscribe(
+    memberId: string,
+    tier: PackageTier,
+    paymentFrequency: 'MONTHLY' | 'ANNUAL' = 'MONTHLY',
+  ) {
     // Check if member already has subscription
     const existing = await this.prisma.subscription.findUnique({
       where: { memberId },
     });
+
+    const frequency = paymentFrequency.toLowerCase() as 'monthly' | 'annual';
+    const annualCap = ANNUAL_CAPS[tier];
 
     if (existing) {
       if (existing.isActive) {
@@ -118,7 +187,13 @@ export class SubscriptionsService {
         where: { memberId },
         data: {
           tier,
-          monthlyAmount: this.getDisplayPrice(tier),
+          monthlyAmount: this.getDisplayPrice(tier, 'monthly'),
+          paymentFrequency,
+          subscriptionStartDate: new Date(),
+          annualCapLimit: annualCap,
+          annualCapUsed: 0,
+          procedureUsageCount: {},
+          lastResetDate: new Date(),
           isActive: false,
         },
       });
@@ -126,8 +201,10 @@ export class SubscriptionsService {
       return {
         subscription,
         paymentRequired: true,
-        paymentAmount: this.getPrice(tier),
-        displayAmount: this.getDisplayPrice(tier),
+        paymentAmount: this.getPrice(tier, frequency),
+        displayAmount: this.getDisplayPrice(tier, frequency),
+        paymentFrequency,
+        waitingPeriod: paymentFrequency === 'ANNUAL' ? 14 : 60, // days
         message: 'Please complete payment to activate your subscription',
       };
     }
@@ -137,7 +214,13 @@ export class SubscriptionsService {
       data: {
         memberId,
         tier,
-        monthlyAmount: this.getDisplayPrice(tier),
+        monthlyAmount: this.getDisplayPrice(tier, 'monthly'),
+        paymentFrequency,
+        subscriptionStartDate: new Date(),
+        annualCapLimit: annualCap,
+        annualCapUsed: 0,
+        procedureUsageCount: {},
+        lastResetDate: new Date(),
         isActive: false, // Will be activated after payment
       },
     });
@@ -145,8 +228,10 @@ export class SubscriptionsService {
     return {
       subscription,
       paymentRequired: true,
-      paymentAmount: this.getPrice(tier),
-      displayAmount: this.getDisplayPrice(tier),
+      paymentAmount: this.getPrice(tier, frequency),
+      displayAmount: this.getDisplayPrice(tier, frequency),
+      paymentFrequency,
+      waitingPeriod: paymentFrequency === 'ANNUAL' ? 14 : 60, // days
       message: 'Please complete payment to activate your subscription',
     };
   }
