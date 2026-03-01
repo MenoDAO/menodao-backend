@@ -500,7 +500,7 @@ model Clinic {
   bankAccountName        String?
   bankAccountNumber      String?
   // Section 4: Capacity & Compliance
-  kmpdcRegNumber         String         // REQUIRED by law - Kenya Medical Practitioners and Dentists Council
+  kmpdcRegNumber         String?        // Required for NEW clinics (enforced via validation)
   activeDentalChairs     Int            @default(1)
   xrayCapability         XRayCapability @default(NONE)
   specializedServices    Json?          // ["ORTHODONTIST", "MAXILLOFACIAL", "PEDIATRIC"]

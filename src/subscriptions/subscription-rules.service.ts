@@ -55,6 +55,7 @@ export class SubscriptionRulesService {
 
   /**
    * Check if member has passed waiting period for a procedure
+   * BACKWARD COMPATIBLE: Returns passed=true if subscriptionStartDate is null (existing members)
    */
   async checkWaitingPeriod(
     memberId: string,
@@ -66,6 +67,11 @@ export class SubscriptionRulesService {
 
     if (!subscription || !subscription.isActive) {
       return { passed: false, daysRemaining: 999 };
+    }
+
+    // BACKWARD COMPATIBLE: If no subscriptionStartDate, assume grandfathered (no waiting period)
+    if (!subscription.subscriptionStartDate) {
+      return { passed: true, daysRemaining: 0 };
     }
 
     const daysSinceStart = Math.floor(
@@ -94,6 +100,7 @@ export class SubscriptionRulesService {
 
   /**
    * Check if member has exceeded frequency limit for a procedure
+   * BACKWARD COMPATIBLE: Returns withinLimit=true if procedureUsageCount is null/empty
    */
   async checkFrequencyLimit(
     memberId: string,
@@ -111,10 +118,17 @@ export class SubscriptionRulesService {
       return { withinLimit: false, currentUsage: 0, maxAllowed: 0 };
     }
 
+    // BACKWARD COMPATIBLE: If no usage tracking, allow all procedures
     const usageCount =
       (subscription.procedureUsageCount as Record<string, number>) || {};
     const currentUsage = usageCount[procedureCode] || 0;
-    const maxAllowed = FREQUENCY_LIMITS[subscription.tier][procedureCode] || 0;
+    const maxAllowed =
+      FREQUENCY_LIMITS[subscription.tier][procedureCode] || 999; // Default to unlimited if not defined
+
+    // If maxAllowed is 999 (unlimited) or usage tracking not initialized, allow
+    if (maxAllowed === 999 || !subscription.procedureUsageCount) {
+      return { withinLimit: true, currentUsage, maxAllowed };
+    }
 
     return {
       withinLimit: currentUsage < maxAllowed,
@@ -125,6 +139,7 @@ export class SubscriptionRulesService {
 
   /**
    * Check if adding a procedure would exceed annual cap
+   * BACKWARD COMPATIBLE: Returns withinCap=true if annualCapLimit is 0 or null
    */
   async checkAnnualCap(
     memberId: string,
@@ -148,8 +163,19 @@ export class SubscriptionRulesService {
       };
     }
 
-    const currentUsed = subscription.annualCapUsed;
-    const capLimit = subscription.annualCapLimit;
+    const currentUsed = subscription.annualCapUsed || 0;
+    const capLimit = subscription.annualCapLimit || 0;
+
+    // BACKWARD COMPATIBLE: If no cap set (0 or null), allow all procedures
+    if (capLimit === 0) {
+      return {
+        withinCap: true,
+        currentUsed,
+        capLimit: 999999, // Show as unlimited
+        wouldExceed: false,
+      };
+    }
+
     const wouldExceed = currentUsed + procedureCost > capLimit;
 
     return {
