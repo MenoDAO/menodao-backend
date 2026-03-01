@@ -646,7 +646,6 @@ export class VisitsService {
 
     return cleaned;
   }
-}
 
   /**
    * Get patient treatment history
@@ -698,8 +697,7 @@ export class VisitsService {
     }
 
     // Mask phone number for privacy (show last 4 digits only)
-    const maskedPhone =
-      '****' + member.phoneNumber.slice(-4);
+    const maskedPhone = '****' + member.phoneNumber.slice(-4);
 
     // Format visits with privacy controls
     const formattedVisits = visits.map((visit) => {
@@ -746,3 +744,4 @@ export class VisitsService {
       otherClinicVisits: formattedVisits.filter((v) => !v.isOwnClinic).length,
     };
   }
+}
