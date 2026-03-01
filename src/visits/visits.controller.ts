@@ -70,4 +70,13 @@ export class VisitsController {
   async dischargeVisit(@Param('visitId') visitId: string) {
     return this.visitsService.dischargeVisit(visitId);
   }
+
+  @Get('history/:memberId')
+  @ApiOperation({ summary: 'Get patient treatment history' })
+  async getPatientHistory(
+    @Param('memberId') memberId: string,
+    @Request() req: RequestWithStaff,
+  ) {
+    return this.visitsService.getPatientHistory(memberId, req.staff.id);
+  }
 }
