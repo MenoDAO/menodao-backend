@@ -272,6 +272,7 @@ model Visit {
   staff           StaffUser       @relation(fields: [staffId], references: [id])
   procedures      VisitProcedure[]
   claims          Claim[]
+  questionnaire   QuestionnaireData? // CDCQ-v1 data
   
   // Clinical data for SACCO/Insurance and data privacy compliance
   chiefComplaint  String?
@@ -283,6 +284,69 @@ model Visit {
   @@index([memberId])
   @@index([staffId])
   @@index([status])
+}
+
+// Comprehensive Dental Check-Up Questionnaire (CDCQ-v1)
+model QuestionnaireData {
+  id              String   @id @default(uuid())
+  visitId         String   @unique
+  
+  // Section 1: Demographics & Consent
+  dateOfVisit     DateTime @default(now())
+  age             Int?
+  gender          String?  // Male, Female, Non-binary/Other, Prefer not to say
+  education       String?  // Primary, Secondary, Trade, University, None
+  occupation      String?
+  residenceVillage String?
+  residenceCounty String?
+  researchConsent Boolean  @default(false)
+  
+  // Section 2: Medical & Dental History
+  lastDentalVisit String?  // <6mo, 6-12mo, 1-2yr, >2yr, Never
+  drugAllergies   String?  // List of allergies or "None"
+  currentMedications String? // List of medications or "None"
+  medicalConditions Json?  // Array: ["Diabetes", "Hypertension", etc.]
+  familyHistory   Json?    // Array: ["Periodontitis", "Tooth Decay", etc.]
+  
+  // Section 3: Current Dental Concerns
+  chiefComplaint  String?  // Routine, Pain, Broken tooth, etc.
+  painLevel       Int?     // 0-10 scale
+  recentSymptoms  Json?    // Array: ["Sensitivity", "Pain when chewing", etc.]
+  
+  // Section 4: Oral Hygiene & Lifestyle
+  brushingFrequency String? // Twice daily, Once daily, Occasionally, Never
+  flossingFrequency String? // Daily, Weekly, Rarely/Never
+  sugarIntake     String?  // High (3+/day), Moderate (1-2/day), Low (occasional)
+  smokesTobacco   Boolean  @default(false)
+  alcoholUse      String?  // Frequent, Occasional, Never
+  substanceUse    Boolean  @default(false) // Khat/Miraa
+  
+  // Section 5: Clinical Examination (Clinician)
+  oralHygieneIndex String? // Good, Fair, Poor
+  softTissueFindings String? // WNL or description
+  periodontalStatus String? // BPE score: 0-4
+  decayedTeeth    Int?     // D count
+  missingTeeth    Int?     // M count
+  filledTeeth     Int?     // F count
+  dmftScore       Int?     // D+M+F total
+  occlusionStatus String?  // Normal Class I, Malocclusion, TMJ Issues
+  
+  // Section 6: Risk Assessment (Clinician)
+  cariesRisk      String?  // Low, Moderate, High
+  periodontalRisk String?  // Low, Moderate, High
+  oralCancerRisk  String?  // Low, Elevated
+  
+  // Section 7: Patient Satisfaction
+  smileSatisfaction String? // Very Satisfied, Somewhat Satisfied, Dissatisfied
+  careConfidence  String?  // Very Confident, Somewhat Confident, Not Confident
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  visit           Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  
+  @@index([visitId])
+  @@index([dateOfVisit])
 }
 
 enum VisitStatus {
