@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminNotificationController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, PackageTier } from '@prisma/client';
 import { AdminAuthGuard } from '../admin/guards/admin-auth.guard';
 
 describe('AdminNotificationController - Service Wiring', () => {
@@ -96,7 +96,7 @@ describe('AdminNotificationController - Service Wiring', () => {
   describe('POST /preview - Requirement 3.8', () => {
     it('should call NotificationsService.previewRecipients() with filters', async () => {
       const filters = {
-        packageTypes: ['Bronze', 'Silver'],
+        packageTypes: [PackageTier.BRONZE, PackageTier.SILVER],
       };
       const mockPreview = { count: 42 };
       mockNotificationsService.previewRecipients.mockResolvedValue(mockPreview);
@@ -113,7 +113,7 @@ describe('AdminNotificationController - Service Wiring', () => {
     it('should call NotificationsService.sendNotification() with request and adminId', async () => {
       const request = {
         type: NotificationType.SMS,
-        filters: { packageTypes: ['Gold'] },
+        filters: { packageTypes: [PackageTier.GOLD] },
         message: 'Test notification',
       };
       const adminId = 'admin-123';

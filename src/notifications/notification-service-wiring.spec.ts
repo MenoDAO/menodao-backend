@@ -6,7 +6,11 @@ import { SMSService } from './sms.service';
 import { PushService } from './push.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
-import { NotificationType, NotificationStatus } from '@prisma/client';
+import {
+  NotificationType,
+  NotificationStatus,
+  PackageTier,
+} from '@prisma/client';
 
 /**
  * Task 12.2: Wire FilterService and SanitizationService to NotificationService
@@ -138,7 +142,9 @@ describe('NotificationService - Service Wiring', () => {
   describe('Send Workflow Integration - Requirements 4.7, 8.7', () => {
     it('should use FilterService to get recipients', async () => {
       // Arrange
-      const filters = { packageTypes: ['Bronze', 'Silver'] };
+      const filters = {
+        packageTypes: [PackageTier.BRONZE, PackageTier.SILVER],
+      };
       const recipients = ['+1234567890', '+0987654321'];
       const message = 'Test notification';
       const adminId = 'admin-123';
@@ -177,7 +183,7 @@ describe('NotificationService - Service Wiring', () => {
 
     it('should use SanitizationService to sanitize message before storage', async () => {
       // Arrange
-      const filters = { packageTypes: ['Gold'] };
+      const filters = { packageTypes: [PackageTier.GOLD] };
       const recipients = ['+1234567890'];
       const originalMessage = 'Your password is 12345';
       const sanitizedMessage = '[PROTECTED]';
@@ -264,7 +270,7 @@ describe('NotificationService - Service Wiring', () => {
 
     it('should use both FilterService and SanitizationService in correct order', async () => {
       // Arrange
-      const filters = { packageTypes: ['Bronze'] };
+      const filters = { packageTypes: [PackageTier.BRONZE] };
       const recipients = ['+1111111111', '+2222222222'];
       const message = 'Test message';
       const adminId = 'admin-999';
@@ -311,7 +317,7 @@ describe('NotificationService - Service Wiring', () => {
   describe('Preview Recipients - Requirement 8.7', () => {
     it('should use FilterService to count recipients', async () => {
       // Arrange
-      const filters = { subscriptionStatus: 'active' };
+      const filters = { subscriptionStatus: 'active' as const };
       const expectedCount = 150;
 
       mockFilterService.countFilteredRecipients.mockResolvedValue(
@@ -333,7 +339,7 @@ describe('NotificationService - Service Wiring', () => {
   describe('Notification Type Routing - Requirement 3.11', () => {
     it('should call SMSService when notification type is SMS', async () => {
       // Arrange
-      const filters = { packageTypes: ['Bronze'] };
+      const filters = { packageTypes: [PackageTier.BRONZE] };
       const recipients = ['+1234567890', '+0987654321'];
       const message = 'Test SMS notification';
       const adminId = 'admin-123';
@@ -381,7 +387,7 @@ describe('NotificationService - Service Wiring', () => {
 
     it('should call PushService when notification type is PUSH', async () => {
       // Arrange
-      const filters = { packageTypes: ['Gold'] };
+      const filters = { packageTypes: [PackageTier.GOLD] };
       const recipients = ['+1234567890', '+0987654321'];
       const message = 'Test push notification';
       const adminId = 'admin-456';

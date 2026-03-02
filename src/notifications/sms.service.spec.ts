@@ -220,7 +220,7 @@ describe('SMSService', () => {
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
       expect(typeof result.messageId).toBe('string');
-      expect(result.messageId.length).toBeGreaterThan(0);
+      expect(result.messageId!.length).toBeGreaterThan(0);
     });
 
     it('should include error message on failure', async () => {
