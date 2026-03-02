@@ -65,7 +65,7 @@ export class ContributionsService {
     );
 
     // Use the actual charge amount (dev pricing) instead of the frontend amount
-    const actualAmount = memberPackage?.actualCharge ?? amount;
+    const actualAmount = memberPackage?.actualMonthlyCharge ?? amount;
 
     this.logger.log(
       `Payment for ${member.subscription.tier}: display=${amount}, actual=${actualAmount}`,
