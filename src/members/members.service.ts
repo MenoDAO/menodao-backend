@@ -114,4 +114,68 @@ export class MembersService {
       },
     };
   }
+
+  async getMemberHistory(memberId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [visits, total] = await Promise.all([
+      this.prisma.visit.findMany({
+        where: { memberId },
+        include: {
+          procedures: {
+            include: {
+              procedure: true,
+            },
+          },
+          staff: {
+            select: {
+              fullName: true,
+              clinic: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          questionnaire: true,
+        },
+        orderBy: { checkedInAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.visit.count({ where: { memberId } }),
+    ]);
+
+    // Format visits for member view (no privacy masking needed)
+    const formattedVisits = visits.map((visit) => ({
+      id: visit.id,
+      date: visit.checkedInAt,
+      status: visit.status,
+      totalCost: visit.totalCost,
+      clinic: visit.staff.clinic?.name || 'Unknown Clinic',
+      treatedBy: visit.staff.fullName || 'Unknown Provider',
+      procedures: visit.procedures.map((vp) => ({
+        name: vp.procedure.name,
+        cost: vp.cost,
+        addedAt: vp.addedAt,
+      })),
+      clinicalData: {
+        chiefComplaint: visit.chiefComplaint,
+        medicalHistory: visit.medicalHistory,
+        vitals: visit.vitals,
+        clinicalNotes: visit.clinicalNotes,
+      },
+      questionnaire: visit.questionnaire,
+    }));
+
+    return {
+      visits: formattedVisits,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
 }

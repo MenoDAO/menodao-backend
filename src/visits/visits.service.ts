@@ -225,6 +225,23 @@ export class VisitsService {
         vitals: dto.vitals,
         clinicalNotes: dto.clinicalNotes,
         hasConsent: dto.hasConsent,
+        // Create questionnaire data if provided
+        ...(dto.questionnaire && {
+          questionnaire: {
+            create: {
+              ...dto.questionnaire,
+              // Calculate DMFT score if all components provided
+              ...(dto.questionnaire.decayedTeeth !== undefined &&
+                dto.questionnaire.missingTeeth !== undefined &&
+                dto.questionnaire.filledTeeth !== undefined && {
+                  dmftScore:
+                    (dto.questionnaire.decayedTeeth || 0) +
+                    (dto.questionnaire.missingTeeth || 0) +
+                    (dto.questionnaire.filledTeeth || 0),
+                }),
+            },
+          },
+        }),
       },
       include: {
         member: {
@@ -232,6 +249,7 @@ export class VisitsService {
             subscription: true,
           },
         },
+        questionnaire: true,
       },
     });
 
@@ -627,5 +645,103 @@ export class VisitsService {
     }
 
     return cleaned;
+  }
+
+  /**
+   * Get patient treatment history
+   * Staff can see visits from their own clinic + other MenoDAO visits (labeled)
+   */
+  async getPatientHistory(memberId: string, staffId: string) {
+    // Get staff info to filter by clinic
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffId },
+      select: { clinicId: true },
+    });
+
+    // Get all visits for this member, ordered by most recent first
+    const visits = await this.prisma.visit.findMany({
+      where: { memberId },
+      include: {
+        procedures: {
+          include: {
+            procedure: true,
+          },
+        },
+        staff: {
+          select: {
+            fullName: true,
+            clinic: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        questionnaire: true,
+      },
+      orderBy: { checkedInAt: 'desc' },
+    });
+
+    // Get member info (with privacy controls)
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        phoneNumber: true,
+        fullName: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Member not found');
+    }
+
+    // Mask phone number for privacy (show last 4 digits only)
+    const maskedPhone = '****' + member.phoneNumber.slice(-4);
+
+    // Format visits with privacy controls
+    const formattedVisits = visits.map((visit) => {
+      const isOwnClinic = visit.staff.clinic?.name
+        ? staff?.clinicId === visit.staffId
+        : true;
+
+      return {
+        id: visit.id,
+        date: visit.checkedInAt,
+        status: visit.status,
+        totalCost: visit.totalCost,
+        clinic: visit.staff.clinic?.name || 'Unknown Clinic',
+        isOwnClinic,
+        treatedBy: visit.staff.fullName,
+        procedures: visit.procedures.map((vp) => ({
+          name: vp.procedure.name,
+          cost: vp.cost,
+          addedAt: vp.addedAt,
+        })),
+        // Only include detailed clinical data for own clinic visits
+        clinicalData: isOwnClinic
+          ? {
+              chiefComplaint: visit.chiefComplaint,
+              medicalHistory: visit.medicalHistory,
+              vitals: visit.vitals,
+              clinicalNotes: visit.clinicalNotes,
+            }
+          : null,
+        // Only include questionnaire for own clinic visits
+        questionnaire: isOwnClinic ? visit.questionnaire : null,
+      };
+    });
+
+    return {
+      member: {
+        id: member.id,
+        phoneNumber: maskedPhone,
+        fullName: member.fullName,
+      },
+      visits: formattedVisits,
+      totalVisits: visits.length,
+      ownClinicVisits: formattedVisits.filter((v) => v.isOwnClinic).length,
+      otherClinicVisits: formattedVisits.filter((v) => !v.isOwnClinic).length,
+    };
   }
 }

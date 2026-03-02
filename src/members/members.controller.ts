@@ -81,4 +81,16 @@ export class MembersController {
       +limit,
     );
   }
+
+  @Get('history')
+  @ApiOperation({ summary: 'Get member treatment history' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getHistory(
+    @Request() req,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+  ) {
+    return this.membersService.getMemberHistory(req.user.id, +page, +limit);
+  }
 }
