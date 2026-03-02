@@ -80,7 +80,7 @@ describe('AdminUser-Notification Relation', () => {
           throw error;
         }
       }
-    });
+    }, 10000); // 10 second timeout for database connection
 
     it('should allow querying Notification with sentByAdmin included', async () => {
       // This test verifies the reverse relation can be used in queries
@@ -110,6 +110,6 @@ describe('AdminUser-Notification Relation', () => {
           throw error;
         }
       }
-    });
+    }, 10000); // 10 second timeout for database connection
   });
 });
