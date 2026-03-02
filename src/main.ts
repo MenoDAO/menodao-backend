@@ -53,6 +53,7 @@ async function bootstrap() {
   console.log(`📚 API Docs available at http://localhost:${port}/api/docs`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Allowed Origins: ${allowedOrigins.join(', ')}`);
+  // Force redeploy - treatment history endpoints
 }
 
 bootstrap();
