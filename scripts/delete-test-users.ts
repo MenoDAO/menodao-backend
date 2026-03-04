@@ -44,11 +44,16 @@ async function deleteTestUsers() {
   console.log(`📱 Phone numbers to delete: ${phoneNumbers.join(', ')}`);
   console.log('================================\n');
 
-  // Safety check
-  if (dbHost.includes('rds.amazonaws.com') && !dbHost.includes('dev')) {
+  // Safety check - allow databases with 'dev' in name
+  // Block 'menodao_prod' and 'menodao' (unclear which is prod) explicitly
+  if (
+    dbHost.includes('rds.amazonaws.com') &&
+    (dbName.includes('menodao_prod') || dbName === 'menodao')
+  ) {
     console.log('🚨 WARNING: This appears to be a PRODUCTION database!');
+    console.log(`🚨 Database name: ${dbName}`);
     console.log(
-      '🚨 Please update delete-test-users.config.ts to point to the dev database first.',
+      '🚨 Please update delete-test-users.config.ts to point to menodao_dev.',
     );
     console.log('🚨 Exiting for safety...\n');
     process.exit(1);
