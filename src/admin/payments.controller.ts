@@ -200,6 +200,70 @@ export class PaymentsController {
     };
   }
 
+  @Get('search')
+  @ApiOperation({ summary: 'Search payments by various criteria' })
+  @ApiQuery({ name: 'transactionId', required: false, type: String })
+  @ApiQuery({ name: 'phoneNumber', required: false, type: String })
+  @ApiQuery({ name: 'email', required: false, type: String })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiQuery({ name: 'dateFrom', required: false, type: String })
+  @ApiQuery({ name: 'dateTo', required: false, type: String })
+  async searchPayments(
+    @Query('transactionId') transactionId?: string,
+    @Query('phoneNumber') phoneNumber?: string,
+    @Query('email') email?: string,
+    @Query('status') status?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const where: any = {};
+
+    if (transactionId) {
+      where.OR = [
+        { id: transactionId },
+        { paymentRef: transactionId },
+        { paymentRef: { contains: transactionId } },
+      ];
+    }
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) where.createdAt.lte = new Date(dateTo);
+    }
+
+    if (phoneNumber || email) {
+      where.member = {};
+      if (phoneNumber) {
+        where.member.phoneNumber = { contains: phoneNumber };
+      }
+      if (email) {
+        where.member.email = { contains: email };
+      }
+    }
+
+    const payments = await this.prisma.contribution.findMany({
+      where,
+      include: {
+        member: {
+          select: {
+            id: true,
+            phoneNumber: true,
+            fullName: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return payments;
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get payment detail by ID' })
   async getPaymentDetail(@Param('id') id: string) {

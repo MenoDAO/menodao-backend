@@ -53,31 +53,6 @@ export class AdminController {
     );
   }
 
-  // Payment Management Endpoints
-
-  @Get('payments/search')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Search payments' })
-  async searchPayments(@Query() query: PaymentSearchQuery) {
-    return this.adminService.searchPayments({
-      transactionId: query.transactionId,
-      phoneNumber: query.phoneNumber,
-      email: query.email,
-      status: query.status,
-      dateFrom: query.dateFrom ? new Date(query.dateFrom) : undefined,
-      dateTo: query.dateTo ? new Date(query.dateTo) : undefined,
-    });
-  }
-
-  @Get('payments/:transactionId')
-  @UseGuards(AdminAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get payment detail' })
-  async getPaymentDetail(@Param('transactionId') transactionId: string) {
-    return this.adminService.getPaymentDetail(transactionId);
-  }
-
   // Member Management Endpoints
 
   @Get('members/search')
