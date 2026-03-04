@@ -5,6 +5,7 @@ import {
   SasaPayService,
   SasaPayC2BCallbackData,
 } from '../sasapay/sasapay.service';
+import { PackageTier, PaymentFrequency } from '@prisma/client';
 import * as crypto from 'crypto';
 
 export interface PaymentResult {
@@ -372,5 +373,190 @@ export class PaymentService {
       transactionCode:
         metadata?.mpesaReceiptNumber || metadata?.transactionCode,
     };
+  }
+}
+
+  /**
+   * Calculate payment amount based on tier and frequency
+   * Requirements: 20.1, 20.2, 20.3
+   */
+  async calculatePaymentAmount(
+    tier: PackageTier,
+    frequency: PaymentFrequency,
+  ): Promise<number> {
+    this.logger.log(`Calculating payment amount for ${tier} ${frequency}`);
+
+    // Get tier pricing from database or config
+    const tierPricing: Record<PackageTier, number> = {
+      [PackageTier.BRONZE]: 500, // KES per month
+      [PackageTier.SILVER]: 1000,
+      [PackageTier.GOLD]: 1500,
+    };
+
+    const monthlyAmount = tierPricing[tier];
+
+    if (!monthlyAmount) {
+      throw new Error(`Invalid tier: ${tier}`);
+    }
+
+    // Calculate yearly as monthly * 12
+    if (frequency === PaymentFrequency.ANNUAL) {
+      const yearlyAmount = monthlyAmount * 12;
+      this.logger.log(
+        `Yearly amount for ${tier}: ${monthlyAmount} * 12 = ${yearlyAmount}`,
+      );
+      return yearlyAmount;
+    }
+
+    return monthlyAmount;
+  }
+
+  /**
+   * Generate callback URL for payment notifications
+   * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5
+   */
+  async generateCallbackUrl(transactionId: string): Promise<string> {
+    const apiBaseUrl = this.isDevEnvironment
+      ? this.configService.get<string>('API_BASE_URL_DEV') ||
+        this.configService.get<string>('API_BASE_URL') ||
+        'https://dev-api.menodao.org'
+      : this.configService.get<string>('API_BASE_URL') ||
+        'https://api.menodao.org';
+
+    const callbackUrl = `${apiBaseUrl}/contributions/callback`;
+
+    // Validate URL is HTTPS
+    if (!callbackUrl.startsWith('https://') && !this.isDevEnvironment) {
+      this.logger.error(`Invalid callback URL (not HTTPS): ${callbackUrl}`);
+      throw new Error('Callback URL must use HTTPS');
+    }
+
+    this.logger.log(`Generated callback URL: ${callbackUrl}`);
+    return callbackUrl;
+  }
+
+  /**
+   * Generate redirect URL for post-payment user redirect
+   * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6
+   */
+  async generateRedirectUrl(transactionId: string): Promise<string> {
+    const frontendBaseUrl = this.isDevEnvironment
+      ? this.configService.get<string>('FRONTEND_BASE_URL_DEV') ||
+        this.configService.get<string>('FRONTEND_BASE_URL') ||
+        'https://dev.menodao.org'
+      : this.configService.get<string>('FRONTEND_BASE_URL') ||
+        'https://menodao.org';
+
+    const redirectUrl = `${frontendBaseUrl}/payment/status?transactionId=${transactionId}`;
+
+    // Validate URL is HTTPS
+    if (!redirectUrl.startsWith('https://') && !this.isDevEnvironment) {
+      this.logger.error(`Invalid redirect URL (not HTTPS): ${redirectUrl}`);
+      throw new Error('Redirect URL must use HTTPS');
+    }
+
+    this.logger.log(`Generated redirect URL: ${redirectUrl}`);
+    return redirectUrl;
+  }
+
+  /**
+   * Validate URL format
+   */
+  async validateUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' || this.isDevEnvironment;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Assign claim limits to member after successful payment
+   * Requirements: 3.6, 12.4
+   */
+  async assignClaimLimits(
+    userId: string,
+    tier: PackageTier,
+    transactionId: string,
+  ): Promise<void> {
+    this.logger.log(`Assigning claim limits for user ${userId}, tier ${tier}`);
+
+    // Get member's subscription
+    const member = await this.prisma.member.findUnique({
+      where: { id: userId },
+      include: { subscription: true },
+    });
+
+    if (!member || !member.subscription) {
+      throw new Error(`Member ${userId} has no subscription`);
+    }
+
+    // Set claim limit by tier
+    await this.setClaimLimitByTier(member.subscription.id, tier);
+
+    // Update contribution record to mark claim limits as assigned
+    const contribution = await this.prisma.contribution.findFirst({
+      where: {
+        memberId: userId,
+        paymentRef: { contains: transactionId },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (contribution) {
+      await this.prisma.contribution.update({
+        where: { id: contribution.id },
+        data: {
+          claimLimitsAssigned: true,
+          claimLimitsAssignedAt: new Date(),
+        },
+      });
+    }
+
+    this.logger.log(`Claim limits assigned for user ${userId}`);
+  }
+
+  /**
+   * Set claim limit based on tier
+   * Requirements: 12.1, 12.2, 12.3
+   */
+  async setClaimLimitByTier(
+    subscriptionId: string,
+    tier: PackageTier,
+  ): Promise<void> {
+    const tierLimits: Record<PackageTier, number> = {
+      [PackageTier.BRONZE]: 6000,
+      [PackageTier.SILVER]: 10000,
+      [PackageTier.GOLD]: 15000,
+    };
+
+    const limit = tierLimits[tier];
+
+    if (!limit) {
+      throw new Error(`Invalid tier: ${tier}`);
+    }
+
+    await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        annualCapLimit: limit,
+      },
+    });
+
+    this.logger.log(
+      `Set claim limit for subscription ${subscriptionId}: ${limit} KES`,
+    );
+  }
+
+  /**
+   * Verify payment status with SasaPay
+   * This can be used for manual verification by admins
+   */
+  async verifyPaymentWithSasaPay(transactionId: string): Promise<string> {
+    // TODO: Implement SasaPay transaction status query
+    // https://developer.sasapay.app/docs/apis/transaction-status
+    this.logger.log(`Verifying payment ${transactionId} with SasaPay`);
+    return 'PENDING';
   }
 }

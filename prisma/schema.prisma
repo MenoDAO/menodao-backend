@@ -87,22 +87,37 @@ model Subscription {
 
 // Contribution/Payment record
 model Contribution {
-  id            String        @id @default(uuid())
-  amount        Int // Amount in KES
-  month         DateTime // The month this contribution covers
-  paymentMethod String // mpesa, card, crypto
-  paymentRef    String? // External payment reference (menodao_xxxxx)
-  txHash        String? // Blockchain transaction hash
-  status        PaymentStatus @default(PENDING)
-  metadata      Json? // Payment provider response data
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                    String           @id @default(uuid())
+  amount                Int // Amount in KES
+  month                 DateTime // The month this contribution covers
+  paymentMethod         String // mpesa, card, crypto
+  paymentRef            String? // External payment reference (menodao_xxxxx)
+  txHash                String? // Blockchain transaction hash
+  status                PaymentStatus    @default(PENDING)
+  paymentFrequency      PaymentFrequency @default(MONTHLY)
+  claimLimitsAssigned   Boolean          @default(false)
+  claimLimitsAssignedAt DateTime?
+  confirmedAt           DateTime?
+  metadata              Json? // Payment provider response data
+  
+  // SasaPay fields
+  merchantRequestId     String?
+  checkoutRequestId     String?
+  mpesaReceiptNumber    String?
+  
+  // URLs
+  callbackUrl           String?
+  redirectUrl           String?
+  
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
   member   Member @relation(fields: [memberId], references: [id])
   memberId String
 
   @@index([memberId, month])
   @@index([paymentRef])
+  @@index([status])
 }
 
 enum PaymentStatus {
@@ -127,10 +142,11 @@ model Claim {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  member   Member @relation(fields: [memberId], references: [id])
-  memberId String
-  camp     Camp?  @relation(fields: [campId], references: [id])
-  visit    Visit? @relation(fields: [visitId], references: [id])
+  member     Member      @relation(fields: [memberId], references: [id])
+  memberId   String
+  camp       Camp?       @relation(fields: [campId], references: [id])
+  visit      Visit?      @relation(fields: [visitId], references: [id])
+  disbursal  Disbursal?
 }
 
 enum ClaimType {
@@ -148,6 +164,70 @@ enum ClaimStatus {
   PROCESSING
   DISBURSED
   REJECTED
+}
+
+// Disbursal status enum
+enum DisbursalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+// Payment channel enum
+enum PaymentChannel {
+  MPESA_TILL
+  MPESA_PAYBILL
+  MPESA_MOBILE
+  BANK_TRANSFER
+}
+
+// Disbursal record for clinic payments
+model Disbursal {
+  id                   String          @id @default(uuid())
+  claimId              String          @unique
+  clinicId             String
+  amount               Int // Amount in KES
+  status               DisbursalStatus @default(PENDING)
+  paymentChannel       PaymentChannel
+  transactionReference String          @unique
+  recipientIdentifier  String // Till/Paybill/Mobile/Account number
+
+  // SasaPay fields
+  sasaPayRequestId     String?
+  sasaPayCheckoutId    String?
+  mpesaReceiptNumber   String?
+
+  errorMessage         String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  completedAt          DateTime?
+  reversedAt           DateTime?
+  reversalReason       String?
+
+  claim                Claim                    @relation(fields: [claimId], references: [id])
+  clinic               Clinic                   @relation(fields: [clinicId], references: [id])
+  statusHistory        DisbursalStatusHistory[]
+
+  @@index([claimId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Disbursal status history for audit trail
+model DisbursalStatusHistory {
+  id          String          @id @default(uuid())
+  disbursalId String
+  status      DisbursalStatus
+  timestamp   DateTime        @default(now())
+  metadata    Json?
+
+  disbursal Disbursal @relation(fields: [disbursalId], references: [id])
+
+  @@index([disbursalId])
+  @@index([timestamp])
 }
 
 // NFT minted for members
@@ -248,6 +328,26 @@ model AdminUser {
   updatedAt    DateTime  @updatedAt
 
   notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+// Audit log for admin actions
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  targetType String // PAYMENT, MEMBER, SUBSCRIPTION, DISBURSAL
+  targetId   String
+  reason     String
+  metadata   Json?
+  timestamp  DateTime @default(now())
+  ipAddress  String
+
+  admin AdminUser @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+  @@index([timestamp])
 }
 
 // Staff user for clinic/camp staff access
@@ -544,7 +644,33 @@ model Clinic {
   updatedAt              DateTime       @updatedAt
   // Relations
   staffUsers             StaffUser[]
+  disbursals             Disbursal[]
+  paymentConfig          ClinicPaymentConfig?
 
   @@index([status])
   @@index([subCounty])
+}
+
+// Clinic payment configuration for disbursals
+model ClinicPaymentConfig {
+  id                String         @id @default(uuid())
+  clinicId          String         @unique
+  paymentChannel    PaymentChannel
+
+  // M-Pesa fields
+  tillNumber        String?
+  paybillNumber     String?
+  mobileNumber      String?
+
+  // Bank fields
+  bankAccountNumber String?
+  bankName          String?
+  bankBranchCode    String?
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
 }

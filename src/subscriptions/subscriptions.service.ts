@@ -514,3 +514,215 @@ export class SubscriptionsService {
     };
   }
 }
+
+  /**
+   * Check waiting period for a member and procedure
+   * Requirements: 15.1, 15.2, 15.3, 16.1, 16.2, 17.1-17.6
+   */
+  async checkWaitingPeriod(
+    memberId: string,
+    procedureCode: string,
+  ): Promise<{
+    passed: boolean;
+    daysRemaining: number;
+    requiredDays: number;
+    procedureType: 'EMERGENCY' | 'RESTORATIVE';
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    if (!subscription.isActive) {
+      throw new BadRequestException('Subscription is not active');
+    }
+
+    // Determine procedure type
+    const emergencyProcedures = ['CONSULT', 'EXTRACT_SIMPLE'];
+    const procedureType = emergencyProcedures.includes(procedureCode)
+      ? 'EMERGENCY'
+      : 'RESTORATIVE';
+
+    // Calculate required waiting days
+    const requiredDays = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      procedureType,
+    );
+
+    // Calculate days since subscription start
+    const startDate = subscription.subscriptionStartDate || subscription.startDate;
+    const daysSinceStart = Math.floor(
+      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    const passed = daysSinceStart >= requiredDays;
+    const daysRemaining = Math.max(0, requiredDays - daysSinceStart);
+
+    this.logger.log(
+      `Waiting period check for ${memberId}: ${procedureCode} (${procedureType}) - ` +
+        `${daysSinceStart}/${requiredDays} days, passed: ${passed}`,
+    );
+
+    return {
+      passed,
+      daysRemaining,
+      requiredDays,
+      procedureType,
+    };
+  }
+
+  /**
+   * Calculate required waiting days based on payment frequency and procedure type
+   * Requirements: 15.1, 15.2, 15.3, 16.1, 16.2
+   */
+  private calculateRequiredWaitingDays(
+    paymentFrequency: string,
+    procedureType: string,
+  ): number {
+    if (paymentFrequency === 'ANNUAL') {
+      // Annual subscribers: 14 days for all procedures
+      return 14;
+    }
+
+    // Monthly subscribers
+    if (procedureType === 'EMERGENCY') {
+      // Consultations and extractions: 60 days
+      return 60;
+    } else {
+      // Restorative procedures: 90 days
+      return 90;
+    }
+  }
+
+  /**
+   * Check if claim amount is within limit
+   * Requirements: 12.5, 12.6, 14.1, 14.2, 14.3
+   */
+  async checkClaimLimit(
+    memberId: string,
+    claimAmount: number,
+  ): Promise<{
+    withinLimit: boolean;
+    currentUsed: number;
+    limit: number;
+    remainingLimit: number;
+    wouldExceed: boolean;
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    const currentUsed = subscription.annualCapUsed;
+    const limit = subscription.annualCapLimit;
+    const total = currentUsed + claimAmount;
+    const withinLimit = total <= limit;
+    const remainingLimit = Math.max(0, limit - currentUsed);
+    const wouldExceed = claimAmount > remainingLimit;
+
+    this.logger.log(
+      `Claim limit check for ${memberId}: ${claimAmount} KES, ` +
+        `used: ${currentUsed}/${limit}, remaining: ${remainingLimit}, ` +
+        `within limit: ${withinLimit}`,
+    );
+
+    return {
+      withinLimit,
+      currentUsed,
+      limit,
+      remainingLimit,
+      wouldExceed,
+    };
+  }
+
+  /**
+   * Increment claim usage for a member
+   */
+  async incrementClaimUsage(memberId: string, amount: number): Promise<void> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    const newUsed = subscription.annualCapUsed + amount;
+
+    await this.prisma.subscription.update({
+      where: { memberId },
+      data: {
+        annualCapUsed: newUsed,
+      },
+    });
+
+    this.logger.log(
+      `Incremented claim usage for ${memberId}: ${subscription.annualCapUsed} -> ${newUsed}`,
+    );
+  }
+
+  /**
+   * Get waiting period status for member dashboard
+   * Requirements: 2.7, 18.1, 18.2, 18.3
+   */
+  async getWaitingPeriodStatus(memberId: string): Promise<{
+    consultationsExtractions: {
+      available: boolean;
+      daysRemaining: number;
+      requiredDays: number;
+    };
+    restorativeProcedures: {
+      available: boolean;
+      daysRemaining: number;
+      requiredDays: number;
+    };
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    const startDate = subscription.subscriptionStartDate || subscription.startDate;
+    const daysSinceStart = Math.floor(
+      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    // Calculate for emergency procedures (consultations/extractions)
+    const emergencyRequired = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      'EMERGENCY',
+    );
+    const emergencyAvailable = daysSinceStart >= emergencyRequired;
+    const emergencyRemaining = Math.max(0, emergencyRequired - daysSinceStart);
+
+    // Calculate for restorative procedures
+    const restorativeRequired = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      'RESTORATIVE',
+    );
+    const restorativeAvailable = daysSinceStart >= restorativeRequired;
+    const restorativeRemaining = Math.max(0, restorativeRequired - daysSinceStart);
+
+    return {
+      consultationsExtractions: {
+        available: emergencyAvailable,
+        daysRemaining: emergencyRemaining,
+        requiredDays: emergencyRequired,
+      },
+      restorativeProcedures: {
+        available: restorativeAvailable,
+        daysRemaining: restorativeRemaining,
+        requiredDays: restorativeRequired,
+      },
+    };
+  }
+}
