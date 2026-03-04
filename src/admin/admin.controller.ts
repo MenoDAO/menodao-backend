@@ -52,7 +52,6 @@ export class AdminController {
       dto.newPassword,
     );
   }
-}
 
   // Payment Management Endpoints
 
@@ -117,7 +116,10 @@ export class AdminController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate a subscription' })
   @ApiBody({ type: AdminActionRequest })
-  async deactivateSubscription(@Request() req, @Body() dto: AdminActionRequest) {
+  async deactivateSubscription(
+    @Request() req,
+    @Body() dto: AdminActionRequest,
+  ) {
     return this.adminService.deactivateSubscription(
       dto.targetId,
       dto.reason,
@@ -137,7 +139,6 @@ export class AdminController {
       req.admin.id,
     );
   }
-}
 
   // Payment Reconciliation
 
@@ -145,9 +146,7 @@ export class AdminController {
   @UseGuards(AdminAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reconcile payments with SasaPay' })
-  async reconcilePayments(
-    @Body() body: { from: string; to: string },
-  ) {
+  async reconcilePayments(@Body() body: { from: string; to: string }) {
     return this.adminService.reconcilePayments({
       from: new Date(body.from),
       to: new Date(body.to),

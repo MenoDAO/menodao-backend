@@ -374,7 +374,6 @@ export class PaymentService {
         metadata?.mpesaReceiptNumber || metadata?.transactionCode,
     };
   }
-}
 
   /**
    * Calculate payment amount based on tier and frequency
@@ -462,7 +461,7 @@ export class PaymentService {
   /**
    * Validate URL format
    */
-  async validateUrl(url: string): boolean {
+  async validateUrl(url: string): Promise<boolean> {
     try {
       const parsed = new URL(url);
       return parsed.protocol === 'https:' || this.isDevEnvironment;

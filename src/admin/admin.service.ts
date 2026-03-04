@@ -167,7 +167,6 @@ export class AdminService implements OnModuleInit {
 
     return admin;
   }
-}
 
   /**
    * Search payments by various criteria
@@ -216,7 +215,6 @@ export class AdminService implements OnModuleInit {
             id: true,
             phoneNumber: true,
             fullName: true,
-            email: true,
           },
         },
       },
@@ -246,7 +244,6 @@ export class AdminService implements OnModuleInit {
             id: true,
             phoneNumber: true,
             fullName: true,
-            email: true,
             subscription: true,
           },
         },
@@ -264,7 +261,7 @@ export class AdminService implements OnModuleInit {
    * Build payment detail response
    */
   private buildPaymentDetailResponse(payment: any) {
-    const metadata = payment.metadata as any || {};
+    const metadata = payment.metadata || {};
 
     return {
       id: payment.id,
@@ -282,9 +279,12 @@ export class AdminService implements OnModuleInit {
       claimLimitsAssigned: payment.claimLimitsAssigned || false,
       claimLimitsAssignedAt: payment.claimLimitsAssignedAt,
       sasaPayData: {
-        merchantRequestId: metadata.merchantRequestId || payment.merchantRequestId,
-        checkoutRequestId: metadata.checkoutRequestId || payment.checkoutRequestId,
-        mpesaReceiptNumber: metadata.mpesaReceiptNumber || payment.mpesaReceiptNumber,
+        merchantRequestId:
+          metadata.merchantRequestId || payment.merchantRequestId,
+        checkoutRequestId:
+          metadata.checkoutRequestId || payment.checkoutRequestId,
+        mpesaReceiptNumber:
+          metadata.mpesaReceiptNumber || payment.mpesaReceiptNumber,
       },
       relatedLinks: {
         userProfile: `/admin/members/${payment.memberId}`,
@@ -373,9 +373,19 @@ export class AdminService implements OnModuleInit {
       .reduce((sum: number, c: any) => sum + c.amount, 0);
 
     // Calculate waiting period status
-    let waitingPeriodStatus = null;
+    let waitingPeriodStatus: {
+      consultationsExtractions: {
+        available: boolean;
+        daysRemaining: number;
+      };
+      restorativeProcedures: {
+        available: boolean;
+        daysRemaining: number;
+      };
+    } | null = null;
     if (subscription) {
-      const startDate = subscription.subscriptionStartDate || subscription.startDate;
+      const startDate =
+        subscription.subscriptionStartDate || subscription.startDate;
       const daysSinceStart = Math.floor(
         (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
       );
@@ -412,7 +422,8 @@ export class AdminService implements OnModuleInit {
             paymentFrequency: subscription.paymentFrequency,
             annualCapLimit: subscription.annualCapLimit,
             annualCapUsed: subscription.annualCapUsed,
-            remainingLimit: subscription.annualCapLimit - subscription.annualCapUsed,
+            remainingLimit:
+              subscription.annualCapLimit - subscription.annualCapUsed,
           }
         : null,
       paymentHistory: member.contributions.map((c: any) => ({
@@ -479,7 +490,11 @@ export class AdminService implements OnModuleInit {
    * Deactivate a subscription
    * Requirements: 3.3, 3.4
    */
-  async deactivateSubscription(targetId: string, reason: string, adminId: string) {
+  async deactivateSubscription(
+    targetId: string,
+    reason: string,
+    adminId: string,
+  ) {
     const subscription = await this.prisma.subscription.findUnique({
       where: { id: targetId },
     });
@@ -518,7 +533,11 @@ export class AdminService implements OnModuleInit {
    * Verify payment manually
    * Requirements: 3.5, 3.6
    */
-  async verifyPaymentManually(targetId: string, reason: string, adminId: string) {
+  async verifyPaymentManually(
+    targetId: string,
+    reason: string,
+    adminId: string,
+  ) {
     const payment = await this.prisma.contribution.findFirst({
       where: {
         OR: [{ id: targetId }, { paymentRef: targetId }],
@@ -592,7 +611,6 @@ export class AdminService implements OnModuleInit {
       `Admin action logged: ${data.action} on ${data.targetType} ${data.targetId} by ${data.adminId}`,
     );
   }
-}
 
   /**
    * Reconcile payments with SasaPay
@@ -632,7 +650,7 @@ export class AdminService implements OnModuleInit {
     for (const payment of payments) {
       // TODO: Query SasaPay transaction status API
       // For now, we'll just check if the payment has SasaPay data
-      const metadata = payment.metadata as any || {};
+      const metadata = (payment.metadata as any) || {};
       const hasSasaPayData =
         metadata.checkoutRequestId || metadata.merchantRequestId;
 

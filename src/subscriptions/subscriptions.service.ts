@@ -513,7 +513,6 @@ export class SubscriptionsService {
       message: 'Subscription removed successfully',
     };
   }
-}
 
   /**
    * Check waiting period for a member and procedure
@@ -553,7 +552,8 @@ export class SubscriptionsService {
     );
 
     // Calculate days since subscription start
-    const startDate = subscription.subscriptionStartDate || subscription.startDate;
+    const startDate =
+      subscription.subscriptionStartDate || subscription.startDate;
     const daysSinceStart = Math.floor(
       (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
     );
@@ -691,7 +691,8 @@ export class SubscriptionsService {
       throw new NotFoundException('No subscription found for member');
     }
 
-    const startDate = subscription.subscriptionStartDate || subscription.startDate;
+    const startDate =
+      subscription.subscriptionStartDate || subscription.startDate;
     const daysSinceStart = Math.floor(
       (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
     );
@@ -710,7 +711,10 @@ export class SubscriptionsService {
       'RESTORATIVE',
     );
     const restorativeAvailable = daysSinceStart >= restorativeRequired;
-    const restorativeRemaining = Math.max(0, restorativeRequired - daysSinceStart);
+    const restorativeRemaining = Math.max(
+      0,
+      restorativeRequired - daysSinceStart,
+    );
 
     return {
       consultationsExtractions: {
