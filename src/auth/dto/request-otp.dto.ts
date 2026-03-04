@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, Matches } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  Matches,
+  IsOptional,
+  IsBoolean,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RequestOtpDto {
@@ -12,4 +18,14 @@ export class RequestOtpDto {
     message: 'Please provide a valid Kenyan phone number',
   })
   phoneNumber: string;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Create member if phone number does not exist (for signup flow)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  createIfNotExists?: boolean;
 }

@@ -67,7 +67,7 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      await service.requestOtp('0712345678');
+      await service.requestOtp('0712345678', true);
 
       expect(mockPrismaService.member.findUnique).toHaveBeenCalledWith({
         where: { phoneNumber: '+254712345678' },
@@ -85,14 +85,14 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      await service.requestOtp('254712345678');
+      await service.requestOtp('254712345678', true);
 
       expect(mockPrismaService.member.findUnique).toHaveBeenCalledWith({
         where: { phoneNumber: '+254712345678' },
       });
     });
 
-    it('should create new member if not exists', async () => {
+    it('should create new member if not exists and createIfNotExists is true', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue(null);
       mockPrismaService.member.create.mockResolvedValue({
         id: 'new-member-id',
@@ -104,11 +104,21 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      await service.requestOtp('+254712345678');
+      await service.requestOtp('+254712345678', true);
 
       expect(mockPrismaService.member.create).toHaveBeenCalledWith({
         data: { phoneNumber: '+254712345678' },
       });
+    });
+
+    it('should throw error if member does not exist and createIfNotExists is false', async () => {
+      mockPrismaService.member.findUnique.mockResolvedValue(null);
+
+      await expect(service.requestOtp('+254712345678', false)).rejects.toThrow(
+        'Phone number not found. Please sign up instead.',
+      );
+
+      expect(mockPrismaService.member.create).not.toHaveBeenCalled();
     });
 
     it('should invalidate existing OTPs before creating new one', async () => {
@@ -122,7 +132,7 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      await service.requestOtp('+254712345678');
+      await service.requestOtp('+254712345678', true);
 
       expect(mockPrismaService.oTPCode.updateMany).toHaveBeenCalledWith({
         where: {
@@ -135,7 +145,7 @@ describe('AuthService', () => {
       });
     });
 
-    it('should create OTP with 5 minute expiry', async () => {
+    it('should create OTP with 10 minute expiry', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue({
         id: '1',
         phoneNumber: '+254712345678',
@@ -147,17 +157,17 @@ describe('AuthService', () => {
       });
 
       const beforeCall = Date.now();
-      await service.requestOtp('+254712345678');
+      await service.requestOtp('+254712345678', true);
       const afterCall = Date.now();
 
       const createCall = mockPrismaService.oTPCode.create.mock.calls[0][0];
       const expiresAt = new Date(createCall.data.expiresAt).getTime();
 
-      // Should expire in ~5 minutes
+      // Should expire in ~10 minutes
       expect(expiresAt).toBeGreaterThanOrEqual(
-        beforeCall + 5 * 60 * 1000 - 1000,
+        beforeCall + 10 * 60 * 1000 - 1000,
       );
-      expect(expiresAt).toBeLessThanOrEqual(afterCall + 5 * 60 * 1000 + 1000);
+      expect(expiresAt).toBeLessThanOrEqual(afterCall + 10 * 60 * 1000 + 1000);
     });
 
     it('should send OTP via SMS', async () => {
@@ -171,7 +181,7 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      await service.requestOtp('+254712345678');
+      await service.requestOtp('+254712345678', true);
 
       expect(mockSmsService.sendOtp).toHaveBeenCalledWith(
         '+254712345678',
@@ -190,7 +200,7 @@ describe('AuthService', () => {
         messageId: 'test-123',
       });
 
-      const result = await service.requestOtp('+254712345678');
+      const result = await service.requestOtp('+254712345678', true);
 
       expect(result).toEqual({ message: 'OTP sent successfully' });
     });
@@ -206,7 +216,7 @@ describe('AuthService', () => {
         error: 'SMS service unavailable',
       });
 
-      await expect(service.requestOtp('+254712345678')).rejects.toThrow(
+      await expect(service.requestOtp('+254712345678', true)).rejects.toThrow(
         ServiceUnavailableException,
       );
     });
