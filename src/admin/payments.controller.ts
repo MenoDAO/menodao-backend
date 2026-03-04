@@ -13,7 +13,9 @@ import { PrismaService } from '../prisma/prisma.service';
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 export class PaymentsController {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {
+    console.log('✅ PaymentsController initialized at /admin/payments');
+  }
 
   @Get()
   @ApiOperation({ summary: 'List all payments with pagination and filters' })
@@ -102,6 +104,7 @@ export class PaymentsController {
   @Get('summary')
   @ApiOperation({ summary: 'Get payment summary by status' })
   async getPaymentSummary() {
+    console.log('[PaymentsController] getPaymentSummary called');
     const summary = await this.prisma.contribution.groupBy({
       by: ['status'],
       _count: true,
@@ -120,6 +123,7 @@ export class PaymentsController {
     summary: 'Get financial health summary: collections vs disbursals',
   })
   async getFinancialSummary() {
+    console.log('[PaymentsController] getFinancialSummary called');
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const yearStart = new Date(now.getFullYear(), 0, 1);
