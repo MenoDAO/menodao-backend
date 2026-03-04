@@ -17,11 +17,11 @@ import {
 } from '@prisma/client';
 import { CheckInDto } from './dto/check-in.dto';
 
-// Updated claim limits per tier (total claim limit, not annual)
+// Updated claim limits per tier (KES amounts claimable, not number of claims)
 const CLAIM_LIMITS: Record<PackageTier, number> = {
-  BRONZE: 2000, // KES 2,000
-  SILVER: 5000, // KES 5,000
-  GOLD: 10000, // KES 10,000
+  BRONZE: 6000, // KES 6,000
+  SILVER: 10000, // KES 10,000
+  GOLD: 15000, // KES 15,000
 };
 
 export interface SearchMemberResult {
