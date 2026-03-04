@@ -30,3 +30,6 @@ npm-debug.log*
 
 # Test coverage
 coverage
+
+# Script configs (local only)
+scripts/delete-test-users.config.ts
