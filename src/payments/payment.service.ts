@@ -87,12 +87,19 @@ export class PaymentService {
         const checkoutRequestId = response.CheckoutRequestID;
         const merchantRequestId = response.MerchantRequestID;
 
+        // Get existing contribution to preserve metadata
+        const existingContribution = await this.prisma.contribution.findUnique({
+          where: { id: contributionId },
+        });
+
         // Update contribution with payment reference and SasaPay IDs
+        // IMPORTANT: Merge with existing metadata to preserve upgrade info
         await this.prisma.contribution.update({
           where: { id: contributionId },
           data: {
             paymentRef: transactionRef,
             metadata: {
+              ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
               checkoutRequestId,
               merchantRequestId,
               phoneNumber: normalizedPhone,
@@ -144,11 +151,17 @@ export class PaymentService {
     const mockCheckoutId = `MOCK_CHECKOUT_${Date.now()}`;
     const mockMerchantId = `MOCK_MERCHANT_${Date.now()}`;
 
+    // Get existing contribution to preserve metadata
+    const existingContribution = await this.prisma.contribution.findUnique({
+      where: { id: contributionId },
+    });
+
     await this.prisma.contribution.update({
       where: { id: contributionId },
       data: {
         paymentRef: transactionRef,
         metadata: {
+          ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
           checkoutRequestId: mockCheckoutId,
           merchantRequestId: mockMerchantId,
           phoneNumber,
