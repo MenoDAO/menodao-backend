@@ -355,7 +355,7 @@ export class PaymentService {
                 day: 'numeric',
               });
 
-              const message = `Congratulations! Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
+              const message = `Dear ${subscription.member.fullName || 'Member'}, Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
 
               await this.smsService.sendSMS(
                 subscription.member.phoneNumber,
@@ -412,6 +412,7 @@ export class PaymentService {
               });
 
               const tierName = `Meno${subscription.tier.charAt(0) + subscription.tier.slice(1).toLowerCase()}`;
+              const memberName = subscription.member.fullName || 'Member';
               const message = `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
 
               await this.smsService.sendSMS(
