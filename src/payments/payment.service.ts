@@ -252,6 +252,14 @@ export class PaymentService {
           newTier?: PackageTier;
         } | null;
 
+        // Log metadata for debugging
+        this.logger.log(
+          `[UPGRADE DEBUG] Contribution ${contribution.id} metadata: ${JSON.stringify(originalMetadata)}`,
+        );
+        this.logger.log(
+          `[UPGRADE DEBUG] isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
+        );
+
         // Update contribution to completed
         await this.prisma.contribution.update({
           where: { id: contribution.id },
@@ -278,7 +286,7 @@ export class PaymentService {
         // Process upgrade if this was an upgrade payment
         if (originalMetadata?.isUpgrade && originalMetadata?.newTier) {
           this.logger.log(
-            `Processing upgrade for member ${contribution.memberId} to ${originalMetadata.newTier}`,
+            `[UPGRADE] Processing upgrade for member ${contribution.memberId} to ${originalMetadata.newTier}`,
           );
 
           // This is an upgrade payment - update subscription directly
@@ -287,6 +295,10 @@ export class PaymentService {
           });
 
           if (subscription) {
+            this.logger.log(
+              `[UPGRADE] Found subscription for member ${contribution.memberId}, current tier: ${subscription.tier}`,
+            );
+
             const tierCaps: Record<PackageTier, number> = {
               BRONZE: 6000,
               SILVER: 10000,
@@ -309,13 +321,17 @@ export class PaymentService {
             });
 
             this.logger.log(
-              `Upgrade completed for member ${contribution.memberId} to ${originalMetadata.newTier}`,
+              `[UPGRADE] ✅ Upgrade completed for member ${contribution.memberId}: ${subscription.tier} -> ${originalMetadata.newTier}`,
             );
           } else {
             this.logger.error(
-              `No subscription found for member ${contribution.memberId} during upgrade`,
+              `[UPGRADE] ❌ No subscription found for member ${contribution.memberId} during upgrade`,
             );
           }
+        } else {
+          this.logger.log(
+            `[UPGRADE DEBUG] Not an upgrade payment - isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
+          );
         }
 
         return { success: true, message: 'Payment processed successfully' };

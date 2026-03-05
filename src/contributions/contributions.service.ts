@@ -99,6 +99,14 @@ export class ContributionsService {
       },
     });
 
+    // Log for debugging
+    if (isUpgrade) {
+      this.logger.log(
+        `[UPGRADE] Created upgrade contribution ${contribution.id} with metadata: ${JSON.stringify(contribution.metadata)}`,
+      );
+      this.logger.log(`[UPGRADE] Target tier: ${newTier}, Member: ${memberId}`);
+    }
+
     // Initiate M-Pesa STK Push with actual charge amount
     const paymentResult = await this.paymentService.initiateSTKPush(
       memberId,
