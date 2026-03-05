@@ -246,6 +246,12 @@ export class PaymentService {
       const isSuccess = ResultCode === '0';
 
       if (isSuccess) {
+        // Check if this is an upgrade payment BEFORE updating (preserve original metadata)
+        const originalMetadata = contribution.metadata as {
+          isUpgrade?: boolean;
+          newTier?: PackageTier;
+        } | null;
+
         // Update contribution to completed
         await this.prisma.contribution.update({
           where: { id: contribution.id },
@@ -269,13 +275,12 @@ export class PaymentService {
           `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
 
-        // Check if this is an upgrade payment by looking at metadata
-        const metadata = contribution.metadata as {
-          isUpgrade?: boolean;
-          newTier?: PackageTier;
-        } | null;
+        // Process upgrade if this was an upgrade payment
+        if (originalMetadata?.isUpgrade && originalMetadata?.newTier) {
+          this.logger.log(
+            `Processing upgrade for member ${contribution.memberId} to ${originalMetadata.newTier}`,
+          );
 
-        if (metadata?.isUpgrade && metadata?.newTier) {
           // This is an upgrade payment - update subscription directly
           const subscription = await this.prisma.subscription.findUnique({
             where: { memberId: contribution.memberId },
@@ -297,14 +302,18 @@ export class PaymentService {
             await this.prisma.subscription.update({
               where: { memberId: contribution.memberId },
               data: {
-                tier: metadata.newTier,
-                monthlyAmount: tierPrices[metadata.newTier],
-                annualCapLimit: tierCaps[metadata.newTier],
+                tier: originalMetadata.newTier,
+                monthlyAmount: tierPrices[originalMetadata.newTier],
+                annualCapLimit: tierCaps[originalMetadata.newTier],
               },
             });
 
             this.logger.log(
-              `Upgrade completed for member ${contribution.memberId} to ${metadata.newTier}`,
+              `Upgrade completed for member ${contribution.memberId} to ${originalMetadata.newTier}`,
+            );
+          } else {
+            this.logger.error(
+              `No subscription found for member ${contribution.memberId} during upgrade`,
             );
           }
         }
