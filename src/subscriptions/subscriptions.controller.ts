@@ -79,6 +79,14 @@ export class SubscriptionsController {
     return this.subscriptionsService.deactivateUnpaidSubscriptions();
   }
 
+  @Get('waiting-period-status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get waiting period status for current member' })
+  async getWaitingPeriodStatus(@Request() req: RequestWithUser) {
+    return this.subscriptionsService.getWaitingPeriodStatus(req.user.id);
+  }
+
   @Post('dev/mock-payment')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

@@ -719,17 +719,25 @@ export class SubscriptionsService {
    * Get waiting period status for member dashboard
    * Requirements: 2.7, 18.1, 18.2, 18.3
    */
+  /**
+   * Get waiting period status for member
+   * Returns detailed information about procedure availability with dates
+   */
   async getWaitingPeriodStatus(memberId: string): Promise<{
     consultationsExtractions: {
       available: boolean;
       daysRemaining: number;
       requiredDays: number;
+      eligibleDate?: string;
     };
     restorativeProcedures: {
       available: boolean;
       daysRemaining: number;
       requiredDays: number;
+      eligibleDate?: string;
     };
+    paymentFrequency: string;
+    subscriptionStartDate: string;
   }> {
     const subscription = await this.prisma.subscription.findUnique({
       where: { memberId },
@@ -737,6 +745,10 @@ export class SubscriptionsService {
 
     if (!subscription) {
       throw new NotFoundException('No subscription found for member');
+    }
+
+    if (!subscription.isActive) {
+      throw new BadRequestException('Subscription is not active');
     }
 
     const startDate =
@@ -752,6 +764,9 @@ export class SubscriptionsService {
     );
     const emergencyAvailable = daysSinceStart >= emergencyRequired;
     const emergencyRemaining = Math.max(0, emergencyRequired - daysSinceStart);
+    const emergencyEligibleDate = new Date(
+      startDate.getTime() + emergencyRequired * 24 * 60 * 60 * 1000,
+    );
 
     // Calculate for restorative procedures
     const restorativeRequired = this.calculateRequiredWaitingDays(
@@ -763,18 +778,25 @@ export class SubscriptionsService {
       0,
       restorativeRequired - daysSinceStart,
     );
+    const restorativeEligibleDate = new Date(
+      startDate.getTime() + restorativeRequired * 24 * 60 * 60 * 1000,
+    );
 
     return {
       consultationsExtractions: {
         available: emergencyAvailable,
         daysRemaining: emergencyRemaining,
         requiredDays: emergencyRequired,
+        eligibleDate: emergencyEligibleDate.toISOString(),
       },
       restorativeProcedures: {
         available: restorativeAvailable,
         daysRemaining: restorativeRemaining,
         requiredDays: restorativeRequired,
+        eligibleDate: restorativeEligibleDate.toISOString(),
       },
+      paymentFrequency: subscription.paymentFrequency,
+      subscriptionStartDate: startDate.toISOString(),
     };
   }
 }

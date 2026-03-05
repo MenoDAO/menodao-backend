@@ -5,6 +5,7 @@ import {
   SasaPayService,
   SasaPayC2BCallbackData,
 } from '../sasapay/sasapay.service';
+import { SMSService } from '../notifications/sms.service';
 import { PackageTier, PaymentFrequency } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -29,6 +30,7 @@ export class PaymentService {
     private configService: ConfigService,
     private prisma: PrismaService,
     private sasaPayService: SasaPayService,
+    private smsService: SMSService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -305,6 +307,7 @@ export class PaymentService {
           // This is an upgrade payment - update subscription directly
           const subscription = await this.prisma.subscription.findUnique({
             where: { memberId: contribution.memberId },
+            include: { member: true },
           });
 
           if (subscription) {
@@ -324,6 +327,8 @@ export class PaymentService {
               GOLD: 700,
             };
 
+            const oldTier = subscription.tier;
+
             await this.prisma.subscription.update({
               where: { memberId: contribution.memberId },
               data: {
@@ -334,8 +339,38 @@ export class PaymentService {
             });
 
             this.logger.log(
-              `[UPGRADE] ✅ Upgrade completed for member ${contribution.memberId}: ${subscription.tier} -> ${originalMetadata.newTier}`,
+              `[UPGRADE] ✅ Upgrade completed for member ${contribution.memberId}: ${oldTier} -> ${originalMetadata.newTier}`,
             );
+
+            // Send SMS notification for upgrade
+            try {
+              const waitingDays =
+                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
+              const eligibleDate = new Date(
+                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
+              );
+              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              });
+
+              const message = `Congratulations! Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
+
+              await this.smsService.sendSMS(
+                subscription.member.phoneNumber,
+                message,
+              );
+
+              this.logger.log(
+                `[SMS] Upgrade notification sent to ${subscription.member.phoneNumber}`,
+              );
+            } catch (smsError) {
+              this.logger.error(
+                `[SMS] Failed to send upgrade notification: ${smsError.message}`,
+              );
+              // Don't fail the payment callback if SMS fails
+            }
           } else {
             this.logger.error(
               `[UPGRADE] ❌ No subscription found for member ${contribution.memberId} during upgrade`,
@@ -345,6 +380,55 @@ export class PaymentService {
           this.logger.log(
             `[UPGRADE DEBUG] Not an upgrade payment - isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
           );
+
+          // This is a new subscription payment - activate and send welcome SMS
+          const subscription = await this.prisma.subscription.findUnique({
+            where: { memberId: contribution.memberId },
+            include: { member: true },
+          });
+
+          if (subscription && !subscription.isActive) {
+            // Activate the subscription
+            await this.prisma.subscription.update({
+              where: { memberId: contribution.memberId },
+              data: { isActive: true },
+            });
+
+            this.logger.log(
+              `[SUBSCRIPTION] Activated subscription for member ${contribution.memberId}`,
+            );
+
+            // Send SMS notification for new subscription
+            try {
+              const waitingDays =
+                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
+              const eligibleDate = new Date(
+                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
+              );
+              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              });
+
+              const tierName = `Meno${subscription.tier.charAt(0) + subscription.tier.slice(1).toLowerCase()}`;
+              const message = `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
+
+              await this.smsService.sendSMS(
+                subscription.member.phoneNumber,
+                message,
+              );
+
+              this.logger.log(
+                `[SMS] Welcome notification sent to ${subscription.member.phoneNumber}`,
+              );
+            } catch (smsError) {
+              this.logger.error(
+                `[SMS] Failed to send welcome notification: ${smsError.message}`,
+              );
+              // Don't fail the payment callback if SMS fails
+            }
+          }
         }
 
         return { success: true, message: 'Payment processed successfully' };
