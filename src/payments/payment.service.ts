@@ -268,6 +268,47 @@ export class PaymentService {
         this.logger.log(
           `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
+
+        // Check if this is an upgrade payment by looking at metadata
+        const metadata = contribution.metadata as {
+          isUpgrade?: boolean;
+          newTier?: PackageTier;
+        } | null;
+
+        if (metadata?.isUpgrade && metadata?.newTier) {
+          // This is an upgrade payment - update subscription directly
+          const subscription = await this.prisma.subscription.findUnique({
+            where: { memberId: contribution.memberId },
+          });
+
+          if (subscription) {
+            const tierCaps: Record<PackageTier, number> = {
+              BRONZE: 6000,
+              SILVER: 10000,
+              GOLD: 15000,
+            };
+
+            const tierPrices: Record<PackageTier, number> = {
+              BRONZE: 350,
+              SILVER: 550,
+              GOLD: 700,
+            };
+
+            await this.prisma.subscription.update({
+              where: { memberId: contribution.memberId },
+              data: {
+                tier: metadata.newTier,
+                monthlyAmount: tierPrices[metadata.newTier],
+                annualCapLimit: tierCaps[metadata.newTier],
+              },
+            });
+
+            this.logger.log(
+              `Upgrade completed for member ${contribution.memberId} to ${metadata.newTier}`,
+            );
+          }
+        }
+
         return { success: true, message: 'Payment processed successfully' };
       } else {
         // Update contribution to failed

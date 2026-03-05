@@ -17,6 +17,9 @@ describe('SubscriptionsService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    claim: {
+      count: jest.fn(),
+    },
   };
 
   const mockBlockchainService = {
@@ -175,7 +178,11 @@ describe('SubscriptionsService', () => {
         id: 'sub-1',
         tier: 'BRONZE',
         isActive: true,
+        paymentFrequency: 'MONTHLY',
       });
+
+      // Mock hasActiveClaims to return false (no claims made)
+      mockPrismaService.claim.count.mockResolvedValue(0);
 
       const result = await service.upgrade('member-1', 'GOLD');
 

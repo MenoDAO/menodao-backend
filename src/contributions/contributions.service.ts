@@ -35,6 +35,8 @@ export class ContributionsService {
     amount: number,
     paymentMethod: string,
     phoneNumber?: string,
+    isUpgrade?: boolean,
+    newTier?: string,
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -88,6 +90,12 @@ export class ContributionsService {
         month: new Date(),
         paymentMethod: 'MPESA',
         status: PaymentStatus.PENDING,
+        metadata: isUpgrade
+          ? {
+              isUpgrade: true,
+              newTier,
+            }
+          : undefined,
       },
     });
 
@@ -97,7 +105,9 @@ export class ContributionsService {
       paymentPhone,
       actualAmount, // Use actual (dev) amount for payment
       contribution.id,
-      `MenoDAO ${member.subscription.tier} Contribution`,
+      isUpgrade
+        ? `MenoDAO Upgrade to ${newTier}`
+        : `MenoDAO ${member.subscription.tier} Contribution`,
     );
 
     if (!paymentResult.success) {
@@ -113,7 +123,7 @@ export class ContributionsService {
     }
 
     this.logger.log(
-      `Payment initiated for member ${memberId}, contribution ${contribution.id}`,
+      `Payment initiated for member ${memberId}, contribution ${contribution.id}${isUpgrade ? ` (upgrade to ${newTier})` : ''}`,
     );
 
     return {

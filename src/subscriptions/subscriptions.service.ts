@@ -290,20 +290,61 @@ export class SubscriptionsService {
       throw new BadRequestException('Can only upgrade to a higher tier');
     }
 
-    // Calculate upgrade cost (difference between tiers)
-    const currentPrice = this.getPrice(existing.tier);
-    const newPrice = this.getPrice(newTier);
+    // Check if member has made any claims
+    const hasActiveClaims = await this.hasActiveClaims(memberId);
+
+    if (hasActiveClaims) {
+      // Member has made claims - must exhaust current package first
+      throw new BadRequestException(
+        'You have active claims on your current package. Please exhaust your current package before upgrading. You will need to pay the full amount for the new tier.',
+      );
+    }
+
+    // No claims made - calculate difference amount
+    const currentPrice = this.getPrice(
+      existing.tier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const newPrice = this.getPrice(
+      newTier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
     const upgradeCost = newPrice - currentPrice;
+
+    const currentDisplayPrice = this.getDisplayPrice(
+      existing.tier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const newDisplayPrice = this.getDisplayPrice(
+      newTier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const displayUpgradeCost = newDisplayPrice - currentDisplayPrice;
 
     return {
       currentTier: existing.tier,
       newTier,
       paymentRequired: true,
       paymentAmount: upgradeCost,
-      displayAmount:
-        this.getDisplayPrice(newTier) - this.getDisplayPrice(existing.tier),
-      message: 'Please complete payment to upgrade your subscription',
+      displayAmount: displayUpgradeCost,
+      message: `Pay the difference of KES ${displayUpgradeCost} to upgrade from ${existing.tier} to ${newTier}`,
     };
+  }
+
+  /**
+   * Check if member has any active claims (approved or disbursed)
+   */
+  async hasActiveClaims(memberId: string): Promise<boolean> {
+    const claimCount = await this.prisma.claim.count({
+      where: {
+        memberId,
+        status: {
+          in: ['APPROVED', 'DISBURSED'],
+        },
+      },
+    });
+
+    return claimCount > 0;
   }
 
   /**
@@ -318,14 +359,21 @@ export class SubscriptionsService {
       throw new NotFoundException('No existing subscription found');
     }
 
-    // Update subscription
+    const newAnnualCap = ANNUAL_CAPS[newTier];
+
+    // Update subscription with new tier and claim limits
     await this.prisma.subscription.update({
       where: { memberId },
       data: {
         tier: newTier,
         monthlyAmount: this.getDisplayPrice(newTier),
+        annualCapLimit: newAnnualCap,
       },
     });
+
+    this.logger.log(
+      `Subscription upgraded for ${memberId}: ${existing.tier} -> ${newTier}, new cap: ${newAnnualCap}`,
+    );
 
     // Mint new NFT for upgraded tier
     try {

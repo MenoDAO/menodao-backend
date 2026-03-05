@@ -5,8 +5,11 @@ import {
   IsOptional,
   Min,
   Max,
+  IsBoolean,
+  IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PackageTier } from '@prisma/client';
 
 export class InitiatePaymentDto {
   @ApiProperty({
@@ -36,4 +39,21 @@ export class InitiatePaymentDto {
   @IsOptional()
   @IsString()
   paymentMethod?: string;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether this payment is for a package upgrade',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isUpgrade?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'SILVER',
+    description: 'New tier for upgrade (required if isUpgrade is true)',
+    enum: ['BRONZE', 'SILVER', 'GOLD'],
+  })
+  @IsOptional()
+  @IsEnum(PackageTier)
+  newTier?: PackageTier;
 }
