@@ -55,7 +55,11 @@ export class SubscriptionsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Subscribe to a package' })
   async subscribe(@Request() req: RequestWithUser, @Body() dto: SubscribeDto) {
-    return this.subscriptionsService.subscribe(req.user.id, dto.tier);
+    return this.subscriptionsService.subscribe(
+      req.user.id,
+      dto.tier,
+      dto.paymentFrequency || 'MONTHLY',
+    );
   }
 
   @Post('upgrade')
@@ -77,6 +81,14 @@ export class SubscriptionsController {
     }
 
     return this.subscriptionsService.deactivateUnpaidSubscriptions();
+  }
+
+  @Get('waiting-period-status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get waiting period status for current member' })
+  async getWaitingPeriodStatus(@Request() req: RequestWithUser) {
+    return this.subscriptionsService.getWaitingPeriodStatus(req.user.id);
   }
 
   @Post('dev/mock-payment')

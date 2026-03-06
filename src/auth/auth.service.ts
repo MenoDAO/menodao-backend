@@ -24,15 +24,38 @@ export class AuthService {
   }
 
   /**
-   * Request OTP - sends code to phone number
+   * Check if phone number exists in the system
    */
-  async requestOtp(phoneNumber: string): Promise<{ message: string }> {
+  async checkPhoneExists(
+    phoneNumber: string,
+  ): Promise<{ exists: boolean; phoneNumber: string }> {
+    const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
+
+    const member = await this.prisma.member.findUnique({
+      where: { phoneNumber: normalizedPhone },
+    });
+
+    return {
+      exists: !!member,
+      phoneNumber: normalizedPhone,
+    };
+  }
+
+  /**
+   * Request OTP - sends code to phone number
+   * For signup flow, pass createIfNotExists=true
+   * For login flow, pass createIfNotExists=false (default)
+   */
+  async requestOtp(
+    phoneNumber: string,
+    createIfNotExists: boolean = false,
+  ): Promise<{ message: string }> {
     // Normalize phone number (ensure it starts with country code)
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
 
     // Generate OTP
     const code = this.generateOtp();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Invalidate any existing unused OTPs for this number
     await this.prisma.oTPCode.updateMany({
@@ -51,9 +74,15 @@ export class AuthService {
     });
 
     if (!member) {
-      member = await this.prisma.member.create({
-        data: { phoneNumber: normalizedPhone },
-      });
+      if (createIfNotExists) {
+        member = await this.prisma.member.create({
+          data: { phoneNumber: normalizedPhone },
+        });
+      } else {
+        throw new BadRequestException(
+          'Phone number not found. Please sign up instead.',
+        );
+      }
     }
 
     // Create new OTP

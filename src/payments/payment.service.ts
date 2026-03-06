@@ -5,6 +5,8 @@ import {
   SasaPayService,
   SasaPayC2BCallbackData,
 } from '../sasapay/sasapay.service';
+import { SmsService } from '../sms/sms.service';
+import { PackageTier, PaymentFrequency } from '@prisma/client';
 import * as crypto from 'crypto';
 
 export interface PaymentResult {
@@ -28,6 +30,7 @@ export class PaymentService {
     private configService: ConfigService,
     private prisma: PrismaService,
     private sasaPayService: SasaPayService,
+    private smsService: SmsService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -86,12 +89,19 @@ export class PaymentService {
         const checkoutRequestId = response.CheckoutRequestID;
         const merchantRequestId = response.MerchantRequestID;
 
+        // Get existing contribution to preserve metadata
+        const existingContribution = await this.prisma.contribution.findUnique({
+          where: { id: contributionId },
+        });
+
         // Update contribution with payment reference and SasaPay IDs
+        // IMPORTANT: Merge with existing metadata to preserve upgrade info
         await this.prisma.contribution.update({
           where: { id: contributionId },
           data: {
             paymentRef: transactionRef,
             metadata: {
+              ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
               checkoutRequestId,
               merchantRequestId,
               phoneNumber: normalizedPhone,
@@ -143,11 +153,17 @@ export class PaymentService {
     const mockCheckoutId = `MOCK_CHECKOUT_${Date.now()}`;
     const mockMerchantId = `MOCK_MERCHANT_${Date.now()}`;
 
+    // Get existing contribution to preserve metadata
+    const existingContribution = await this.prisma.contribution.findUnique({
+      where: { id: contributionId },
+    });
+
     await this.prisma.contribution.update({
       where: { id: contributionId },
       data: {
         paymentRef: transactionRef,
         metadata: {
+          ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
           checkoutRequestId: mockCheckoutId,
           merchantRequestId: mockMerchantId,
           phoneNumber,
@@ -254,6 +270,20 @@ export class PaymentService {
       const isSuccess = ResultCode === '0' || data.Paid === true;
 
       if (isSuccess) {
+        // Check if this is an upgrade payment BEFORE updating (preserve original metadata)
+        const originalMetadata = contribution.metadata as {
+          isUpgrade?: boolean;
+          newTier?: PackageTier;
+        } | null;
+
+        // Log metadata for debugging
+        this.logger.log(
+          `[UPGRADE DEBUG] Contribution ${contribution.id} metadata: ${JSON.stringify(originalMetadata)}`,
+        );
+        this.logger.log(
+          `[UPGRADE DEBUG] isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
+        );
+
         // Update contribution to completed
         await this.prisma.contribution.update({
           where: { id: contribution.id },
@@ -277,6 +307,141 @@ export class PaymentService {
         this.logger.log(
           `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${receiptNumber}`,
         );
+
+        // Process upgrade if this was an upgrade payment
+        if (originalMetadata?.isUpgrade && originalMetadata?.newTier) {
+          this.logger.log(
+            `[UPGRADE] Processing upgrade for member ${contribution.memberId} to ${originalMetadata.newTier}`,
+          );
+
+          // This is an upgrade payment - update subscription directly
+          const subscription = await this.prisma.subscription.findUnique({
+            where: { memberId: contribution.memberId },
+            include: { member: true },
+          });
+
+          if (subscription) {
+            this.logger.log(
+              `[UPGRADE] Found subscription for member ${contribution.memberId}, current tier: ${subscription.tier}`,
+            );
+
+            const tierCaps: Record<PackageTier, number> = {
+              BRONZE: 6000,
+              SILVER: 10000,
+              GOLD: 15000,
+            };
+
+            const tierPrices: Record<PackageTier, number> = {
+              BRONZE: 350,
+              SILVER: 550,
+              GOLD: 700,
+            };
+
+            const oldTier = subscription.tier;
+
+            await this.prisma.subscription.update({
+              where: { memberId: contribution.memberId },
+              data: {
+                tier: originalMetadata.newTier,
+                monthlyAmount: tierPrices[originalMetadata.newTier],
+                annualCapLimit: tierCaps[originalMetadata.newTier],
+              },
+            });
+
+            this.logger.log(
+              `[UPGRADE] ✅ Upgrade completed for member ${contribution.memberId}: ${oldTier} -> ${originalMetadata.newTier}`,
+            );
+
+            // Send SMS notification for upgrade
+            try {
+              const waitingDays =
+                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
+              const eligibleDate = new Date(
+                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
+              );
+              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              });
+
+              const message = `Dear ${subscription.member.fullName || 'Member'}, Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
+
+              await this.smsService.sendSms(
+                subscription.member.phoneNumber,
+                message,
+              );
+
+              this.logger.log(
+                `[SMS] Upgrade notification sent to ${subscription.member.phoneNumber}`,
+              );
+            } catch (smsError) {
+              this.logger.error(
+                `[SMS] Failed to send upgrade notification: ${smsError.message}`,
+              );
+              // Don't fail the payment callback if SMS fails
+            }
+          } else {
+            this.logger.error(
+              `[UPGRADE] ❌ No subscription found for member ${contribution.memberId} during upgrade`,
+            );
+          }
+        } else {
+          this.logger.log(
+            `[UPGRADE DEBUG] Not an upgrade payment - isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
+          );
+
+          // This is a new subscription payment - activate and send welcome SMS
+          const subscription = await this.prisma.subscription.findUnique({
+            where: { memberId: contribution.memberId },
+            include: { member: true },
+          });
+
+          if (subscription && !subscription.isActive) {
+            // Activate the subscription
+            await this.prisma.subscription.update({
+              where: { memberId: contribution.memberId },
+              data: { isActive: true },
+            });
+
+            this.logger.log(
+              `[SUBSCRIPTION] Activated subscription for member ${contribution.memberId}`,
+            );
+
+            // Send SMS notification for new subscription
+            try {
+              const waitingDays =
+                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
+              const eligibleDate = new Date(
+                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
+              );
+              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              });
+
+              const tierName = `Meno${subscription.tier.charAt(0) + subscription.tier.slice(1).toLowerCase()}`;
+              const memberName = subscription.member.fullName || 'Member';
+              const message = `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
+
+              await this.smsService.sendSms(
+                subscription.member.phoneNumber,
+                message,
+              );
+
+              this.logger.log(
+                `[SMS] Welcome notification sent to ${subscription.member.phoneNumber}`,
+              );
+            } catch (smsError) {
+              this.logger.error(
+                `[SMS] Failed to send welcome notification: ${smsError.message}`,
+              );
+              // Don't fail the payment callback if SMS fails
+            }
+          }
+        }
+
         return { success: true, message: 'Payment processed successfully' };
       } else {
         // Update contribution to failed
@@ -382,5 +547,189 @@ export class PaymentService {
       transactionCode:
         metadata?.mpesaReceiptNumber || metadata?.transactionCode,
     };
+  }
+
+  /**
+   * Calculate payment amount based on tier and frequency
+   * Requirements: 20.1, 20.2, 20.3
+   */
+  async calculatePaymentAmount(
+    tier: PackageTier,
+    frequency: PaymentFrequency,
+  ): Promise<number> {
+    this.logger.log(`Calculating payment amount for ${tier} ${frequency}`);
+
+    // Get tier pricing from database or config
+    const tierPricing: Record<PackageTier, number> = {
+      [PackageTier.BRONZE]: 500, // KES per month
+      [PackageTier.SILVER]: 1000,
+      [PackageTier.GOLD]: 1500,
+    };
+
+    const monthlyAmount = tierPricing[tier];
+
+    if (!monthlyAmount) {
+      throw new Error(`Invalid tier: ${tier}`);
+    }
+
+    // Calculate yearly as monthly * 12
+    if (frequency === PaymentFrequency.ANNUAL) {
+      const yearlyAmount = monthlyAmount * 12;
+      this.logger.log(
+        `Yearly amount for ${tier}: ${monthlyAmount} * 12 = ${yearlyAmount}`,
+      );
+      return yearlyAmount;
+    }
+
+    return monthlyAmount;
+  }
+
+  /**
+   * Generate callback URL for payment notifications
+   * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5
+   */
+  async generateCallbackUrl(transactionId: string): Promise<string> {
+    const apiBaseUrl = this.isDevEnvironment
+      ? this.configService.get<string>('API_BASE_URL_DEV') ||
+        this.configService.get<string>('API_BASE_URL') ||
+        'https://dev-api.menodao.org'
+      : this.configService.get<string>('API_BASE_URL') ||
+        'https://api.menodao.org';
+
+    const callbackUrl = `${apiBaseUrl}/contributions/callback`;
+
+    // Validate URL is HTTPS
+    if (!callbackUrl.startsWith('https://') && !this.isDevEnvironment) {
+      this.logger.error(`Invalid callback URL (not HTTPS): ${callbackUrl}`);
+      throw new Error('Callback URL must use HTTPS');
+    }
+
+    this.logger.log(`Generated callback URL: ${callbackUrl}`);
+    return callbackUrl;
+  }
+
+  /**
+   * Generate redirect URL for post-payment user redirect
+   * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6
+   */
+  async generateRedirectUrl(transactionId: string): Promise<string> {
+    const frontendBaseUrl = this.isDevEnvironment
+      ? this.configService.get<string>('FRONTEND_BASE_URL_DEV') ||
+        this.configService.get<string>('FRONTEND_BASE_URL') ||
+        'https://dev.menodao.org'
+      : this.configService.get<string>('FRONTEND_BASE_URL') ||
+        'https://menodao.org';
+
+    const redirectUrl = `${frontendBaseUrl}/payment/status?transactionId=${transactionId}`;
+
+    // Validate URL is HTTPS
+    if (!redirectUrl.startsWith('https://') && !this.isDevEnvironment) {
+      this.logger.error(`Invalid redirect URL (not HTTPS): ${redirectUrl}`);
+      throw new Error('Redirect URL must use HTTPS');
+    }
+
+    this.logger.log(`Generated redirect URL: ${redirectUrl}`);
+    return redirectUrl;
+  }
+
+  /**
+   * Validate URL format
+   */
+  async validateUrl(url: string): Promise<boolean> {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' || this.isDevEnvironment;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Assign claim limits to member after successful payment
+   * Requirements: 3.6, 12.4
+   */
+  async assignClaimLimits(
+    userId: string,
+    tier: PackageTier,
+    transactionId: string,
+  ): Promise<void> {
+    this.logger.log(`Assigning claim limits for user ${userId}, tier ${tier}`);
+
+    // Get member's subscription
+    const member = await this.prisma.member.findUnique({
+      where: { id: userId },
+      include: { subscription: true },
+    });
+
+    if (!member || !member.subscription) {
+      throw new Error(`Member ${userId} has no subscription`);
+    }
+
+    // Set claim limit by tier
+    await this.setClaimLimitByTier(member.subscription.id, tier);
+
+    // Update contribution record to mark claim limits as assigned
+    const contribution = await this.prisma.contribution.findFirst({
+      where: {
+        memberId: userId,
+        paymentRef: { contains: transactionId },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (contribution) {
+      await this.prisma.contribution.update({
+        where: { id: contribution.id },
+        data: {
+          claimLimitsAssigned: true,
+          claimLimitsAssignedAt: new Date(),
+        },
+      });
+    }
+
+    this.logger.log(`Claim limits assigned for user ${userId}`);
+  }
+
+  /**
+   * Set claim limit based on tier
+   * Requirements: 12.1, 12.2, 12.3
+   */
+  async setClaimLimitByTier(
+    subscriptionId: string,
+    tier: PackageTier,
+  ): Promise<void> {
+    const tierLimits: Record<PackageTier, number> = {
+      [PackageTier.BRONZE]: 6000,
+      [PackageTier.SILVER]: 10000,
+      [PackageTier.GOLD]: 15000,
+    };
+
+    const limit = tierLimits[tier];
+
+    if (!limit) {
+      throw new Error(`Invalid tier: ${tier}`);
+    }
+
+    await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        annualCapLimit: limit,
+      },
+    });
+
+    this.logger.log(
+      `Set claim limit for subscription ${subscriptionId}: ${limit} KES`,
+    );
+  }
+
+  /**
+   * Verify payment status with SasaPay
+   * This can be used for manual verification by admins
+   */
+  async verifyPaymentWithSasaPay(transactionId: string): Promise<string> {
+    // TODO: Implement SasaPay transaction status query
+    // https://developer.sasapay.app/docs/apis/transaction-status
+    this.logger.log(`Verifying payment ${transactionId} with SasaPay`);
+    return 'PENDING';
   }
 }

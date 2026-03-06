@@ -52,6 +52,17 @@ export class ContributionsController {
           description:
             'M-Pesa phone number (optional, defaults to member phone)',
         },
+        isUpgrade: {
+          type: 'boolean',
+          example: false,
+          description: 'Whether this payment is for a package upgrade',
+        },
+        newTier: {
+          type: 'string',
+          example: 'SILVER',
+          description: 'New tier for upgrade (required if isUpgrade is true)',
+          enum: ['BRONZE', 'SILVER', 'GOLD'],
+        },
       },
       required: ['amount'],
     },
@@ -63,6 +74,8 @@ export class ContributionsController {
       dto.amount,
       'MPESA',
       dto.phoneNumber,
+      dto.isUpgrade,
+      dto.newTier,
     );
   }
 

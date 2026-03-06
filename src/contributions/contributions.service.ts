@@ -35,6 +35,8 @@ export class ContributionsService {
     amount: number,
     paymentMethod: string,
     phoneNumber?: string,
+    isUpgrade?: boolean,
+    newTier?: string,
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -46,9 +48,21 @@ export class ContributionsService {
       throw new BadRequestException('Member not found');
     }
 
+    // For first-time subscriptions, subscription should exist but be inactive
+    // For upgrades, subscription should exist and be active
+    // Both cases should be allowed to proceed with payment
     if (!member.subscription) {
-      throw new BadRequestException('Please subscribe to a package first');
+      this.logger.error(
+        `Payment attempted without subscription for member ${memberId}`,
+      );
+      throw new BadRequestException(
+        'Please subscribe to a package first. If you just selected a package, please try again in a moment.',
+      );
     }
+
+    this.logger.log(
+      `Payment initiated for member ${memberId}, subscription: ${member.subscription.tier}, active: ${member.subscription.isActive}`,
+    );
 
     // Use member's phone if not provided
     const paymentPhone = phoneNumber || member.phoneNumber;
@@ -88,8 +102,22 @@ export class ContributionsService {
         month: new Date(),
         paymentMethod: 'MPESA',
         status: PaymentStatus.PENDING,
+        metadata: isUpgrade
+          ? {
+              isUpgrade: true,
+              newTier,
+            }
+          : undefined,
       },
     });
+
+    // Log for debugging
+    if (isUpgrade) {
+      this.logger.log(
+        `[UPGRADE] Created upgrade contribution ${contribution.id} with metadata: ${JSON.stringify(contribution.metadata)}`,
+      );
+      this.logger.log(`[UPGRADE] Target tier: ${newTier}, Member: ${memberId}`);
+    }
 
     // Initiate M-Pesa STK Push with actual charge amount
     const paymentResult = await this.paymentService.initiateSTKPush(
@@ -97,7 +125,9 @@ export class ContributionsService {
       paymentPhone,
       actualAmount, // Use actual (dev) amount for payment
       contribution.id,
-      `MenoDAO ${member.subscription.tier} Contribution`,
+      isUpgrade
+        ? `MenoDAO Upgrade to ${newTier}`
+        : `MenoDAO ${member.subscription.tier} Contribution`,
     );
 
     if (!paymentResult.success) {
@@ -113,7 +143,7 @@ export class ContributionsService {
     }
 
     this.logger.log(
-      `Payment initiated for member ${memberId}, contribution ${contribution.id}`,
+      `Payment initiated for member ${memberId}, contribution ${contribution.id}${isUpgrade ? ` (upgrade to ${newTier})` : ''}`,
     );
 
     return {

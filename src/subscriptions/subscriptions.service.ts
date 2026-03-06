@@ -178,9 +178,15 @@ export class SubscriptionsService {
 
     if (existing) {
       if (existing.isActive) {
-        throw new BadRequestException(
-          'Member already has an active subscription. Use upgrade instead.',
-        );
+        // If trying to subscribe to same tier, reject immediately
+        if (existing.tier === tier) {
+          throw new BadRequestException(
+            'You already have an active subscription to this tier. If you want to upgrade, please select a higher tier.',
+          );
+        }
+
+        // Check if payment is allowed based on frequency (for renewals/different tiers)
+        await this.checkPaymentFrequencyRestriction(memberId, paymentFrequency);
       }
       // If inactive subscription exists, update it
       const subscription = await this.prisma.subscription.update({
@@ -237,6 +243,75 @@ export class SubscriptionsService {
   }
 
   /**
+   * Check if payment is allowed based on payment frequency restrictions
+   * Monthly: Cannot pay twice in same month
+   * Annual: Cannot pay twice in same year
+   *
+   * DEV MODE: Restrictions are bypassed in development environment for testing
+   */
+  private async checkPaymentFrequencyRestriction(
+    memberId: string,
+    paymentFrequency: 'MONTHLY' | 'ANNUAL',
+  ): Promise<void> {
+    // Bypass restrictions in development environment for testing
+    if (this.isDevEnvironment) {
+      this.logger.log(
+        `[DEV] Bypassing payment frequency restriction for member ${memberId}`,
+      );
+      return;
+    }
+
+    // Get the last completed payment
+    const lastPayment = await this.prisma.contribution.findFirst({
+      where: {
+        memberId,
+        status: 'COMPLETED',
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (!lastPayment) {
+      // No previous payment, allow
+      return;
+    }
+
+    const now = new Date();
+    const lastPaymentDate = lastPayment.updatedAt;
+    const daysSinceLastPayment = Math.floor(
+      (now.getTime() - lastPaymentDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    if (paymentFrequency === 'MONTHLY') {
+      // Check if last payment was in the same month
+      const isSameMonth =
+        lastPaymentDate.getMonth() === now.getMonth() &&
+        lastPaymentDate.getFullYear() === now.getFullYear();
+
+      if (isSameMonth) {
+        const nextAllowedDate = new Date(lastPaymentDate);
+        nextAllowedDate.setMonth(nextAllowedDate.getMonth() + 1);
+        nextAllowedDate.setDate(1); // First day of next month
+
+        throw new BadRequestException(
+          `You have already made a payment this month. Next payment allowed on ${nextAllowedDate.toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}. If you want to upgrade to a higher tier, please use the upgrade option instead.`,
+        );
+      }
+    } else if (paymentFrequency === 'ANNUAL') {
+      // Check if last payment was within the last year
+      if (daysSinceLastPayment < 365) {
+        const nextAllowedDate = new Date(lastPaymentDate);
+        nextAllowedDate.setFullYear(nextAllowedDate.getFullYear() + 1);
+
+        throw new BadRequestException(
+          `You have already made an annual payment. Next payment allowed on ${nextAllowedDate.toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })} (${365 - daysSinceLastPayment} days remaining). If you want to upgrade to a higher tier, please use the upgrade option instead.`,
+        );
+      }
+    }
+  }
+
+  /**
    * Activate subscription after successful payment
    * Called by payment callback
    */
@@ -290,20 +365,61 @@ export class SubscriptionsService {
       throw new BadRequestException('Can only upgrade to a higher tier');
     }
 
-    // Calculate upgrade cost (difference between tiers)
-    const currentPrice = this.getPrice(existing.tier);
-    const newPrice = this.getPrice(newTier);
+    // Check if member has made any claims
+    const hasActiveClaims = await this.hasActiveClaims(memberId);
+
+    if (hasActiveClaims) {
+      // Member has made claims - must exhaust current package first
+      throw new BadRequestException(
+        'You have active claims on your current package. Please exhaust your current package before upgrading. You will need to pay the full amount for the new tier.',
+      );
+    }
+
+    // No claims made - calculate difference amount
+    const currentPrice = this.getPrice(
+      existing.tier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const newPrice = this.getPrice(
+      newTier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
     const upgradeCost = newPrice - currentPrice;
+
+    const currentDisplayPrice = this.getDisplayPrice(
+      existing.tier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const newDisplayPrice = this.getDisplayPrice(
+      newTier,
+      existing.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly',
+    );
+    const displayUpgradeCost = newDisplayPrice - currentDisplayPrice;
 
     return {
       currentTier: existing.tier,
       newTier,
       paymentRequired: true,
       paymentAmount: upgradeCost,
-      displayAmount:
-        this.getDisplayPrice(newTier) - this.getDisplayPrice(existing.tier),
-      message: 'Please complete payment to upgrade your subscription',
+      displayAmount: displayUpgradeCost,
+      message: `Pay the difference of KES ${displayUpgradeCost} to upgrade from ${existing.tier} to ${newTier}`,
     };
+  }
+
+  /**
+   * Check if member has any active claims (approved or disbursed)
+   */
+  async hasActiveClaims(memberId: string): Promise<boolean> {
+    const claimCount = await this.prisma.claim.count({
+      where: {
+        memberId,
+        status: {
+          in: ['APPROVED', 'DISBURSED'],
+        },
+      },
+    });
+
+    return claimCount > 0;
   }
 
   /**
@@ -318,14 +434,21 @@ export class SubscriptionsService {
       throw new NotFoundException('No existing subscription found');
     }
 
-    // Update subscription
+    const newAnnualCap = ANNUAL_CAPS[newTier];
+
+    // Update subscription with new tier and claim limits
     await this.prisma.subscription.update({
       where: { memberId },
       data: {
         tier: newTier,
         monthlyAmount: this.getDisplayPrice(newTier),
+        annualCapLimit: newAnnualCap,
       },
     });
+
+    this.logger.log(
+      `Subscription upgraded for ${memberId}: ${existing.tier} -> ${newTier}, new cap: ${newAnnualCap}`,
+    );
 
     // Mint new NFT for upgraded tier
     try {
@@ -511,6 +634,244 @@ export class SubscriptionsService {
     return {
       success: true,
       message: 'Subscription removed successfully',
+    };
+  }
+
+  /**
+   * Check waiting period for a member and procedure
+   * Requirements: 15.1, 15.2, 15.3, 16.1, 16.2, 17.1-17.6
+   */
+  async checkWaitingPeriod(
+    memberId: string,
+    procedureCode: string,
+  ): Promise<{
+    passed: boolean;
+    daysRemaining: number;
+    requiredDays: number;
+    procedureType: 'EMERGENCY' | 'RESTORATIVE';
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    if (!subscription.isActive) {
+      throw new BadRequestException('Subscription is not active');
+    }
+
+    // Determine procedure type
+    const emergencyProcedures = ['CONSULT', 'EXTRACT_SIMPLE'];
+    const procedureType = emergencyProcedures.includes(procedureCode)
+      ? 'EMERGENCY'
+      : 'RESTORATIVE';
+
+    // Calculate required waiting days
+    const requiredDays = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      procedureType,
+    );
+
+    // Calculate days since subscription start
+    const startDate =
+      subscription.subscriptionStartDate || subscription.startDate;
+    const daysSinceStart = Math.floor(
+      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    const passed = daysSinceStart >= requiredDays;
+    const daysRemaining = Math.max(0, requiredDays - daysSinceStart);
+
+    this.logger.log(
+      `Waiting period check for ${memberId}: ${procedureCode} (${procedureType}) - ` +
+        `${daysSinceStart}/${requiredDays} days, passed: ${passed}`,
+    );
+
+    return {
+      passed,
+      daysRemaining,
+      requiredDays,
+      procedureType,
+    };
+  }
+
+  /**
+   * Calculate required waiting days based on payment frequency and procedure type
+   * Requirements: 15.1, 15.2, 15.3, 16.1, 16.2
+   */
+  private calculateRequiredWaitingDays(
+    paymentFrequency: string,
+    procedureType: string,
+  ): number {
+    if (paymentFrequency === 'ANNUAL') {
+      // Annual subscribers: 14 days for all procedures
+      return 14;
+    }
+
+    // Monthly subscribers
+    if (procedureType === 'EMERGENCY') {
+      // Consultations and extractions: 60 days
+      return 60;
+    } else {
+      // Restorative procedures: 90 days
+      return 90;
+    }
+  }
+
+  /**
+   * Check if claim amount is within limit
+   * Requirements: 12.5, 12.6, 14.1, 14.2, 14.3
+   */
+  async checkClaimLimit(
+    memberId: string,
+    claimAmount: number,
+  ): Promise<{
+    withinLimit: boolean;
+    currentUsed: number;
+    limit: number;
+    remainingLimit: number;
+    wouldExceed: boolean;
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    const currentUsed = subscription.annualCapUsed;
+    const limit = subscription.annualCapLimit;
+    const total = currentUsed + claimAmount;
+    const withinLimit = total <= limit;
+    const remainingLimit = Math.max(0, limit - currentUsed);
+    const wouldExceed = claimAmount > remainingLimit;
+
+    this.logger.log(
+      `Claim limit check for ${memberId}: ${claimAmount} KES, ` +
+        `used: ${currentUsed}/${limit}, remaining: ${remainingLimit}, ` +
+        `within limit: ${withinLimit}`,
+    );
+
+    return {
+      withinLimit,
+      currentUsed,
+      limit,
+      remainingLimit,
+      wouldExceed,
+    };
+  }
+
+  /**
+   * Increment claim usage for a member
+   */
+  async incrementClaimUsage(memberId: string, amount: number): Promise<void> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    const newUsed = subscription.annualCapUsed + amount;
+
+    await this.prisma.subscription.update({
+      where: { memberId },
+      data: {
+        annualCapUsed: newUsed,
+      },
+    });
+
+    this.logger.log(
+      `Incremented claim usage for ${memberId}: ${subscription.annualCapUsed} -> ${newUsed}`,
+    );
+  }
+
+  /**
+   * Get waiting period status for member dashboard
+   * Requirements: 2.7, 18.1, 18.2, 18.3
+   */
+  /**
+   * Get waiting period status for member
+   * Returns detailed information about procedure availability with dates
+   */
+  async getWaitingPeriodStatus(memberId: string): Promise<{
+    consultationsExtractions: {
+      available: boolean;
+      daysRemaining: number;
+      requiredDays: number;
+      eligibleDate?: string;
+    };
+    restorativeProcedures: {
+      available: boolean;
+      daysRemaining: number;
+      requiredDays: number;
+      eligibleDate?: string;
+    };
+    paymentFrequency: string;
+    subscriptionStartDate: string;
+  }> {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for member');
+    }
+
+    if (!subscription.isActive) {
+      throw new BadRequestException('Subscription is not active');
+    }
+
+    const startDate =
+      subscription.subscriptionStartDate || subscription.startDate;
+    const daysSinceStart = Math.floor(
+      (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    // Calculate for emergency procedures (consultations/extractions)
+    const emergencyRequired = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      'EMERGENCY',
+    );
+    const emergencyAvailable = daysSinceStart >= emergencyRequired;
+    const emergencyRemaining = Math.max(0, emergencyRequired - daysSinceStart);
+    const emergencyEligibleDate = new Date(
+      startDate.getTime() + emergencyRequired * 24 * 60 * 60 * 1000,
+    );
+
+    // Calculate for restorative procedures
+    const restorativeRequired = this.calculateRequiredWaitingDays(
+      subscription.paymentFrequency,
+      'RESTORATIVE',
+    );
+    const restorativeAvailable = daysSinceStart >= restorativeRequired;
+    const restorativeRemaining = Math.max(
+      0,
+      restorativeRequired - daysSinceStart,
+    );
+    const restorativeEligibleDate = new Date(
+      startDate.getTime() + restorativeRequired * 24 * 60 * 60 * 1000,
+    );
+
+    return {
+      consultationsExtractions: {
+        available: emergencyAvailable,
+        daysRemaining: emergencyRemaining,
+        requiredDays: emergencyRequired,
+        eligibleDate: emergencyEligibleDate.toISOString(),
+      },
+      restorativeProcedures: {
+        available: restorativeAvailable,
+        daysRemaining: restorativeRemaining,
+        requiredDays: restorativeRequired,
+        eligibleDate: restorativeEligibleDate.toISOString(),
+      },
+      paymentFrequency: subscription.paymentFrequency,
+      subscriptionStartDate: startDate.toISOString(),
     };
   }
 }

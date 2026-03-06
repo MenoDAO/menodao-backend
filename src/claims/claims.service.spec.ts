@@ -64,7 +64,12 @@ describe('ClaimsService', () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.createClaim('member-1', 'CHECKUP', 'Routine checkup', 1000),
+        service.createClaim(
+          'member-1',
+          'DENTAL_CHECKUP',
+          'Routine checkup',
+          1000,
+        ),
       ).rejects.toThrow('Active subscription required');
     });
 
@@ -76,7 +81,12 @@ describe('ClaimsService', () => {
       });
 
       await expect(
-        service.createClaim('member-1', 'CHECKUP', 'Routine checkup', 1000),
+        service.createClaim(
+          'member-1',
+          'DENTAL_CHECKUP',
+          'Routine checkup',
+          1000,
+        ),
       ).rejects.toThrow('Active subscription required');
     });
 
@@ -95,7 +105,7 @@ describe('ClaimsService', () => {
       await expect(
         service.createClaim(
           'member-1',
-          'CLEANING',
+          'DENTAL_CLEANING',
           'Professional cleaning',
           1000,
         ),
@@ -114,7 +124,12 @@ describe('ClaimsService', () => {
       ]);
 
       await expect(
-        service.createClaim('member-1', 'FILLING', 'Cavity filling', 1000),
+        service.createClaim(
+          'member-1',
+          'DENTAL_FILLING',
+          'Cavity filling',
+          1000,
+        ),
       ).rejects.toThrow('exceed your annual limit');
     });
 
@@ -127,7 +142,7 @@ describe('ClaimsService', () => {
       mockPrismaService.claim.findMany.mockResolvedValue([]);
       mockPrismaService.claim.create.mockResolvedValue({
         id: 'claim-1',
-        claimType: 'CHECKUP',
+        claimType: 'DENTAL_CHECKUP',
         description: 'Routine checkup',
         amount: 1000,
         status: 'PENDING',
@@ -135,7 +150,7 @@ describe('ClaimsService', () => {
 
       const result = await service.createClaim(
         'member-1',
-        'CHECKUP',
+        'DENTAL_CHECKUP',
         'Routine checkup',
         1000,
       );
@@ -144,7 +159,7 @@ describe('ClaimsService', () => {
       expect(mockPrismaService.claim.create).toHaveBeenCalledWith({
         data: {
           memberId: 'member-1',
-          claimType: 'CHECKUP',
+          claimType: 'DENTAL_CHECKUP',
           description: 'Routine checkup',
           amount: 1000,
           campId: undefined,
@@ -171,7 +186,7 @@ describe('ClaimsService', () => {
 
       const result = await service.createClaim(
         'member-1',
-        'EXTRACTION',
+        'DENTAL_EXTRACTION',
         'Wisdom tooth',
         25000,
       );

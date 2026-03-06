@@ -147,4 +147,26 @@ export class UsersController {
   async deleteSubscription(@Param('id') id: string) {
     return this.subscriptionsService.removeSubscription(id);
   }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete a member and all related data (USE WITH CAUTION)',
+  })
+  async deleteMember(@Param('id') id: string) {
+    // Delete in order to respect foreign key constraints
+    await this.prisma.$transaction(async (tx) => {
+      // Delete related records first
+      await tx.deviceToken.deleteMany({ where: { memberId: id } });
+      await tx.visit.deleteMany({ where: { memberId: id } });
+      await tx.claim.deleteMany({ where: { memberId: id } });
+      await tx.contribution.deleteMany({ where: { memberId: id } });
+      await tx.nFT.deleteMany({ where: { memberId: id } });
+      await tx.subscription.deleteMany({ where: { memberId: id } });
+
+      // Finally delete the member
+      await tx.member.delete({ where: { id } });
+    });
+
+    return { success: true, message: 'Member deleted successfully' };
+  }
 }

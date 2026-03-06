@@ -10,26 +10,26 @@ datasource db {
 
 // Member/User model
 model Member {
-  id              String   @id @default(uuid())
-  phoneNumber     String   @unique
-  fullName        String?
-  location        String?
-  walletAddress   String?  @unique
-  isVerified      Boolean  @default(false)
-  branch          String?
-  preferredChain  String?  @default("celo")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String   @id @default(uuid())
+  phoneNumber    String   @unique
+  fullName       String?
+  location       String?
+  walletAddress  String?  @unique
+  isVerified     Boolean  @default(false)
+  branch         String?
+  preferredChain String?  @default("celo")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Relations
-  subscription    Subscription?
-  contributions   Contribution[]
-  claims          Claim[]
-  nfts            NFT[]
-  otpCodes        OTPCode[]
-  transactions    BlockchainTransaction[]
-  deviceTokens    DeviceToken[]
-  visits          Visit[]
+  subscription      Subscription?
+  contributions     Contribution[]
+  claims            Claim[]
+  nfts              NFT[]
+  otpCodes          OTPCode[]
+  transactions      BlockchainTransaction[]
+  deviceTokens      DeviceToken[]
+  visits            Visit[]
   campRegistrations CampRegistration[]
 }
 
@@ -42,8 +42,8 @@ model OTPCode {
   isUsed      Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  member      Member?  @relation(fields: [memberId], references: [id])
-  memberId    String?
+  member   Member? @relation(fields: [memberId], references: [id])
+  memberId String?
 
   @@index([phoneNumber, code])
 }
@@ -65,7 +65,7 @@ enum PaymentFrequency {
 model Subscription {
   id                    String           @id @default(uuid())
   tier                  PackageTier
-  monthlyAmount         Int              // Amount in KES
+  monthlyAmount         Int // Amount in KES
   paymentFrequency      PaymentFrequency @default(MONTHLY)
   subscriptionStartDate DateTime         @default(now()) // For waiting period calculation
   startDate             DateTime         @default(now())
@@ -78,31 +78,46 @@ model Subscription {
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
 
-  member                Member           @relation(fields: [memberId], references: [id])
-  memberId              String           @unique
-  
+  member   Member @relation(fields: [memberId], references: [id])
+  memberId String @unique
+
   @@index([subscriptionStartDate])
   @@index([paymentFrequency])
 }
 
 // Contribution/Payment record
 model Contribution {
-  id              String   @id @default(uuid())
-  amount          Int      // Amount in KES
-  month           DateTime // The month this contribution covers
-  paymentMethod   String   // mpesa, card, crypto
-  paymentRef      String?  // External payment reference (menodao_xxxxx)
-  txHash          String?  // Blockchain transaction hash
-  status          PaymentStatus @default(PENDING)
-  metadata        Json?    // Payment provider response data
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                    String           @id @default(uuid())
+  amount                Int // Amount in KES
+  month                 DateTime // The month this contribution covers
+  paymentMethod         String // mpesa, card, crypto
+  paymentRef            String? // External payment reference (menodao_xxxxx)
+  txHash                String? // Blockchain transaction hash
+  status                PaymentStatus    @default(PENDING)
+  paymentFrequency      PaymentFrequency @default(MONTHLY)
+  claimLimitsAssigned   Boolean          @default(false)
+  claimLimitsAssignedAt DateTime?
+  confirmedAt           DateTime?
+  metadata              Json? // Payment provider response data
+  
+  // SasaPay fields
+  merchantRequestId     String?
+  checkoutRequestId     String?
+  mpesaReceiptNumber    String?
+  
+  // URLs
+  callbackUrl           String?
+  redirectUrl           String?
+  
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
-  member          Member   @relation(fields: [memberId], references: [id])
-  memberId        String
+  member   Member @relation(fields: [memberId], references: [id])
+  memberId String
 
   @@index([memberId, month])
   @@index([paymentRef])
+  @@index([status])
 }
 
 enum PaymentStatus {
@@ -117,20 +132,21 @@ model Claim {
   id              String      @id @default(uuid())
   claimType       ClaimType
   description     String
-  amount          Int         // Amount in KES
+  amount          Int // Amount in KES
   status          ClaimStatus @default(PENDING)
-  rejectionReason String?     // Reason provided by staff when rejecting
-  txHash          String?     // Blockchain transaction hash for disbursement
+  rejectionReason String? // Reason provided by staff when rejecting
+  txHash          String? // Blockchain transaction hash for disbursement
   campId          String?
-  visitId         String?     // Link to visit if created from staff dashboard
+  visitId         String? // Link to visit if created from staff dashboard
   processedAt     DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  member          Member      @relation(fields: [memberId], references: [id])
-  memberId        String
-  camp            Camp?       @relation(fields: [campId], references: [id])
-  visit           Visit?      @relation(fields: [visitId], references: [id])
+  member     Member      @relation(fields: [memberId], references: [id])
+  memberId   String
+  camp       Camp?       @relation(fields: [campId], references: [id])
+  visit      Visit?      @relation(fields: [visitId], references: [id])
+  disbursal  Disbursal?
 }
 
 enum ClaimType {
@@ -150,18 +166,82 @@ enum ClaimStatus {
   REJECTED
 }
 
+// Disbursal status enum
+enum DisbursalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+// Payment channel enum
+enum PaymentChannel {
+  MPESA_TILL
+  MPESA_PAYBILL
+  MPESA_MOBILE
+  BANK_TRANSFER
+}
+
+// Disbursal record for clinic payments
+model Disbursal {
+  id                   String          @id @default(uuid())
+  claimId              String          @unique
+  clinicId             String
+  amount               Int // Amount in KES
+  status               DisbursalStatus @default(PENDING)
+  paymentChannel       PaymentChannel
+  transactionReference String          @unique
+  recipientIdentifier  String // Till/Paybill/Mobile/Account number
+
+  // SasaPay fields
+  sasaPayRequestId     String?
+  sasaPayCheckoutId    String?
+  mpesaReceiptNumber   String?
+
+  errorMessage         String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  completedAt          DateTime?
+  reversedAt           DateTime?
+  reversalReason       String?
+
+  claim                Claim                    @relation(fields: [claimId], references: [id])
+  clinic               Clinic                   @relation(fields: [clinicId], references: [id])
+  statusHistory        DisbursalStatusHistory[]
+
+  @@index([claimId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Disbursal status history for audit trail
+model DisbursalStatusHistory {
+  id          String          @id @default(uuid())
+  disbursalId String
+  status      DisbursalStatus
+  timestamp   DateTime        @default(now())
+  metadata    Json?
+
+  disbursal Disbursal @relation(fields: [disbursalId], references: [id])
+
+  @@index([disbursalId])
+  @@index([timestamp])
+}
+
 // NFT minted for members
 model NFT {
-  id            String      @id @default(uuid())
-  tokenId       String      @unique
-  tier          PackageTier
+  id              String      @id @default(uuid())
+  tokenId         String      @unique
+  tier            PackageTier
   contractAddress String
-  txHash        String
-  mintedAt      DateTime    @default(now())
-  metadata      Json?
+  txHash          String
+  mintedAt        DateTime    @default(now())
+  metadata        Json?
 
-  member        Member      @relation(fields: [memberId], references: [id])
-  memberId      String
+  member   Member @relation(fields: [memberId], references: [id])
+  memberId String
 }
 
 // Dental camps
@@ -180,20 +260,20 @@ model Camp {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  claims      Claim[]
+  claims        Claim[]
   registrations CampRegistration[]
 }
 
 // Camp registrations
 model CampRegistration {
-  id          String   @id @default(uuid())
-  status      RegistrationStatus @default(REGISTERED)
-  createdAt   DateTime @default(now())
+  id        String             @id @default(uuid())
+  status    RegistrationStatus @default(REGISTERED)
+  createdAt DateTime           @default(now())
 
-  campId      String
-  memberId    String
-  camp        Camp     @relation(fields: [campId], references: [id])
-  member      Member   @relation(fields: [memberId], references: [id])
+  campId   String
+  memberId String
+  camp     Camp   @relation(fields: [campId], references: [id])
+  member   Member @relation(fields: [memberId], references: [id])
 
   @@unique([campId, memberId])
 }
@@ -207,22 +287,22 @@ enum RegistrationStatus {
 
 // Blockchain transaction log for auditability
 model BlockchainTransaction {
-  id            String          @id @default(uuid())
-  txHash        String          @unique
-  txType        TransactionType
-  fromAddress   String
-  toAddress     String
-  amount        String?         // In wei or token units
-  tokenId       String?         // For NFT transactions
-  network       String          @default("polygon")
-  status        TxStatus        @default(PENDING)
-  blockNumber   Int?
-  gasUsed       String?
-  createdAt     DateTime        @default(now())
-  confirmedAt   DateTime?
+  id          String          @id @default(uuid())
+  txHash      String          @unique
+  txType      TransactionType
+  fromAddress String
+  toAddress   String
+  amount      String? // In wei or token units
+  tokenId     String? // For NFT transactions
+  network     String          @default("polygon")
+  status      TxStatus        @default(PENDING)
+  blockNumber Int?
+  gasUsed     String?
+  createdAt   DateTime        @default(now())
+  confirmedAt DateTime?
 
-  member        Member?         @relation(fields: [memberId], references: [id])
-  memberId      String?
+  member   Member? @relation(fields: [memberId], references: [id])
+  memberId String?
 }
 
 enum TransactionType {
@@ -246,6 +326,28 @@ model AdminUser {
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+// Audit log for admin actions
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  targetType String // PAYMENT, MEMBER, SUBSCRIPTION, DISBURSAL
+  targetId   String
+  reason     String
+  metadata   Json?
+  timestamp  DateTime @default(now())
+  ipAddress  String
+
+  admin AdminUser @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+  @@index([timestamp])
 }
 
 // Staff user for clinic/camp staff access
@@ -262,40 +364,40 @@ model StaffUser {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  visits       Visit[]
-  clinic       Clinic?   @relation(fields: [clinicId], references: [id])
+  visits Visit[]
+  clinic Clinic? @relation(fields: [clinicId], references: [id])
 }
 
 enum StaffRole {
-  STAFF  // Can check-in and add claims
-  ADMIN  // Can override limits and void claims
+  STAFF // Can check-in and add claims
+  ADMIN // Can override limits and void claims
 }
 
 // Patient visit record
 model Visit {
-  id              String          @id @default(uuid())
-  memberId        String
-  staffId         String          // Staff who checked in the patient
-  status          VisitStatus     @default(OPEN)
-  totalCost       Int             @default(0) // Total cost of procedures in KES
-  checkedInAt     DateTime        @default(now())
-  dischargedAt    DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id           String      @id @default(uuid())
+  memberId     String
+  staffId      String // Staff who checked in the patient
+  status       VisitStatus @default(OPEN)
+  totalCost    Int         @default(0) // Total cost of procedures in KES
+  checkedInAt  DateTime    @default(now())
+  dischargedAt DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  member          Member          @relation(fields: [memberId], references: [id])
-  staff           StaffUser       @relation(fields: [staffId], references: [id])
-  procedures      VisitProcedure[]
-  claims          Claim[]
-  questionnaire   QuestionnaireData? // CDCQ-v1 data
-  
+  member        Member             @relation(fields: [memberId], references: [id])
+  staff         StaffUser          @relation(fields: [staffId], references: [id])
+  procedures    VisitProcedure[]
+  claims        Claim[]
+  questionnaire QuestionnaireData? // CDCQ-v1 data
+
   // Clinical data for SACCO/Insurance and data privacy compliance
-  chiefComplaint  String?
-  medicalHistory  String?
-  vitals          Json?           // { bp: string, pulse: number, temp: number }
-  clinicalNotes   String?
-  hasConsent      Boolean         @default(false)
-  
+  chiefComplaint String?
+  medicalHistory String?
+  vitals         Json? // { bp: string, pulse: number, temp: number }
+  clinicalNotes  String?
+  hasConsent     Boolean @default(false)
+
   @@index([memberId])
   @@index([staffId])
   @@index([status])
@@ -303,84 +405,84 @@ model Visit {
 
 // Comprehensive Dental Check-Up Questionnaire (CDCQ-v1)
 model QuestionnaireData {
-  id              String   @id @default(uuid())
-  visitId         String   @unique
-  
+  id      String @id @default(uuid())
+  visitId String @unique
+
   // Section 1: Demographics & Consent
-  dateOfVisit     DateTime @default(now())
-  age             Int?
-  gender          String?  // Male, Female, Non-binary/Other, Prefer not to say
-  education       String?  // Primary, Secondary, Trade, University, None
-  occupation      String?
+  dateOfVisit      DateTime @default(now())
+  age              Int?
+  gender           String? // Male, Female, Non-binary/Other, Prefer not to say
+  education        String? // Primary, Secondary, Trade, University, None
+  occupation       String?
   residenceVillage String?
-  residenceCounty String?
-  researchConsent Boolean  @default(false)
-  
+  residenceCounty  String?
+  researchConsent  Boolean  @default(false)
+
   // Section 2: Medical & Dental History
-  lastDentalVisit String?  // <6mo, 6-12mo, 1-2yr, >2yr, Never
-  drugAllergies   String?  // List of allergies or "None"
+  lastDentalVisit    String? // <6mo, 6-12mo, 1-2yr, >2yr, Never
+  drugAllergies      String? // List of allergies or "None"
   currentMedications String? // List of medications or "None"
-  medicalConditions Json?  // Array: ["Diabetes", "Hypertension", etc.]
-  familyHistory   Json?    // Array: ["Periodontitis", "Tooth Decay", etc.]
-  
+  medicalConditions  Json? // Array: ["Diabetes", "Hypertension", etc.]
+  familyHistory      Json? // Array: ["Periodontitis", "Tooth Decay", etc.]
+
   // Section 3: Current Dental Concerns
-  chiefComplaint  String?  // Routine, Pain, Broken tooth, etc.
-  painLevel       Int?     // 0-10 scale
-  recentSymptoms  Json?    // Array: ["Sensitivity", "Pain when chewing", etc.]
-  
+  chiefComplaint String? // Routine, Pain, Broken tooth, etc.
+  painLevel      Int? // 0-10 scale
+  recentSymptoms Json? // Array: ["Sensitivity", "Pain when chewing", etc.]
+
   // Section 4: Oral Hygiene & Lifestyle
   brushingFrequency String? // Twice daily, Once daily, Occasionally, Never
   flossingFrequency String? // Daily, Weekly, Rarely/Never
-  sugarIntake     String?  // High (3+/day), Moderate (1-2/day), Low (occasional)
-  smokesTobacco   Boolean  @default(false)
-  alcoholUse      String?  // Frequent, Occasional, Never
-  substanceUse    Boolean  @default(false) // Khat/Miraa
-  
+  sugarIntake       String? // High (3+/day), Moderate (1-2/day), Low (occasional)
+  smokesTobacco     Boolean @default(false)
+  alcoholUse        String? // Frequent, Occasional, Never
+  substanceUse      Boolean @default(false) // Khat/Miraa
+
   // Section 5: Clinical Examination (Clinician)
-  oralHygieneIndex String? // Good, Fair, Poor
+  oralHygieneIndex   String? // Good, Fair, Poor
   softTissueFindings String? // WNL or description
-  periodontalStatus String? // BPE score: 0-4
-  decayedTeeth    Int?     // D count
-  missingTeeth    Int?     // M count
-  filledTeeth     Int?     // F count
-  dmftScore       Int?     // D+M+F total
-  occlusionStatus String?  // Normal Class I, Malocclusion, TMJ Issues
-  
+  periodontalStatus  String? // BPE score: 0-4
+  decayedTeeth       Int? // D count
+  missingTeeth       Int? // M count
+  filledTeeth        Int? // F count
+  dmftScore          Int? // D+M+F total
+  occlusionStatus    String? // Normal Class I, Malocclusion, TMJ Issues
+
   // Section 6: Risk Assessment (Clinician)
-  cariesRisk      String?  // Low, Moderate, High
-  periodontalRisk String?  // Low, Moderate, High
-  oralCancerRisk  String?  // Low, Elevated
-  
+  cariesRisk      String? // Low, Moderate, High
+  periodontalRisk String? // Low, Moderate, High
+  oralCancerRisk  String? // Low, Elevated
+
   // Section 7: Patient Satisfaction
   smileSatisfaction String? // Very Satisfied, Somewhat Satisfied, Dissatisfied
-  careConfidence  String?  // Very Confident, Somewhat Confident, Not Confident
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  visit           Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
-  
+  careConfidence    String? // Very Confident, Somewhat Confident, Not Confident
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
   @@index([visitId])
   @@index([dateOfVisit])
 }
 
 enum VisitStatus {
-  OPEN      // Patient checked in, treatment in progress
+  OPEN // Patient checked in, treatment in progress
   DISCHARGED // Visit completed and closed
   CANCELLED // Visit cancelled
 }
 
 // Dental procedure definitions
 model Procedure {
-  id              String      @id @default(uuid())
-  code            String      @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
-  name            String      // e.g., "Consultation", "Simple Extraction"
-  description     String?
-  cost            Int         // Cost in KES
-  allowedTiers    Json        // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
-  isActive        Boolean     @default(true)
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id           String   @id @default(uuid())
+  code         String   @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
+  name         String // e.g., "Consultation", "Simple Extraction"
+  description  String?
+  cost         Int // Cost in KES
+  allowedTiers Json // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   visitProcedures VisitProcedure[]
 }
@@ -390,12 +492,12 @@ model VisitProcedure {
   id          String   @id @default(uuid())
   visitId     String
   procedureId String
-  cost        Int      // Cost at time of procedure (in case prices change)
+  cost        Int // Cost at time of procedure (in case prices change)
   addedAt     DateTime @default(now())
-  addedBy     String   // Staff ID who added the procedure
+  addedBy     String // Staff ID who added the procedure
 
-  visit       Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
-  procedure   Procedure @relation(fields: [procedureId], references: [id])
+  visit     Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  procedure Procedure @relation(fields: [procedureId], references: [id])
 
   @@index([visitId])
   @@index([procedureId])
@@ -406,34 +508,60 @@ model DeviceToken {
   id        String   @id @default(uuid())
   memberId  String
   token     String   @unique
-  platform  String   // 'web' | 'android' | 'ios'
+  platform  String // 'web' | 'android' | 'ios'
   createdAt DateTime @default(now())
 
-  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([memberId])
 }
 
-// Push notification history
+// Admin notification system
 model Notification {
-  id        String   @id @default(uuid())
-  title     String
-  body      String
-  data      Json?
-  sentAt    DateTime @default(now())
-  sentTo    Int      // count of devices
-  sentBy    String   // admin username
+  id             String             @id @default(uuid())
+  type           NotificationType
+  recipientCount Int
+  message        String             @db.Text // Sanitized content
+  status         NotificationStatus @default(PENDING)
+  successCount   Int                @default(0)
+  failureCount   Int                @default(0)
+  sentAt         DateTime           @default(now())
+  sentBy         String // Admin user ID
+  sentByAdmin    AdminUser          @relation(fields: [sentBy], references: [id])
+
+  // Filter criteria used (for audit trail)
+  filterCriteria Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type, sentAt])
+  @@index([sentBy])
+  @@index([status])
+}
+
+enum NotificationType {
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  PARTIAL // Some delivered, some failed
 }
 
 // SMS log for tracking sent messages
 model SmsLog {
-  id          String    @id @default(uuid())
-  phoneNumber String
-  message     String
-  status      SmsStatus @default(PENDING)
-  provider    String    @default("textsms")
+  id           String    @id @default(uuid())
+  phoneNumber  String
+  message      String
+  status       SmsStatus @default(PENDING)
+  provider     String    @default("textsms")
   errorMessage String?
-  createdAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
 
   @@index([createdAt])
   @@index([phoneNumber])
@@ -448,14 +576,14 @@ enum SmsStatus {
 // Site visit tracking for landing page analytics
 model SiteVisit {
   id          String   @id @default(uuid())
-  page        String   // URL path visited
-  referrer    String?  // HTTP referrer
-  utmSource   String?  // utm_source param
-  utmMedium   String?  // utm_medium param
-  utmCampaign String?  // utm_campaign param
+  page        String // URL path visited
+  referrer    String? // HTTP referrer
+  utmSource   String? // utm_source param
+  utmMedium   String? // utm_medium param
+  utmCampaign String? // utm_campaign param
   userAgent   String?
-  ip          String?  // Hashed for privacy
-  sessionId   String?  // Client-side session ID to group visits
+  ip          String? // Hashed for privacy
+  sessionId   String? // Client-side session ID to group visits
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
@@ -500,10 +628,10 @@ model Clinic {
   bankAccountName        String?
   bankAccountNumber      String?
   // Section 4: Capacity & Compliance
-  kmpdcRegNumber         String?        // Required for NEW clinics (enforced via validation)
+  kmpdcRegNumber         String? // Required for NEW clinics (enforced via validation)
   activeDentalChairs     Int            @default(1)
   xrayCapability         XRayCapability @default(NONE)
-  specializedServices    Json?          // ["ORTHODONTIST", "MAXILLOFACIAL", "PEDIATRIC"]
+  specializedServices    Json? // ["ORTHODONTIST", "MAXILLOFACIAL", "PEDIATRIC"]
   // Section 5: Agreement
   agreedToRateCard       Boolean        @default(false)
   agreedToNoChargePolicy Boolean        @default(false)
@@ -516,7 +644,33 @@ model Clinic {
   updatedAt              DateTime       @updatedAt
   // Relations
   staffUsers             StaffUser[]
+  disbursals             Disbursal[]
+  paymentConfig          ClinicPaymentConfig?
 
   @@index([status])
   @@index([subCounty])
+}
+
+// Clinic payment configuration for disbursals
+model ClinicPaymentConfig {
+  id                String         @id @default(uuid())
+  clinicId          String         @unique
+  paymentChannel    PaymentChannel
+
+  // M-Pesa fields
+  tillNumber        String?
+  paybillNumber     String?
+  mobileNumber      String?
+
+  // Bank fields
+  bankAccountNumber String?
+  bankName          String?
+  bankBranchCode    String?
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
 }

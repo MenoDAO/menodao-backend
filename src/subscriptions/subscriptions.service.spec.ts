@@ -17,6 +17,12 @@ describe('SubscriptionsService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    claim: {
+      count: jest.fn(),
+    },
+    contribution: {
+      findFirst: jest.fn(),
+    },
   };
 
   const mockBlockchainService = {
@@ -65,18 +71,23 @@ describe('SubscriptionsService', () => {
   });
 
   describe('subscribe', () => {
-    it('should throw if member already has active subscription', async () => {
+    it('should throw if member already has active subscription to same tier', async () => {
       mockPrismaService.subscription.findUnique.mockResolvedValue({
         id: 'sub-1',
         tier: 'BRONZE',
         isActive: true,
+        paymentFrequency: 'MONTHLY',
       });
 
-      await expect(service.subscribe('member-1', 'SILVER')).rejects.toThrow(
+      // Mock no previous contributions (so frequency check passes in dev mode)
+      mockPrismaService.contribution.findFirst.mockResolvedValue(null);
+
+      // Should throw when trying to subscribe to same tier
+      await expect(service.subscribe('member-1', 'BRONZE')).rejects.toThrow(
         BadRequestException,
       );
-      await expect(service.subscribe('member-1', 'SILVER')).rejects.toThrow(
-        'Member already has an active subscription',
+      await expect(service.subscribe('member-1', 'BRONZE')).rejects.toThrow(
+        'You already have an active subscription to this tier',
       );
     });
 
@@ -175,7 +186,11 @@ describe('SubscriptionsService', () => {
         id: 'sub-1',
         tier: 'BRONZE',
         isActive: true,
+        paymentFrequency: 'MONTHLY',
       });
+
+      // Mock hasActiveClaims to return false (no claims made)
+      mockPrismaService.claim.count.mockResolvedValue(0);
 
       const result = await service.upgrade('member-1', 'GOLD');
 

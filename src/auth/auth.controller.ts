@@ -17,10 +17,19 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  @Post('check-phone')
+  @ApiOperation({ summary: 'Check if phone number exists in system' })
+  async checkPhone(@Body() dto: RequestOtpDto) {
+    return this.authService.checkPhoneExists(dto.phoneNumber);
+  }
+
   @Post('request-otp')
   @ApiOperation({ summary: 'Request OTP code sent to phone number' })
   async requestOtp(@Body() dto: RequestOtpDto) {
-    return this.authService.requestOtp(dto.phoneNumber);
+    return this.authService.requestOtp(
+      dto.phoneNumber,
+      dto.createIfNotExists || false,
+    );
   }
 
   @Post('verify-otp')

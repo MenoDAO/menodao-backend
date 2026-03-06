@@ -24,7 +24,22 @@ describe('AuthController', () => {
   });
 
   describe('requestOtp', () => {
-    it('should call authService.requestOtp with phone number', async () => {
+    it('should call authService.requestOtp with phone number and createIfNotExists flag', async () => {
+      const dto = { phoneNumber: '+254712345678', createIfNotExists: false };
+      mockAuthService.requestOtp.mockResolvedValue({
+        message: 'OTP sent successfully',
+      });
+
+      const result = await controller.requestOtp(dto);
+
+      expect(authService.requestOtp).toHaveBeenCalledWith(
+        '+254712345678',
+        false,
+      );
+      expect(result).toEqual({ message: 'OTP sent successfully' });
+    });
+
+    it('should default createIfNotExists to false when not provided', async () => {
       const dto = { phoneNumber: '+254712345678' };
       mockAuthService.requestOtp.mockResolvedValue({
         message: 'OTP sent successfully',
@@ -32,7 +47,10 @@ describe('AuthController', () => {
 
       const result = await controller.requestOtp(dto);
 
-      expect(authService.requestOtp).toHaveBeenCalledWith('+254712345678');
+      expect(authService.requestOtp).toHaveBeenCalledWith(
+        '+254712345678',
+        false,
+      );
       expect(result).toEqual({ message: 'OTP sent successfully' });
     });
   });
