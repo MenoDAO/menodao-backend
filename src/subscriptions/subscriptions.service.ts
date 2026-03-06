@@ -178,9 +178,15 @@ export class SubscriptionsService {
 
     if (existing) {
       if (existing.isActive) {
-        throw new BadRequestException(
-          'Member already has an active subscription. Use upgrade instead.',
-        );
+        // If trying to subscribe to same tier, reject immediately
+        if (existing.tier === tier) {
+          throw new BadRequestException(
+            'You already have an active subscription to this tier. If you want to upgrade, please select a higher tier.',
+          );
+        }
+
+        // Check if payment is allowed based on frequency (for renewals/different tiers)
+        await this.checkPaymentFrequencyRestriction(memberId, paymentFrequency);
       }
       // If inactive subscription exists, update it
       const subscription = await this.prisma.subscription.update({
@@ -234,6 +240,75 @@ export class SubscriptionsService {
       waitingPeriod: paymentFrequency === 'ANNUAL' ? 14 : 60, // days
       message: 'Please complete payment to activate your subscription',
     };
+  }
+
+  /**
+   * Check if payment is allowed based on payment frequency restrictions
+   * Monthly: Cannot pay twice in same month
+   * Annual: Cannot pay twice in same year
+   *
+   * DEV MODE: Restrictions are bypassed in development environment for testing
+   */
+  private async checkPaymentFrequencyRestriction(
+    memberId: string,
+    paymentFrequency: 'MONTHLY' | 'ANNUAL',
+  ): Promise<void> {
+    // Bypass restrictions in development environment for testing
+    if (this.isDevEnvironment) {
+      this.logger.log(
+        `[DEV] Bypassing payment frequency restriction for member ${memberId}`,
+      );
+      return;
+    }
+
+    // Get the last completed payment
+    const lastPayment = await this.prisma.contribution.findFirst({
+      where: {
+        memberId,
+        status: 'COMPLETED',
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (!lastPayment) {
+      // No previous payment, allow
+      return;
+    }
+
+    const now = new Date();
+    const lastPaymentDate = lastPayment.updatedAt;
+    const daysSinceLastPayment = Math.floor(
+      (now.getTime() - lastPaymentDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    if (paymentFrequency === 'MONTHLY') {
+      // Check if last payment was in the same month
+      const isSameMonth =
+        lastPaymentDate.getMonth() === now.getMonth() &&
+        lastPaymentDate.getFullYear() === now.getFullYear();
+
+      if (isSameMonth) {
+        const nextAllowedDate = new Date(lastPaymentDate);
+        nextAllowedDate.setMonth(nextAllowedDate.getMonth() + 1);
+        nextAllowedDate.setDate(1); // First day of next month
+
+        throw new BadRequestException(
+          `You have already made a payment this month. Next payment allowed on ${nextAllowedDate.toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })}. If you want to upgrade to a higher tier, please use the upgrade option instead.`,
+        );
+      }
+    } else if (paymentFrequency === 'ANNUAL') {
+      // Check if last payment was within the last year
+      if (daysSinceLastPayment < 365) {
+        const nextAllowedDate = new Date(lastPaymentDate);
+        nextAllowedDate.setFullYear(nextAllowedDate.getFullYear() + 1);
+
+        throw new BadRequestException(
+          `You have already made an annual payment. Next payment allowed on ${nextAllowedDate.toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' })} (${365 - daysSinceLastPayment} days remaining). If you want to upgrade to a higher tier, please use the upgrade option instead.`,
+        );
+      }
+    }
   }
 
   /**

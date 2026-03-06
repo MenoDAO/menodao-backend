@@ -55,7 +55,11 @@ export class SubscriptionsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Subscribe to a package' })
   async subscribe(@Request() req: RequestWithUser, @Body() dto: SubscribeDto) {
-    return this.subscriptionsService.subscribe(req.user.id, dto.tier);
+    return this.subscriptionsService.subscribe(
+      req.user.id,
+      dto.tier,
+      dto.paymentFrequency || 'MONTHLY',
+    );
   }
 
   @Post('upgrade')
