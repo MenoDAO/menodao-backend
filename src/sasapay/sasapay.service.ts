@@ -118,6 +118,10 @@ export class SasaPayService {
         'https://api.menodao.org';
     }
 
+    this.logger.log(
+      `SasaPay callback URL configured: ${this.callbackBaseUrl}/contributions/callback`,
+    );
+
     // Securely log the status of each config key
     const missingKeys: string[] = [];
     if (!this.clientId) missingKeys.push('SASAPAY_CLIENT_ID');

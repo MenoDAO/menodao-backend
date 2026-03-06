@@ -108,36 +108,62 @@ export class ContributionsController {
     summary: 'Payment confirmation callback (called by payment provider)',
   })
   async handleCallback(@Body() payload: any) {
+    // Log the raw callback immediately for debugging
+    this.logger.log('='.repeat(80));
     this.logger.log('SasaPay callback received');
+    this.logger.log(`Timestamp: ${new Date().toISOString()}`);
+    this.logger.log(`Payload: ${JSON.stringify(payload, null, 2)}`);
+    this.logger.log('='.repeat(80));
 
-    // Distinguish between C2B (STK Push) and B2C/B2B (Disbursal)
-    // C2B usually has CustomerMobile or TransAmount
-    // B2C/B2B usually has RecipientAccountNumber or ReceiverPhoneNumber
-    const body = payload as Record<string, any>;
-    const isB2C = !!(
-      body.RecipientAccountNumber ||
-      body.ReceiverPhoneNumber ||
-      body.TransactionAmount
-    );
-
-    if (isB2C) {
-      this.logger.log('Routing to ClaimsService (B2C/B2B)');
-      const result = await this.claimsService.handleDisbursalCallback(
-        payload as SasaPayB2CCallbackData,
+    try {
+      // Distinguish between C2B (STK Push) and B2C/B2B (Disbursal)
+      // C2B usually has CustomerMobile or TransAmount
+      // B2C/B2B usually has RecipientAccountNumber or ReceiverPhoneNumber
+      const body = payload as Record<string, any>;
+      const isB2C = !!(
+        body.RecipientAccountNumber ||
+        body.ReceiverPhoneNumber ||
+        body.TransactionAmount
       );
+
+      if (isB2C) {
+        this.logger.log('Routing to ClaimsService (B2C/B2B)');
+        const result = await this.claimsService.handleDisbursalCallback(
+          payload as SasaPayB2CCallbackData,
+        );
+        this.logger.log(`B2C callback result: ${JSON.stringify(result)}`);
+        return {
+          ResultCode: result.success ? '0' : '1',
+          ResultDesc: result.message,
+        };
+      }
+
+      // Default to C2B
+      this.logger.log('Routing to ContributionsService (C2B)');
+      const result = await this.contributionsService.handlePaymentCallback(
+        payload as SasaPayC2BCallbackData,
+      );
+      
+      this.logger.log(`C2B callback result: ${JSON.stringify(result)}`);
+      this.logger.log('='.repeat(80));
+
       return {
         ResultCode: result.success ? '0' : '1',
         ResultDesc: result.message,
       };
+    } catch (error) {
+      this.logger.error('❌ CRITICAL: Callback handler crashed!');
+      this.logger.error(`Error: ${(error as Error).message}`);
+      this.logger.error(`Stack: ${(error as Error).stack}`);
+      this.logger.error('='.repeat(80));
+      
+      // Return success to SasaPay to prevent retries, but log the error
+      return {
+        ResultCode: '0',
+        ResultDesc: 'Callback received but processing failed - logged for manual review',
+      };
     }
-
-    // Default to C2B
-    this.logger.log('Routing to ContributionsService (C2B)');
-    const result = await this.contributionsService.handlePaymentCallback(
-      payload as SasaPayC2BCallbackData,
-    );
-
-    return {
+  }
       ResultCode: result.success ? '0' : '1',
       ResultDesc: result.message,
     };

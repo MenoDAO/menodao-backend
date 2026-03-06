@@ -247,20 +247,32 @@ export class PaymentService {
         TransactionDate,
       } = data;
 
+      this.logger.log(
+        `Callback details - CheckoutRequestID: ${CheckoutRequestID}, ResultCode: ${ResultCode}, Amount: ${Amount}, Receipt: ${MpesaReceiptNumber}`,
+      );
+
       // Find contribution by SasaPay callback identifiers
       const contribution = await this.findContributionByCallback(data);
 
       if (!contribution) {
-        this.logger.warn(
-          `No pending contribution found for callback: CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}`,
+        this.logger.error(
+          `❌ CRITICAL: No contribution found for callback - CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}. This payment may be lost!`,
         );
         return { success: false, message: 'Transaction not found' };
       }
+
+      this.logger.log(
+        `Found contribution ${contribution.id} for member ${contribution.memberId}, current status: ${contribution.status}`,
+      );
 
       // SasaPay: ResultCode '0' means success
       const isSuccess = ResultCode === '0';
 
       if (isSuccess) {
+        this.logger.log(
+          `✅ Payment SUCCESS for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
+        );
+
         // Check if this is an upgrade payment BEFORE updating (preserve original metadata)
         const originalMetadata = contribution.metadata as {
           isUpgrade?: boolean;
@@ -295,7 +307,7 @@ export class PaymentService {
         });
 
         this.logger.log(
-          `Payment completed for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
+          `✅ Contribution ${contribution.id} updated to COMPLETED, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
 
         // Process upgrade if this was an upgrade payment
@@ -395,7 +407,7 @@ export class PaymentService {
             });
 
             this.logger.log(
-              `[SUBSCRIPTION] Activated subscription for member ${contribution.memberId}`,
+              `[SUBSCRIPTION] ✅ Activated subscription for member ${contribution.memberId}`,
             );
 
             // Send SMS notification for new subscription
@@ -429,11 +441,19 @@ export class PaymentService {
               );
               // Don't fail the payment callback if SMS fails
             }
+          } else if (subscription && subscription.isActive) {
+            this.logger.log(
+              `[SUBSCRIPTION] Subscription already active for member ${contribution.memberId}`,
+            );
           }
         }
 
         return { success: true, message: 'Payment processed successfully' };
       } else {
+        this.logger.warn(
+          `❌ Payment FAILED for contribution ${contribution.id}: ResultCode=${ResultCode}, ResultDesc=${ResultDesc}`,
+        );
+
         // Update contribution to failed
         await this.prisma.contribution.update({
           where: { id: contribution.id },
@@ -455,7 +475,8 @@ export class PaymentService {
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Callback processing error: ${errMsg}`);
+      this.logger.error(`❌ CRITICAL: Callback processing error: ${errMsg}`);
+      this.logger.error(`Callback data: ${JSON.stringify(data)}`);
       return { success: false, message: 'Callback processing failed' };
     }
   }
@@ -463,51 +484,75 @@ export class PaymentService {
   /**
    * Find contribution by SasaPay callback identifiers
    * Matches CheckoutRequestID or MerchantRequestID stored in metadata
+   * IMPORTANT: Also checks FAILED status to handle retry callbacks
    */
   private async findContributionByCallback(data: PaymentCallbackData) {
     const { CheckoutRequestID, MerchantRequestID } = data;
 
     // Try to find by CheckoutRequestID in metadata first (most reliable)
+    // Check both PENDING and FAILED status to handle retries
     if (CheckoutRequestID) {
       const contribution = await this.prisma.contribution.findFirst({
         where: {
-          status: 'PENDING',
+          status: { in: ['PENDING', 'FAILED'] }, // Allow updating FAILED payments
           metadata: {
             path: ['checkoutRequestId'],
             equals: CheckoutRequestID,
           },
         },
         include: { member: true },
+        orderBy: { createdAt: 'desc' }, // Get most recent if multiple exist
       });
 
-      if (contribution) return contribution;
+      if (contribution) {
+        this.logger.log(
+          `Found contribution ${contribution.id} by CheckoutRequestID: ${CheckoutRequestID}, status: ${contribution.status}`,
+        );
+        return contribution;
+      }
     }
 
     // Fallback: find by MerchantRequestID in metadata
     if (MerchantRequestID) {
       const contribution = await this.prisma.contribution.findFirst({
         where: {
-          status: 'PENDING',
+          status: { in: ['PENDING', 'FAILED'] }, // Allow updating FAILED payments
           metadata: {
             path: ['merchantRequestId'],
             equals: MerchantRequestID,
           },
         },
         include: { member: true },
+        orderBy: { createdAt: 'desc' },
       });
 
-      if (contribution) return contribution;
+      if (contribution) {
+        this.logger.log(
+          `Found contribution ${contribution.id} by MerchantRequestID: ${MerchantRequestID}, status: ${contribution.status}`,
+        );
+        return contribution;
+      }
     }
 
-    // Last resort: find most recent pending contribution with menodao_ ref
+    // Last resort: find most recent pending/failed contribution with menodao_ ref
     const contribution = await this.prisma.contribution.findFirst({
       where: {
         paymentRef: { startsWith: 'menodao_' },
-        status: 'PENDING',
+        status: { in: ['PENDING', 'FAILED'] },
       },
       orderBy: { createdAt: 'desc' },
       include: { member: true },
     });
+
+    if (contribution) {
+      this.logger.log(
+        `Found contribution ${contribution.id} by paymentRef (last resort), status: ${contribution.status}`,
+      );
+    } else {
+      this.logger.warn(
+        `No contribution found for CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}`,
+      );
+    }
 
     return contribution;
   }
