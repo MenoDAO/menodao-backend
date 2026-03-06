@@ -5,7 +5,7 @@ import {
   SasaPayService,
   SasaPayC2BCallbackData,
 } from '../sasapay/sasapay.service';
-import { SMSService } from '../notifications/sms.service';
+import { SmsService } from '../sms/sms.service';
 import { PackageTier, PaymentFrequency } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -30,7 +30,7 @@ export class PaymentService {
     private configService: ConfigService,
     private prisma: PrismaService,
     private sasaPayService: SasaPayService,
-    private smsService: SMSService,
+    private smsService: SmsService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -357,7 +357,7 @@ export class PaymentService {
 
               const message = `Dear ${subscription.member.fullName || 'Member'}, Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
 
-              await this.smsService.sendSMS(
+              await this.smsService.sendSms(
                 subscription.member.phoneNumber,
                 message,
               );
@@ -415,7 +415,7 @@ export class PaymentService {
               const memberName = subscription.member.fullName || 'Member';
               const message = `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
 
-              await this.smsService.sendSMS(
+              await this.smsService.sendSms(
                 subscription.member.phoneNumber,
                 message,
               );
