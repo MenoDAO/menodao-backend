@@ -48,9 +48,21 @@ export class ContributionsService {
       throw new BadRequestException('Member not found');
     }
 
+    // For first-time subscriptions, subscription should exist but be inactive
+    // For upgrades, subscription should exist and be active
+    // Both cases should be allowed to proceed with payment
     if (!member.subscription) {
-      throw new BadRequestException('Please subscribe to a package first');
+      this.logger.error(
+        `Payment attempted without subscription for member ${memberId}`,
+      );
+      throw new BadRequestException(
+        'Please subscribe to a package first. If you just selected a package, please try again in a moment.',
+      );
     }
+
+    this.logger.log(
+      `Payment initiated for member ${memberId}, subscription: ${member.subscription.tier}, active: ${member.subscription.isActive}`,
+    );
 
     // Use member's phone if not provided
     const paymentPhone = phoneNumber || member.phoneNumber;
