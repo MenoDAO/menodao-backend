@@ -9,7 +9,9 @@ ENVIRONMENT=${1:-dev}
 MINUTES=${2:-30}
 
 # Configuration
-LOG_GROUP="/ecs/menodao-${ENVIRONMENT}"
+# Note: Log group is /ecs/menodao-api for both dev and production
+# The environment is distinguished by the log stream prefix (dev/ or prod/)
+LOG_GROUP="/ecs/menodao-api"
 REGION="us-east-1"
 
 echo "🔍 Retrieving logs from ${ENVIRONMENT} environment..."
@@ -22,6 +24,7 @@ START_TIME=$(($(date +%s) - (MINUTES * 60)))
 START_TIME_MS=$((START_TIME * 1000))
 
 # Get log streams (most recent first)
+# Filter by environment prefix (dev/ or prod/)
 echo "📋 Getting log streams..."
 LOG_STREAMS=$(aws logs describe-log-streams \
   --log-group-name "${LOG_GROUP}" \
@@ -29,7 +32,7 @@ LOG_STREAMS=$(aws logs describe-log-streams \
   --descending \
   --max-items 5 \
   --region "${REGION}" \
-  --query 'logStreams[*].logStreamName' \
+  --query "logStreams[?starts_with(logStreamName, '${ENVIRONMENT}/')].logStreamName" \
   --output text)
 
 if [ -z "$LOG_STREAMS" ]; then
