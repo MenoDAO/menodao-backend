@@ -143,7 +143,7 @@ export class ContributionsController {
       const result = await this.contributionsService.handlePaymentCallback(
         payload as SasaPayC2BCallbackData,
       );
-      
+
       this.logger.log(`C2B callback result: ${JSON.stringify(result)}`);
       this.logger.log('='.repeat(80));
 
@@ -156,17 +156,14 @@ export class ContributionsController {
       this.logger.error(`Error: ${(error as Error).message}`);
       this.logger.error(`Stack: ${(error as Error).stack}`);
       this.logger.error('='.repeat(80));
-      
+
       // Return success to SasaPay to prevent retries, but log the error
       return {
         ResultCode: '0',
-        ResultDesc: 'Callback received but processing failed - logged for manual review',
+        ResultDesc:
+          'Callback received but processing failed - logged for manual review',
       };
     }
-  }
-      ResultCode: result.success ? '0' : '1',
-      ResultDesc: result.message,
-    };
   }
 
   @Post('webhook')
