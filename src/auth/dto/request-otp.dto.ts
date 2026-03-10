@@ -28,4 +28,22 @@ export class RequestOtpDto {
   @IsOptional()
   @IsBoolean()
   createIfNotExists?: boolean;
+
+  @ApiProperty({
+    example: 'Jane Doe',
+    description: 'Full name of the user (for signup flow)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  fullName?: string;
+
+  @ApiProperty({
+    example: 'Nairobi',
+    description: 'Location/county of the user (for signup flow)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  location?: string;
 }

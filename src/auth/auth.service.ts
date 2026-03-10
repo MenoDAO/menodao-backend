@@ -49,6 +49,8 @@ export class AuthService {
   async requestOtp(
     phoneNumber: string,
     createIfNotExists: boolean = false,
+    fullName?: string,
+    location?: string,
   ): Promise<{ message: string }> {
     // Normalize phone number (ensure it starts with country code)
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
@@ -76,7 +78,11 @@ export class AuthService {
     if (!member) {
       if (createIfNotExists) {
         member = await this.prisma.member.create({
-          data: { phoneNumber: normalizedPhone },
+          data: {
+            phoneNumber: normalizedPhone,
+            ...(fullName && { fullName }),
+            ...(location && { location }),
+          },
         });
       } else {
         throw new BadRequestException(
