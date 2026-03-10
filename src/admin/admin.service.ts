@@ -38,10 +38,33 @@ export class AdminService implements OnModuleInit {
         data: {
           username: defaultUsername,
           passwordHash,
+          role: 'SUPER_ADMIN',
         },
       });
 
       this.logger.log(`Default admin user created: ${defaultUsername}`);
+    }
+
+    // Ensure a default customer service account exists
+    const csExists = await this.prisma.adminUser.findUnique({
+      where: { username: 'staff' },
+    });
+
+    if (!csExists) {
+      const csPassword =
+        this.configService.get<string>('CS_DEFAULT_PASSWORD') ||
+        'menodaocs2026!';
+      const csHash = await bcrypt.hash(csPassword, 10);
+
+      await this.prisma.adminUser.create({
+        data: {
+          username: 'staff',
+          passwordHash: csHash,
+          role: 'CUSTOMER_SERVICE',
+        },
+      });
+
+      this.logger.log('Default customer service account created: cs_staff');
     }
   }
 
@@ -51,7 +74,10 @@ export class AdminService implements OnModuleInit {
   async login(
     username: string,
     password: string,
-  ): Promise<{ accessToken: string; admin: { id: string; username: string } }> {
+  ): Promise<{
+    accessToken: string;
+    admin: { id: string; username: string; role: string };
+  }> {
     const admin = await this.prisma.adminUser.findUnique({
       where: { username },
     });
@@ -75,6 +101,7 @@ export class AdminService implements OnModuleInit {
     const payload = {
       sub: admin.id,
       username: admin.username,
+      role: admin.role,
       type: 'admin',
     };
 
@@ -85,7 +112,7 @@ export class AdminService implements OnModuleInit {
 
     const accessToken = this.jwtService.sign(payload, {
       secret,
-      expiresIn: '24h', // Longer expiry for admin sessions
+      expiresIn: '24h',
     });
 
     return {
@@ -93,6 +120,7 @@ export class AdminService implements OnModuleInit {
       admin: {
         id: admin.id,
         username: admin.username,
+        role: admin.role,
       },
     };
   }
@@ -138,14 +166,14 @@ export class AdminService implements OnModuleInit {
   async validateAdminToken(payload: {
     sub: string;
     type: string;
-  }): Promise<{ id: string; username: string } | null> {
+  }): Promise<{ id: string; username: string; role: string } | null> {
     if (payload.type !== 'admin') {
       return null;
     }
 
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: payload.sub },
-      select: { id: true, username: true },
+      select: { id: true, username: true, role: true },
     });
 
     return admin;
@@ -160,6 +188,7 @@ export class AdminService implements OnModuleInit {
       select: {
         id: true,
         username: true,
+        role: true,
         lastLogin: true,
         createdAt: true,
       },

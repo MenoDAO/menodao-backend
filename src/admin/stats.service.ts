@@ -396,4 +396,64 @@ export class StatsService {
       },
     });
   }
+
+  /**
+   * Get detailed SMS metrics: all-time total, daily breakdown, by-status
+   */
+  async getSmsMetrics(days: number = 30) {
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(now.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    // All-time total, today's count, and by-status breakdown
+    const [allTimeTotal, todayCount, byStatus] = await Promise.all([
+      this.prisma.smsLog.count(),
+      this.prisma.smsLog.count({
+        where: { createdAt: { gte: startOfDay } },
+      }),
+      this.prisma.smsLog.groupBy({
+        by: ['status'],
+        _count: true,
+      }),
+    ]);
+
+    // Daily breakdown for the last N days
+    const dailyLogs = await this.prisma.smsLog.groupBy({
+      by: ['createdAt'],
+      _count: true,
+      where: { createdAt: { gte: startDate } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Aggregate by date (groupBy on createdAt gives exact timestamps, need to bucket by day)
+    const dailyMap = new Map<string, number>();
+    for (let i = 0; i < days; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      dailyMap.set(d.toISOString().split('T')[0], 0);
+    }
+
+    for (const log of dailyLogs) {
+      const dateKey = new Date(log.createdAt).toISOString().split('T')[0];
+      dailyMap.set(dateKey, (dailyMap.get(dateKey) || 0) + log._count);
+    }
+
+    const dailyBreakdown = Array.from(dailyMap.entries())
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return {
+      allTimeTotal,
+      todayCount,
+      byStatus: byStatus.map((s) => ({
+        status: s.status,
+        count: s._count,
+      })),
+      dailyBreakdown,
+    };
+  }
 }

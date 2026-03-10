@@ -66,7 +66,7 @@ export class AdminAuthGuard implements CanActivate {
       }
 
       console.log(
-        `[AdminAuthGuard] Auth successful for admin: ${admin.username} on ${requestPath}`,
+        `[AdminAuthGuard] Auth successful for admin: ${admin.username} (${admin.role}) on ${requestPath}`,
       );
       request.admin = admin;
       return true;

@@ -9,9 +9,18 @@ import {
   Query,
   Param,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBody,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import { AuditLogService } from './audit-log.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './guards/roles.decorator';
 import { AdminLoginDto, ChangePasswordDto } from './dto/admin-login.dto';
 import {
   PaymentSearchQuery,
@@ -22,7 +31,10 @@ import {
 @ApiTags('Admin')
 @Controller('admin')
 export class AdminController {
-  constructor(private adminService: AdminService) {}
+  constructor(
+    private adminService: AdminService,
+    private auditLogService: AuditLogService,
+  ) {}
 
   @Post('login')
   @HttpCode(200)
@@ -74,9 +86,10 @@ export class AdminController {
   // Admin Actions
 
   @Post('actions/suspend-member')
-  @UseGuards(AdminAuthGuard)
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Suspend a member' })
+  @ApiOperation({ summary: 'Suspend a member (SUPER_ADMIN only)' })
   @ApiBody({ type: AdminActionRequest })
   async suspendMember(@Request() req, @Body() dto: AdminActionRequest) {
     return this.adminService.suspendMember(
@@ -118,9 +131,12 @@ export class AdminController {
   // Payment Reconciliation
 
   @Post('reconciliation/payments')
-  @UseGuards(AdminAuthGuard)
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Reconcile payments with SasaPay' })
+  @ApiOperation({
+    summary: 'Reconcile payments with SasaPay (SUPER_ADMIN only)',
+  })
   async reconcilePayments(@Body() body: { from: string; to: string }) {
     return this.adminService.reconcilePayments({
       from: new Date(body.from),
@@ -129,13 +145,27 @@ export class AdminController {
   }
 
   @Post('reconciliation/sync/:paymentId')
-  @UseGuards(AdminAuthGuard)
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Sync payment status with SasaPay' })
+  @ApiOperation({
+    summary: 'Sync payment status with SasaPay (SUPER_ADMIN only)',
+  })
   async syncPaymentStatus(
     @Request() req,
     @Param('paymentId') paymentId: string,
   ) {
     return this.adminService.syncPaymentStatus(paymentId, req.admin.id);
+  }
+
+  // Audit Logs
+
+  @Get('audit-logs')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get recent audit logs' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getAuditLogs(@Query('limit') limit?: number) {
+    return this.auditLogService.getRecentLogs(limit || 50);
   }
 }
