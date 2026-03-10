@@ -63,4 +63,13 @@ export class StatsController {
   async getSiteVisits(@Query('days') days?: number) {
     return this.analyticsService.getMetrics(days || 30);
   }
+
+  @Get('sms-metrics')
+  @ApiOperation({
+    summary: 'Get detailed SMS usage metrics with daily breakdown',
+  })
+  @ApiQuery({ name: 'days', required: false, type: Number })
+  async getSmsMetrics(@Query('days') days?: number) {
+    return this.statsService.getSmsMetrics(days || 30);
+  }
 }

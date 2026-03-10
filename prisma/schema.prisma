@@ -318,11 +318,18 @@ enum TxStatus {
   FAILED
 }
 
+// Admin role enum
+enum AdminRole {
+  SUPER_ADMIN
+  CUSTOMER_SERVICE
+}
+
 // Admin user for dashboard access
 model AdminUser {
   id           String    @id @default(uuid())
   username     String    @unique
   passwordHash String
+  role         AdminRole @default(SUPER_ADMIN)
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

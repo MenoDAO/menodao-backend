@@ -6,6 +6,8 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './guards/roles.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Delete } from '@nestjs/common';
@@ -143,14 +145,18 @@ export class UsersController {
   }
 
   @Delete(':id/subscription')
-  @ApiOperation({ summary: 'Delete a members subscription' })
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @ApiOperation({ summary: 'Delete a members subscription (SUPER_ADMIN only)' })
   async deleteSubscription(@Param('id') id: string) {
     return this.subscriptionsService.removeSubscription(id);
   }
 
   @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
   @ApiOperation({
-    summary: 'Delete a member and all related data (USE WITH CAUTION)',
+    summary: 'Delete a member and all related data (SUPER_ADMIN only)',
   })
   async deleteMember(@Param('id') id: string) {
     // Delete in order to respect foreign key constraints
