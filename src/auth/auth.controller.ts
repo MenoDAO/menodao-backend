@@ -29,6 +29,8 @@ export class AuthController {
     return this.authService.requestOtp(
       dto.phoneNumber,
       dto.createIfNotExists || false,
+      dto.fullName,
+      dto.location,
     );
   }
 
