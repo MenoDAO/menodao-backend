@@ -5,6 +5,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
+    "deploy:calibration": "hardhat run scripts/deploy-calibration.js --network calibration",
     "deploy:polygon-testnet": "hardhat run scripts/deploy.js --network polygonAmoy",
     "deploy:base-testnet": "hardhat run scripts/deploy.js --network baseSepolia",
     "deploy:celo-testnet": "hardhat run scripts/deploy.js --network celoAlfajores",
