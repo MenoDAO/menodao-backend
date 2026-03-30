@@ -71,12 +71,12 @@ export class CaseProcessorService {
 
   /**
    * Full pipeline: AI verify → submit on-chain → payout → mint Hypercert.
-   * Safe to call after uploadCaseImages.
+   * Runs asynchronously in the background to avoid HTTP timeouts.
+   * Returns immediately with { queued: true } — poll GET /status for results.
    */
   async processCase(visitId: string) {
     const visit = await this.prisma.visit.findUnique({
       where: { id: visitId },
-      include: { staff: { include: { clinic: true } } },
     });
 
     if (!visit) throw new NotFoundException('Visit not found');
@@ -86,81 +86,110 @@ export class CaseProcessorService {
       );
     }
 
-    this.logger.log(`Processing web3 case for visit ${visitId}`);
-
-    // Step 1: AI verification
-    const aiResult = await this.aiVerifier.verifyCase(
-      visit.beforeCID,
-      visit.afterCID,
-    );
-
-    await this.prisma.visit.update({
-      where: { id: visitId },
-      data: { aiVerificationResult: aiResult as any },
-    });
-
-    if (!aiResult.verified) {
-      await this.prisma.visit.update({
-        where: { id: visitId },
-        data: { web3VerificationStatus: 'REJECTED' },
-      });
-      this.logger.warn(`Case rejected by AI for visit ${visitId}`);
-      return { verified: false, aiResult };
+    // Already processing or done — don't re-run
+    if (
+      visit.web3VerificationStatus === 'VERIFIED' ||
+      visit.web3VerificationStatus === 'REJECTED'
+    ) {
+      return { queued: false, status: visit.web3VerificationStatus };
     }
 
-    // Step 2: Submit case to smart contract
-    const clinicAddress =
-      (visit.staff?.clinic as any)?.walletAddress || this.DEMO_CLINIC_ADDRESS;
+    this.logger.log(`Queuing web3 pipeline for visit ${visitId} (background)`);
 
-    const { caseId, txHash: submitTxHash } =
-      await this.blockchainCase.submitCase(
+    // Fire and forget — don't await, return immediately to avoid timeout
+    this.runPipelineInBackground(visitId).catch((err) => {
+      this.logger.error(
+        `Background pipeline failed for visit ${visitId}:`,
+        err,
+      );
+    });
+
+    return { queued: true, status: 'PROCESSING', visitId };
+  }
+
+  /**
+   * The actual pipeline — runs in background after processCase returns.
+   */
+  private async runPipelineInBackground(visitId: string): Promise<void> {
+    const visit = await this.prisma.visit.findUnique({
+      where: { id: visitId },
+      include: { staff: { include: { clinic: true } } },
+    });
+
+    if (!visit || !visit.beforeCID || !visit.afterCID) return;
+
+    try {
+      // Step 1: AI verification (simulation — fast, no network call)
+      const aiResult = await this.aiVerifier.verifyCase(
         visit.beforeCID,
         visit.afterCID,
-        clinicAddress,
       );
 
-    await this.prisma.visit.update({
-      where: { id: visitId },
-      data: {
-        caseOnChainId: caseId,
-        onChainTxHash: submitTxHash,
-      },
-    });
+      await this.prisma.visit.update({
+        where: { id: visitId },
+        data: { aiVerificationResult: aiResult as any },
+      });
 
-    // Step 3: Approve and trigger on-chain payout
-    const payoutTxHash = await this.blockchainCase.approveAndPay(caseId);
+      if (!aiResult.verified) {
+        await this.prisma.visit.update({
+          where: { id: visitId },
+          data: { web3VerificationStatus: 'REJECTED' },
+        });
+        this.logger.warn(`Case rejected by AI for visit ${visitId}`);
+        return;
+      }
 
-    // Step 4: Mint Hypercert
-    const hypercertData = await this.hypercert.mintHypercert({
-      visitId,
-      beforeCID: visit.beforeCID,
-      afterCID: visit.afterCID,
-      clinicAddress,
-      verifierConfidence: aiResult.confidence,
-    });
+      // Step 2: Submit case to smart contract
+      const clinicAddress =
+        (visit.staff?.clinic as any)?.walletAddress || this.DEMO_CLINIC_ADDRESS;
 
-    // Persist all results
-    await this.prisma.visit.update({
-      where: { id: visitId },
-      data: {
-        web3VerificationStatus: 'VERIFIED',
-        payoutTxHash,
-        hypercertData: hypercertData as any,
-      },
-    });
+      const { caseId, txHash: submitTxHash } =
+        await this.blockchainCase.submitCase(
+          visit.beforeCID,
+          visit.afterCID,
+          clinicAddress,
+        );
 
-    this.logger.log(
-      `Web3 case complete — visit=${visitId} caseId=${caseId} payout=${payoutTxHash} hypercert=${hypercertData.tokenId}`,
-    );
+      await this.prisma.visit.update({
+        where: { id: visitId },
+        data: { caseOnChainId: caseId, onChainTxHash: submitTxHash },
+      });
 
-    return {
-      verified: true,
-      aiResult,
-      caseId,
-      submitTxHash,
-      payoutTxHash,
-      hypercertData,
-    };
+      // Step 3: Approve and trigger on-chain payout
+      const payoutTxHash = await this.blockchainCase.approveAndPay(caseId);
+
+      // Step 4: Mint Hypercert (pins metadata to IPFS)
+      const hypercertData = await this.hypercert.mintHypercert({
+        visitId,
+        beforeCID: visit.beforeCID,
+        afterCID: visit.afterCID,
+        clinicAddress,
+        verifierConfidence: aiResult.confidence,
+      });
+
+      // Persist final state
+      await this.prisma.visit.update({
+        where: { id: visitId },
+        data: {
+          web3VerificationStatus: 'VERIFIED',
+          payoutTxHash,
+          hypercertData: hypercertData as any,
+        },
+      });
+
+      this.logger.log(
+        `Web3 pipeline complete — visit=${visitId} caseId=${caseId} payout=${payoutTxHash} hypercert=${hypercertData.tokenId}`,
+      );
+    } catch (err) {
+      this.logger.error(`Pipeline error for visit ${visitId}:`, err);
+      // Mark as rejected so the UI doesn't stay stuck on PENDING
+      await this.prisma.visit
+        .update({
+          where: { id: visitId },
+          data: { web3VerificationStatus: 'REJECTED' },
+        })
+        .catch(() => {});
+    }
   }
 
   /**
