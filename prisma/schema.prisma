@@ -392,6 +392,16 @@ model Visit {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
+  // Web3 / Filecoin / Hypercert fields (optional overlay)
+  beforeCID              String?  // Filecoin CID for before image
+  afterCID               String?  // Filecoin CID for after image
+  web3VerificationStatus String   @default("NONE") // NONE | PENDING | VERIFIED | REJECTED
+  caseOnChainId          Int?     // Smart contract case ID
+  onChainTxHash          String?  // Tx hash from contract submitCase
+  payoutTxHash           String?  // Tx hash from contract approveAndPay
+  hypercertData          Json?    // Hypercert metadata + mock mint result
+  aiVerificationResult   Json?    // AI verifier output { verified, confidence }
+
   member        Member             @relation(fields: [memberId], references: [id])
   staff         StaffUser          @relation(fields: [staffId], references: [id])
   procedures    VisitProcedure[]
