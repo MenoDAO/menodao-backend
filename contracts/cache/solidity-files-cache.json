@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "/home/kiragu/Projects/menodao-backend/contracts/src/MenoDAOCases.sol": {
-      "lastModificationDate": 1774864554078,
-      "contentHash": "7d982a98063151dfd094f34f9ac46fcd",
+      "lastModificationDate": 1774868465845,
+      "contentHash": "b39bc00bf6c22dd8dd5dbd9c7e8effff",
       "sourceName": "src/MenoDAOCases.sol",
       "solcConfig": {
         "version": "0.8.24",

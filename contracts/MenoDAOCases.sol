@@ -73,20 +73,28 @@ contract MenoDAOCases {
     /**
      * @notice Approve a verified case and release payout to the clinic.
      * @param id Case ID to approve and pay
+     * @param payoutAmount Amount in wei to pay (allows flexible demo/prod amounts)
      */
-    function approveAndPay(uint256 id) public onlyOwner {
+    function approveAndPay(uint256 id, uint256 payoutAmount) public onlyOwner {
         Case storage c = cases[id];
         require(bytes(c.beforeCID).length > 0, "Case does not exist");
         require(!c.paid, "Already paid");
-        require(address(this).balance >= 0.01 ether, "Insufficient contract balance");
+        require(address(this).balance >= payoutAmount, "Insufficient contract balance");
 
         c.paid = true;
         emit CaseVerified(id, msg.sender);
 
-        (bool success, ) = payable(c.clinic).call{value: 0.01 ether}("");
+        (bool success, ) = payable(c.clinic).call{value: payoutAmount}("");
         require(success, "Transfer failed");
 
-        emit Paid(id, c.clinic, 0.01 ether);
+        emit Paid(id, c.clinic, payoutAmount);
+    }
+
+    /**
+     * @notice Convenience overload — pays the default demo amount (0.001 ether).
+     */
+    function approveAndPay(uint256 id) public onlyOwner {
+        approveAndPay(id, 0.001 ether);
     }
 
     /**

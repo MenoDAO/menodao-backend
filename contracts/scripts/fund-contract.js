@@ -1,7 +1,7 @@
 const { ethers } = require('hardhat');
 
 async function main() {
-  const CONTRACT = '0xa1Be4905B2E8C1d4c7dFD32113751D9eF4a9e521';
+  const CONTRACT = '0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B';
   const [signer] = await ethers.getSigners();
 
   console.log('Funding contract from:', signer.address);

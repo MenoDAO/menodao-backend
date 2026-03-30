@@ -28,11 +28,15 @@ export class FilecoinService {
   private readonly PINATA_GATEWAY = 'https://gateway.pinata.cloud/ipfs';
 
   constructor(private config: ConfigService) {
-    this.apiKey = this.config.get<string>('FILECOIN_API_KEY') || '';
+    // Prefer PINATA_JWT, fall back to FILECOIN_API_KEY for backwards compat
+    this.apiKey =
+      this.config.get<string>('PINATA_JWT') ||
+      this.config.get<string>('FILECOIN_API_KEY') ||
+      '';
 
     if (!this.apiKey) {
       this.logger.warn(
-        'FILECOIN_API_KEY not set — FilecoinService running in mock mode. ' +
+        'PINATA_JWT not set — FilecoinService running in mock mode. ' +
           'Get a free Pinata JWT at https://app.pinata.cloud',
       );
     } else {
