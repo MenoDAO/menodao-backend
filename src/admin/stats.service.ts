@@ -456,4 +456,72 @@ export class StatsService {
       dailyBreakdown,
     };
   }
+
+  /**
+   * Get Web3 / Filecoin / Hypercert impact stats for admin dashboard
+   */
+  async getWeb3Stats() {
+    const contractAddress = process.env.MENODAO_CONTRACT_ADDRESS || null;
+    const calibrationRpc =
+      process.env.CALIBRATION_RPC ||
+      'https://api.calibration.node.glif.io/rpc/v1';
+
+    const totalCases = await this.prisma.visit.count({
+      where: { web3VerificationStatus: { not: 'NONE' } },
+    });
+    const verifiedCases = await this.prisma.visit.count({
+      where: { web3VerificationStatus: 'VERIFIED' },
+    });
+    const rejectedCases = await this.prisma.visit.count({
+      where: { web3VerificationStatus: 'REJECTED' },
+    });
+    const pendingCases = await this.prisma.visit.count({
+      where: { web3VerificationStatus: 'PENDING' },
+    });
+    const recentCases = await this.prisma.visit.findMany({
+      where: { web3VerificationStatus: 'VERIFIED' },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        onChainTxHash: true,
+        payoutTxHash: true,
+        updatedAt: true,
+        staff: {
+          select: { clinic: { select: { name: true } } },
+        },
+      },
+    });
+
+    const successRate =
+      totalCases > 0 ? Math.round((verifiedCases / totalCases) * 100) : 0;
+
+    return {
+      contract: {
+        address: contractAddress,
+        explorerUrl: contractAddress
+          ? `https://calibration.filfox.info/en/address/${contractAddress}`
+          : null,
+        network: 'Filecoin Calibration Testnet',
+        rpc: calibrationRpc,
+      },
+      cases: {
+        total: totalCases,
+        verified: verifiedCases,
+        rejected: rejectedCases,
+        pending: pendingCases,
+        successRate,
+      },
+      recentVerified: recentCases.map((v) => ({
+        visitId: v.id,
+        clinic: v.staff?.clinic?.name || 'Unknown',
+        onChainTxHash: v.onChainTxHash,
+        payoutTxHash: v.payoutTxHash,
+        verifiedAt: v.updatedAt,
+        explorerUrl: v.payoutTxHash
+          ? `https://calibration.filfox.info/en/message/${v.payoutTxHash}`
+          : null,
+      })),
+    };
+  }
 }
