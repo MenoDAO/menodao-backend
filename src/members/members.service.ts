@@ -166,6 +166,25 @@ export class MembersService {
         clinicalNotes: visit.clinicalNotes,
       },
       questionnaire: visit.questionnaire,
+      // Web3 impact proof — shown on member dashboard for transparency
+      impactProof:
+        visit.web3VerificationStatus !== 'NONE' &&
+        visit.web3VerificationStatus !== null
+          ? {
+              status: visit.web3VerificationStatus,
+              tokenId: (visit.hypercertData as any)?.tokenId || null,
+              metadataUrl: (visit.hypercertData as any)?.metadataUrl || null,
+              metadataCID: (visit.hypercertData as any)?.metadataCID || null,
+              onChainTxHash: visit.onChainTxHash,
+              payoutTxHash: visit.payoutTxHash,
+              mintedAt: (visit.hypercertData as any)?.mintedAt || null,
+              ownership: {
+                attester: 'MenoDAO',
+                clinic: visit.staff.clinic?.name || 'MenoHub Clinic',
+                beneficiary: 'You — dental care recipient',
+              },
+            }
+          : null,
     }));
 
     return {
