@@ -150,7 +150,7 @@ export class CaseProcessorService {
     });
 
     this.logger.log(
-      `Web3 case complete — visit=${visitId} caseId=${caseId} payout=${payoutTxHash} hypercert=${hypercertData.mockTokenId}`,
+      `Web3 case complete — visit=${visitId} caseId=${caseId} payout=${payoutTxHash} hypercert=${hypercertData.tokenId}`,
     );
 
     return {
