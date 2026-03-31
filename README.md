@@ -1,8 +1,8 @@
 # MenoDAO — Verifiable Dental Care Impact on Filecoin
 
-**Live platform:** [https://app.menodao.org](https://app.menodao.org) | **Dev:** [https://dev.menodao.org](https://dev.menodao.org)
+**Prototype:** [https://app.menodao.org](https://app.menodao.org) 
 
-**Contract on Filecoin Calibration Testnet:**
+**Contract on Filecoin Calibration:**
 [`0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B`](https://calibration.filfox.info/en/address/0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B)
 
 **Tracks:** Filecoin (Data Integration + Agentic Impact Evaluation) · PL Genesis Hackathon
@@ -202,7 +202,7 @@ transparency into social proof.
 
 **The admin dashboard shows live web3 metrics.** Total cases analyzed, success rate, pending
 verifications, and links to every on-chain transaction — all visible at a glance for monitoring
-and investor reporting.
+and reporting.
 
 ---
 
@@ -228,7 +228,7 @@ evaluations."
 
 - ✅ Filecoin Pin used for image storage and Hypercert metadata
 - ✅ Deployed to Filecoin Calibration Testnet (chainId 314159)
-- ✅ Working frontend demo at [https://dev.menodao.org](https://dev.menodao.org)
+- ✅ Working prototype at [https://app.menodao.org](https://app.menodao.org)
 - ✅ Open-source code on GitHub
 - ✅ Demo video (see submission)
 
@@ -309,7 +309,7 @@ needing real tFIL or a Pinata account.
 | Database        | PostgreSQL + Prisma ORM                           |
 | Frontend        | Next.js 14, Tailwind CSS, AWS Amplify             |
 | Payments        | SasaPay M-Pesa (STK Push)                         |
-| IPFS            | Pinata (→ Storacha)                               |
+| IPFS            | Storacha                                          |
 | Smart Contracts | Solidity 0.8.24, Hardhat, ethers.js v6            |
 | Blockchain      | Filecoin Calibration Testnet (chainId 314159)     |
 | AI Agent        | Configurable vision API, `did:menodao:verifier-1` |
@@ -320,8 +320,6 @@ needing real tFIL or a Pinata account.
 ## Contact
 
 - Platform: [https://menodao.org](https://menodao.org)
-- Email: hello@menodao.org
+- Email: said@menodao.org
 
----
 
-_Built for the PL Genesis Hackathon — Filecoin Track_
