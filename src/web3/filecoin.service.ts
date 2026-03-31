@@ -5,112 +5,111 @@ import axios from 'axios';
 const FormDataLib = require('form-data') as typeof import('form-data');
 
 /**
- * FilecoinService — uploads files to IPFS via Pinata and returns CIDs.
+ * FilecoinService — uploads files to IPFS via Storacha (web3.storage).
  *
- * Pinata free tier: https://app.pinata.cloud
- * - Sign up free (no card required for free tier)
- * - Go to API Keys → New Key → Admin → copy the JWT
- * - Set FILECOIN_API_KEY=<JWT> in .env
+ * Uses the Storacha HTTP upload API with UCAN delegation auth.
+ * The STORACHA_PROOF is a base64-encoded CAR file containing the delegation.
+ * The upload endpoint accepts multipart/form-data with a Bearer token
+ * derived from the delegation proof.
  *
- * Falls back to a deterministic mock CID if no API key is set (demo/test mode).
+ * Required env vars:
+ *   STORACHA_PRIVATE_KEY  — server agent private key
+ *   STORACHA_SPACE_DID    — space DID
+ *   STORACHA_PROOF        — base64 UCAN delegation proof
+ *
+ * Falls back to mock CIDs if credentials are not configured.
  */
 @Injectable()
 export class FilecoinService {
   private readonly logger = new Logger(FilecoinService.name);
-  private readonly apiKey: string;
 
-  // Pinata public IPFS upload endpoint
-  private readonly PINATA_UPLOAD_URL =
-    'https://api.pinata.cloud/pinning/pinFileToIPFS';
+  // Storacha upload endpoint
+  private readonly UPLOAD_URL = 'https://up.storacha.network/upload';
 
-  // Public IPFS gateways for viewing files
+  // Public IPFS gateways
   private readonly IPFS_GATEWAY = 'https://ipfs.io/ipfs';
-  private readonly PINATA_GATEWAY = 'https://gateway.pinata.cloud/ipfs';
+  private readonly STORACHA_GATEWAY = 'https://w3s.link/ipfs';
+
+  private readonly privateKey: string;
+  private readonly spaceDid: string;
+  private readonly proof: string;
 
   constructor(private config: ConfigService) {
-    // Prefer PINATA_JWT, fall back to FILECOIN_API_KEY for backwards compat
-    this.apiKey =
-      this.config.get<string>('PINATA_JWT') ||
-      this.config.get<string>('FILECOIN_API_KEY') ||
-      '';
+    this.privateKey = this.config.get<string>('STORACHA_PRIVATE_KEY') || '';
+    this.spaceDid = this.config.get<string>('STORACHA_SPACE_DID') || '';
+    this.proof = this.config.get<string>('STORACHA_PROOF') || '';
 
-    if (!this.apiKey) {
+    if (!this.privateKey || !this.spaceDid || !this.proof) {
       this.logger.warn(
-        'PINATA_JWT not set — FilecoinService running in mock mode. ' +
-          'Get a free Pinata JWT at https://app.pinata.cloud',
+        '[Storacha] Missing credentials — running in mock mode. ' +
+          'Set STORACHA_PRIVATE_KEY, STORACHA_SPACE_DID, STORACHA_PROOF.',
       );
     } else {
-      this.logger.log('FilecoinService initialized with Pinata API');
+      this.logger.log(
+        `[Storacha] Initialized — space=${this.spaceDid.slice(0, 30)}...`,
+      );
     }
   }
 
   /**
-   * Upload a file buffer to IPFS via Pinata and return the CID.
-   * Falls back to a mock CID if no API key is configured.
+   * Upload a file buffer to IPFS via Storacha and return the CID.
+   * The proof is sent as a Bearer token; Storacha validates the UCAN delegation.
    */
   async uploadFile(
     buffer: Buffer,
     filename: string,
     mimeType: string,
   ): Promise<string> {
-    if (!this.apiKey) {
-      // Deterministic mock CID for demo/testing without API key
+    if (!this.privateKey || !this.spaceDid || !this.proof) {
       const mockCid = `bafybeimock${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      this.logger.warn(`[MOCK] No API key — mock CID: ${mockCid}`);
+      this.logger.warn(`[Storacha MOCK] ${filename} → ${mockCid}`);
       return mockCid;
     }
 
     try {
       const form = new FormDataLib();
-      form.append('file', buffer, {
-        filename,
-        contentType: mimeType,
-      });
+      form.append('file', buffer, { filename, contentType: mimeType });
 
-      // Optional metadata for Pinata dashboard
-      form.append(
-        'pinataMetadata',
-        JSON.stringify({ name: `menodao-${filename}` }),
-      );
-
-      const res = await axios.post(this.PINATA_UPLOAD_URL, form, {
+      const res = await axios.post(this.UPLOAD_URL, form, {
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          // Storacha HTTP API: Bearer token is the base64 proof
+          Authorization: `Bearer ${this.proof}`,
+          'X-Auth-Secret': this.privateKey,
           ...form.getHeaders(),
         },
         maxBodyLength: Infinity,
         timeout: 60000,
       });
 
-      // Pinata returns { IpfsHash: 'Qm...' or 'bafy...' }
-      const cid: string = res.data?.IpfsHash;
+      // Storacha returns { cid: 'bafy...' }
+      const cid: string = res.data?.cid || res.data?.root?.['/'];
 
       if (!cid) {
         throw new Error(
-          `Unexpected Pinata response: ${JSON.stringify(res.data)}`,
+          `Unexpected Storacha response: ${JSON.stringify(res.data)}`,
         );
       }
 
-      this.logger.log(`Uploaded ${filename} to IPFS via Pinata — CID: ${cid}`);
+      this.logger.log(`[Storacha] Uploaded ${filename} → ${cid}`);
       return cid;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Pinata upload failed for ${filename}: ${msg}`);
+      this.logger.error(`[Storacha] Upload failed for ${filename}: ${msg}`);
       throw err;
     }
   }
 
-  /** Public IPFS gateway URL for a CID (ipfs.io) */
+  /** Public IPFS gateway URL (ipfs.io) */
   gatewayUrl(cid: string): string {
     return `${this.IPFS_GATEWAY}/${cid}`;
   }
 
-  /** Pinata gateway URL for a CID (faster for Pinata-pinned content) */
-  pinataGatewayUrl(cid: string): string {
-    return `${this.PINATA_GATEWAY}/${cid}`;
+  /** Storacha gateway URL (faster for Storacha-pinned content) */
+  storachaGatewayUrl(cid: string): string {
+    return `${this.STORACHA_GATEWAY}/${cid}`;
   }
 
-  /** NFT.Storage viewer URL for a CID */
+  /** IPLD explorer URL */
   nftStorageViewerUrl(cid: string): string {
     return `https://explore.ipld.io/#/explore/${cid}`;
   }

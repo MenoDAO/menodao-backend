@@ -62,8 +62,8 @@ export class CaseProcessorService {
       afterCID,
       beforeUrl: this.filecoin.gatewayUrl(beforeCID),
       afterUrl: this.filecoin.gatewayUrl(afterCID),
-      beforePinataUrl: this.filecoin.pinataGatewayUrl(beforeCID),
-      afterPinataUrl: this.filecoin.pinataGatewayUrl(afterCID),
+      beforeStorachaUrl: this.filecoin.storachaGatewayUrl(beforeCID),
+      afterStorachaUrl: this.filecoin.storachaGatewayUrl(afterCID),
       beforeExplorerUrl: this.filecoin.nftStorageViewerUrl(beforeCID),
       afterExplorerUrl: this.filecoin.nftStorageViewerUrl(afterCID),
     };
@@ -236,11 +236,11 @@ export class CaseProcessorService {
       afterUrl: visit.afterCID
         ? this.filecoin.gatewayUrl(visit.afterCID)
         : null,
-      beforePinataUrl: visit.beforeCID
-        ? this.filecoin.pinataGatewayUrl(visit.beforeCID)
+      beforeStorachaUrl: visit.beforeCID
+        ? this.filecoin.storachaGatewayUrl(visit.beforeCID)
         : null,
-      afterPinataUrl: visit.afterCID
-        ? this.filecoin.pinataGatewayUrl(visit.afterCID)
+      afterStorachaUrl: visit.afterCID
+        ? this.filecoin.storachaGatewayUrl(visit.afterCID)
         : null,
       beforeExplorerUrl: visit.beforeCID
         ? this.filecoin.nftStorageViewerUrl(visit.beforeCID)

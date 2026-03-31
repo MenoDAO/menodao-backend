@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import { FilecoinService } from './filecoin.service';
 
 export interface HypercertData {
   name: string;
@@ -26,12 +26,11 @@ export interface HypercertData {
 @Injectable()
 export class HypercertService {
   private readonly logger = new Logger(HypercertService.name);
-  private readonly pinataJwt: string;
-  private readonly PINATA_UPLOAD_URL = 'https://api.pinata.cloud/pinning/pinJSONToIPFS';
 
-  constructor(private config: ConfigService) {
-    this.pinataJwt = this.config.get<string>('PINATA_JWT') || this.config.get<string>('FILECOIN_API_KEY') || '';
-  }
+  constructor(
+    private config: ConfigService,
+    private filecoin: FilecoinService,
+  ) {}
 
   async mintHypercert(params: {
     visitId: string; beforeCID: string; afterCID: string;
@@ -66,28 +65,32 @@ export class HypercertService {
       timestamp: Date.now(), verifier: 'did:menodao:verifier-1',
       agentId: 'did:menodao:verifier-1', visitId: params.visitId,
       clinicAddress: params.clinicAddress, mintedAt: now, tokenId,
-      note: 'Hypercert metadata pinned to IPFS via Pinata. AI agent (did:menodao:verifier-1) evaluated dental improvement from Filecoin-stored images.',
+      note: 'Hypercert metadata stored on IPFS/Filecoin via Storacha. AI agent (did:menodao:verifier-1) evaluated dental improvement from Storacha-stored images.',
     };
 
+    // Pin the metadata JSON to Storacha/IPFS
     const metadataCID = await this.pinMetadata(data, tokenId);
-    if (metadataCID) { data.metadataCID = metadataCID; data.metadataUrl = `https://ipfs.io/ipfs/${metadataCID}`; }
+    if (metadataCID) {
+      data.metadataCID = metadataCID;
+      data.metadataUrl = `https://ipfs.io/ipfs/${metadataCID}`;
+    }
 
     this.logger.log(`[Hypercert] Created — visitId=${params.visitId} member="${memberName}" clinic="${clinicName}" tokenId=${tokenId} confidence=${params.verifierConfidence.toFixed(2)}`);
     return data;
   }
 
   private async pinMetadata(data: HypercertData, tokenId: string): Promise<string | null> {
-    if (!this.pinataJwt) { this.logger.warn('[Hypercert] No PINATA_JWT — skipping'); return null; }
     try {
-      const res = await axios.post(this.PINATA_UPLOAD_URL,
-        { pinataMetadata: { name: `menodao-hypercert-${tokenId}` }, pinataContent: data },
-        { headers: { Authorization: `Bearer ${this.pinataJwt}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+      const jsonBuffer = Buffer.from(JSON.stringify(data, null, 2), 'utf-8');
+      const cid = await this.filecoin.uploadFile(
+        jsonBuffer,
+        `menodao-hypercert-${tokenId}.json`,
+        'application/json',
       );
-      const cid = (res.data as { IpfsHash: string })?.IpfsHash;
-      this.logger.log(`[Hypercert] Pinned — CID: ${cid}`);
-      return cid || null;
+      this.logger.log(`[Hypercert] Metadata stored on Storacha — CID: ${cid}`);
+      return cid;
     } catch (err) {
-      this.logger.error(`[Hypercert] Pin failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(`[Hypercert] Metadata storage failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
