@@ -49,7 +49,7 @@ end-to-end impact verification pipeline that runs automatically after every trea
 Staff Treatment Room (Next.js)
         │
         ▼ upload before/after dental images
-Filecoin/IPFS (Pinata → migrating to Storacha)
+Filecoin/IPFS (Storacha)
         │ returns content-addressed CIDs
         ▼
 NestJS Backend (AWS ECS, Filecoin Calibration)
@@ -78,7 +78,7 @@ NestJS Backend (AWS ECS, Filecoin Calibration)
 ### 1. Filecoin Image Storage — Data Integration
 
 When a clinic staff member completes a treatment, they upload before/after dental images from the
-treatment room UI. These are pinned to IPFS via Pinata (migrating to Storacha/web3.storage), and
+treatment room UI. These are pinned to IPFS via Storacha, and
 the returned CIDs are stored on the visit record in PostgreSQL.
 
 ```typescript
@@ -167,7 +167,7 @@ what, when, and with what evidence:
 }
 ```
 
-This metadata is pinned to IPFS via Pinata, giving it a permanent CID. The full metadata URL is
+This metadata is pinned to IPFS via Storacha, giving it a permanent CID. The full metadata URL is
 stored on the visit record and surfaced to the member on their dashboard. On-chain ERC-1155 minting
 via the Hypercerts SDK is architecturally ready — the `mintHypercert()` method has the full
 structured schema and the SDK call is stubbed pending their stable Node.js server-side support.
@@ -289,8 +289,6 @@ needing real tFIL or a Pinata account.
 
 ## What's Next
 
-- **Storacha migration:** Switching from Pinata to Storacha (web3.storage) for native Filecoin
-  storage deals with better redundancy guarantees. Pending account setup.
 - **Real vision model:** Wiring in a dental-specific vision model for production AI verification.
   The architecture is ready — just needs `VISION_API_KEY` and `VISION_API_ENDPOINT`.
 - **Hypercerts SDK on-chain minting:** The metadata schema is complete and aligned with the
