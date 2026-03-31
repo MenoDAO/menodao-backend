@@ -113,7 +113,11 @@ export class CaseProcessorService {
   private async runPipelineInBackground(visitId: string): Promise<void> {
     const visit = await this.prisma.visit.findUnique({
       where: { id: visitId },
-      include: { staff: { include: { clinic: true } } },
+      include: {
+        staff: { include: { clinic: true } },
+        member: { select: { fullName: true, phoneNumber: true } },
+        procedures: { include: { procedure: true } },
+      },
     });
 
     if (!visit || !visit.beforeCID || !visit.afterCID) return;
@@ -142,6 +146,14 @@ export class CaseProcessorService {
       // Step 2: Submit case to smart contract
       const clinicAddress =
         (visit.staff?.clinic as any)?.walletAddress || this.DEMO_CLINIC_ADDRESS;
+      const clinicName = (visit.staff?.clinic as any)?.name || 'MenoHub Clinic';
+      const memberName =
+        (visit.member as any)?.fullName ||
+        (visit.member as any)?.phoneNumber ||
+        'MenoDAO Member';
+      const procedureNames = (visit.procedures as any[]).map(
+        (vp: any) => vp.procedure?.name || 'Dental Procedure',
+      );
 
       const { caseId, txHash: submitTxHash } =
         await this.blockchainCase.submitCase(
@@ -158,12 +170,15 @@ export class CaseProcessorService {
       // Step 3: Approve and trigger on-chain payout
       const payoutTxHash = await this.blockchainCase.approveAndPay(caseId);
 
-      // Step 4: Mint Hypercert (pins metadata to IPFS)
+      // Step 4: Mint Hypercert with full member + clinic context
       const hypercertData = await this.hypercert.mintHypercert({
         visitId,
         beforeCID: visit.beforeCID,
         afterCID: visit.afterCID,
         clinicAddress,
+        clinicName,
+        memberName,
+        procedures: procedureNames,
         verifierConfidence: aiResult.confidence,
       });
 

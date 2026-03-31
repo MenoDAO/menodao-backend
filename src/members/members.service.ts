@@ -118,23 +118,22 @@ export class MembersService {
   async getMemberHistory(memberId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
+    // Fetch member name for personalised ownership fields
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { fullName: true, phoneNumber: true },
+    });
+    const memberName = member?.fullName || member?.phoneNumber || 'Member';
+
     const [visits, total] = await Promise.all([
       this.prisma.visit.findMany({
         where: { memberId },
         include: {
-          procedures: {
-            include: {
-              procedure: true,
-            },
-          },
+          procedures: { include: { procedure: true } },
           staff: {
             select: {
               fullName: true,
-              clinic: {
-                select: {
-                  name: true,
-                },
-              },
+              clinic: { select: { name: true } },
             },
           },
           questionnaire: true,
@@ -146,55 +145,51 @@ export class MembersService {
       this.prisma.visit.count({ where: { memberId } }),
     ]);
 
-    // Format visits for member view (no privacy masking needed)
-    const formattedVisits = visits.map((visit) => ({
-      id: visit.id,
-      date: visit.checkedInAt,
-      status: visit.status,
-      totalCost: visit.totalCost,
-      clinic: visit.staff.clinic?.name || 'Unknown Clinic',
-      treatedBy: visit.staff.fullName || 'Unknown Provider',
-      procedures: visit.procedures.map((vp) => ({
-        name: vp.procedure.name,
-        cost: vp.cost,
-        addedAt: vp.addedAt,
-      })),
-      clinicalData: {
-        chiefComplaint: visit.chiefComplaint,
-        medicalHistory: visit.medicalHistory,
-        vitals: visit.vitals,
-        clinicalNotes: visit.clinicalNotes,
-      },
-      questionnaire: visit.questionnaire,
-      // Web3 impact proof — shown on member dashboard for transparency
-      impactProof:
-        visit.web3VerificationStatus !== 'NONE' &&
-        visit.web3VerificationStatus !== null
-          ? {
-              status: visit.web3VerificationStatus,
-              tokenId: (visit.hypercertData as any)?.tokenId || null,
-              metadataUrl: (visit.hypercertData as any)?.metadataUrl || null,
-              metadataCID: (visit.hypercertData as any)?.metadataCID || null,
-              onChainTxHash: visit.onChainTxHash,
-              payoutTxHash: visit.payoutTxHash,
-              mintedAt: (visit.hypercertData as any)?.mintedAt || null,
-              ownership: {
-                attester: 'MenoDAO',
-                clinic: visit.staff.clinic?.name || 'MenoHub Clinic',
-                beneficiary: 'You — dental care recipient',
-              },
-            }
-          : null,
-    }));
+    const formattedVisits = visits.map((visit) => {
+      const clinicName = visit.staff.clinic?.name || 'MenoHub Clinic';
+      return {
+        id: visit.id,
+        date: visit.checkedInAt,
+        status: visit.status,
+        totalCost: visit.totalCost,
+        clinic: clinicName,
+        treatedBy: visit.staff.fullName || 'Unknown Provider',
+        procedures: visit.procedures.map((vp) => ({
+          name: vp.procedure.name,
+          cost: vp.cost,
+          addedAt: vp.addedAt,
+        })),
+        clinicalData: {
+          chiefComplaint: visit.chiefComplaint,
+          medicalHistory: visit.medicalHistory,
+          vitals: visit.vitals,
+          clinicalNotes: visit.clinicalNotes,
+        },
+        questionnaire: visit.questionnaire,
+        impactProof:
+          visit.web3VerificationStatus !== 'NONE' &&
+          visit.web3VerificationStatus !== null
+            ? {
+                status: visit.web3VerificationStatus,
+                tokenId: (visit.hypercertData as any)?.tokenId || null,
+                metadataUrl: (visit.hypercertData as any)?.metadataUrl || null,
+                metadataCID: (visit.hypercertData as any)?.metadataCID || null,
+                onChainTxHash: visit.onChainTxHash,
+                payoutTxHash: visit.payoutTxHash,
+                mintedAt: (visit.hypercertData as any)?.mintedAt || null,
+                ownership: {
+                  attester: 'MenoDAO',
+                  clinic: clinicName,
+                  beneficiary: memberName,
+                },
+              }
+            : null,
+      };
+    });
 
     return {
       visits: formattedVisits,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 }
