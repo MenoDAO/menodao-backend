@@ -9,6 +9,8 @@ build
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
 
 # Prisma generated
 /generated/prisma
@@ -30,6 +32,26 @@ npm-debug.log*
 
 # Test coverage
 coverage
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfvars
+!*.tfvars.example
+
+# AWS
+.aws/
+
+# Secrets and credentials
+secrets/
+*.pem
+*.key
+*.crt
+credentials.json
+
+# BFG Repo Cleaner reports
+..bfg-report/
 
 # Script configs (local only)
 scripts/delete-test-users.config.ts

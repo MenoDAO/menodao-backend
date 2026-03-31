@@ -58,9 +58,21 @@ export interface SasaPayC2BCallbackData {
   ResultCode?: string;
   ResultDesc?: string;
   TransactionDate?: string;
+  TransTime?: string;
   Amount?: number;
+  TransAmount?: string;
   MpesaReceiptNumber?: string;
+  TransactionCode?: string;
+  TransID?: string;
   PhoneNumber?: string;
+  CustomerMobile?: string;
+  MSISDN?: string;
+  BillRefNumber?: string;
+  ThirdPartyTransID?: string;
+  Paid?: boolean;
+  FirstName?: string;
+  LastName?: string;
+  FullName?: string;
 }
 
 export interface SasaPayB2CCallbackData {

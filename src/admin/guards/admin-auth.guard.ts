@@ -4,14 +4,13 @@ import {
   ExecutionContext,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AdminService } from '../admin.service';
+import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AdminAuthGuard implements CanActivate {
   constructor(
-    private jwtService: JwtService,
     private configService: ConfigService,
     private adminService: AdminService,
   ) {}
@@ -36,6 +35,13 @@ export class AdminAuthGuard implements CanActivate {
 
     try {
       const secret = this.configService.get<string>('JWT_SECRET');
+      console.log(
+        '[AdminAuthGuard] JWT_SECRET exists:',
+        !!secret,
+        'length:',
+        secret?.length,
+      );
+
       if (!secret) {
         console.error('[AdminAuthGuard] JWT_SECRET not configured');
         throw new UnauthorizedException(
@@ -43,11 +49,8 @@ export class AdminAuthGuard implements CanActivate {
         );
       }
 
-      // Verify token with explicit secret and options
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret,
-        ignoreExpiration: false,
-      });
+      // Verify token using jsonwebtoken directly
+      const payload = jwt.verify(token, secret) as any;
 
       console.log(
         `[AdminAuthGuard] Token payload type: ${payload.type}, sub: ${payload.sub}`,

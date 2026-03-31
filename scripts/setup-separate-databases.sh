@@ -5,8 +5,9 @@
 
 set -e
 
-DB_HOST="***REMOVED***"
-DB_USER="***REMOVED***"
+# IMPORTANT: Replace these with your actual database credentials
+DB_HOST="your-database-host.rds.amazonaws.com"
+DB_USER="your-db-username"
 DB_PORT="5432"
 
 echo "🗄️  Database Separation Setup"

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
 import { RegisterClinicDto } from './dto/register-clinic.dto';
@@ -13,11 +14,19 @@ import * as bcrypt from 'bcrypt';
 @Injectable()
 export class ClinicsService {
   private readonly logger = new Logger(ClinicsService.name);
+  private readonly frontendUrl: string;
 
   constructor(
     private prisma: PrismaService,
     private smsService: SmsService,
-  ) {}
+    private configService: ConfigService,
+  ) {
+    const isProduction = this.configService.get('NODE_ENV') === 'production';
+    this.frontendUrl = isProduction
+      ? 'https://app.menodao.org'
+      : 'https://dev.menodao.org';
+    this.logger.log(`Frontend URL set to: ${this.frontendUrl}`);
+  }
 
   /**
    * Public: Register a new partner clinic
@@ -154,7 +163,7 @@ export class ClinicsService {
 
     // Send SMS with credentials
     for (const account of staffAccounts) {
-      const message = `Welcome to MenoDAO! ${clinic.name} has been approved as a Clinical Hub. Your staff login: Username: ${account.username} Password: ${account.password} Login at: https://dev.menodao.org/staff/login`;
+      const message = `Welcome to MenoDAO! ${clinic.name} has been approved as a Clinical Hub. Your staff login: Username: ${account.username} Password: ${account.password} Login at: ${this.frontendUrl}/staff/login`;
       try {
         await this.smsService.sendSms(
           account.username.replace(/[^0-9]/g, '').length > 8
