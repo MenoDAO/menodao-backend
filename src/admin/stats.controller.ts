@@ -72,4 +72,10 @@ export class StatsController {
   async getSmsMetrics(@Query('days') days?: number) {
     return this.statsService.getSmsMetrics(days || 30);
   }
+
+  @Get('web3')
+  @ApiOperation({ summary: 'Get Web3/Filecoin/Hypercert impact stats' })
+  async getWeb3Stats() {
+    return this.statsService.getWeb3Stats();
+  }
 }

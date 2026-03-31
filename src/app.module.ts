@@ -19,6 +19,7 @@ import { StaffModule } from './staff/staff.module';
 import { VisitsModule } from './visits/visits.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicsModule } from './clinics/clinics.module';
+import { Web3Module } from './web3/web3.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
@@ -41,6 +42,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     }),
     PrismaModule,
     ClinicsModule,
+    Web3Module,
     SmsModule,
     StaffModule,
     ProceduresModule,

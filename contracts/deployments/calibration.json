@@ -1,0 +1,9 @@
+{
+  "network": "calibration",
+  "chainId": 314159,
+  "contractAddress": "0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B",
+  "deployer": "0x79fec391C66690C8Dfc01FA1F0a2CE0b77ad6A74",
+  "deployedAt": "2026-03-30T11:07:38.744Z",
+  "txHash": "0xd0dd8383663e03fe76d588b99aeda7c9f739c49000124f988860dde2e3083761",
+  "explorerUrl": "https://calibration.filfox.info/en/address/0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B"
+}
