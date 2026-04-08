@@ -37,6 +37,7 @@ describe('AuthController', () => {
         false,
         undefined,
         undefined,
+        undefined,
       );
       expect(result).toEqual({ message: 'OTP sent successfully' });
     });
@@ -52,6 +53,7 @@ describe('AuthController', () => {
       expect(authService.requestOtp).toHaveBeenCalledWith(
         '+254712345678',
         false,
+        undefined,
         undefined,
         undefined,
       );

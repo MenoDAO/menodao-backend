@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { SmsService } from '../sms/sms.service';
+import { ReferralService } from '../referrals/referral.service';
 import {
   UnauthorizedException,
   ServiceUnavailableException,
@@ -36,6 +37,10 @@ describe('AuthService', () => {
     sendOtp: jest.fn(),
   };
 
+  const mockReferralService = {
+    ensureReferralCode: jest.fn().mockResolvedValue(null),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -43,6 +48,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: JwtService, useValue: mockJwtService },
         { provide: SmsService, useValue: mockSmsService },
+        { provide: ReferralService, useValue: mockReferralService },
       ],
     }).compile();
 
@@ -93,7 +99,9 @@ describe('AuthService', () => {
     });
 
     it('should create new member if not exists and createIfNotExists is true', async () => {
-      mockPrismaService.member.findUnique.mockResolvedValue(null);
+      mockPrismaService.member.findUnique
+        .mockResolvedValueOnce(null) // first call: check if phone exists
+        .mockResolvedValueOnce(null); // second call: validate referredBy (no referredBy passed)
       mockPrismaService.member.create.mockResolvedValue({
         id: 'new-member-id',
         phoneNumber: '+254712345678',
