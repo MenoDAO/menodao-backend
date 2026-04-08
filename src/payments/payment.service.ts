@@ -8,6 +8,7 @@ import {
 import { SmsService } from '../sms/sms.service';
 import { PackageTier, PaymentFrequency } from '@prisma/client';
 import * as crypto from 'crypto';
+import { ReferralService } from '../referrals/referral.service';
 
 export interface PaymentResult {
   success: boolean;
@@ -31,6 +32,7 @@ export class PaymentService {
     private prisma: PrismaService,
     private sasaPayService: SasaPayService,
     private smsService: SmsService,
+    private referralService: ReferralService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -310,6 +312,16 @@ export class PaymentService {
           `✅ Contribution ${contribution.id} updated to COMPLETED, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
 
+        // ── Champion Referral: credit commission (fire-and-forget) ──────────
+        try {
+          await this.referralService.creditCommission(contribution.id);
+        } catch (referralError) {
+          this.logger.error(
+            `[REFERRAL] Failed to credit commission for contribution ${contribution.id}: ${referralError?.message}`,
+          );
+          // Never rethrow — payment callback must not fail due to referral errors
+        }
+
         // Process upgrade if this was an upgrade payment
         if (originalMetadata?.isUpgrade && originalMetadata?.newTier) {
           this.logger.log(
@@ -409,6 +421,24 @@ export class PaymentService {
             this.logger.log(
               `[SUBSCRIPTION] ✅ Activated subscription for member ${contribution.memberId}`,
             );
+
+            // ── Champion Referral: update active referral count (fire-and-forget) ──
+            try {
+              const referredMember = await this.prisma.member.findUnique({
+                where: { id: contribution.memberId },
+                select: { referredBy: true },
+              });
+              if (referredMember?.referredBy) {
+                await this.referralService.updateActiveReferralCount(
+                  referredMember.referredBy,
+                );
+              }
+            } catch (referralError) {
+              this.logger.error(
+                `[REFERRAL] Failed to update active referral count for member ${contribution.memberId}: ${referralError?.message}`,
+              );
+              // Never rethrow
+            }
 
             // Send SMS notification for new subscription
             try {

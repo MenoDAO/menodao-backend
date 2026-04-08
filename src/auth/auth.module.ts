@@ -4,9 +4,14 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { SmsModule } from '../sms/sms.module';
+import { ReferralModule } from '../referrals/referral.module';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'jwt' }), SmsModule],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'jwt' }),
+    SmsModule,
+    ReferralModule,
+  ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService],
