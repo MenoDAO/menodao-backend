@@ -46,4 +46,14 @@ export class RequestOtpDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @ApiProperty({
+    example: 'AMINA_5678',
+    description:
+      'Referral code of the champion who referred this user (for signup flow)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  referredBy?: string;
 }

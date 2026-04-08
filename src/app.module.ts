@@ -20,6 +20,7 @@ import { VisitsModule } from './visits/visits.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicsModule } from './clinics/clinics.module';
 import { Web3Module } from './web3/web3.module';
+import { ChampionsModule } from './champions/champions.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
@@ -57,6 +58,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     BlockchainModule,
     AdminModule,
     NotificationsModule,
+    ChampionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

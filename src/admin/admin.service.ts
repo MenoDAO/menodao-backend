@@ -642,6 +642,31 @@ export class AdminService implements OnModuleInit {
   }
 
   /**
+   * List withdrawal records, optionally filtered by status
+   */
+  listWithdrawals(status?: string) {
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    return this.prisma.withdrawalRecord.findMany({
+      where,
+      include: {
+        champion: {
+          select: {
+            id: true,
+            fullName: true,
+            phoneNumber: true,
+            referralCode: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  /**
    * Reconcile payments with SasaPay
    * Requirements: 24.1, 24.2, 24.3, 24.4, 24.5, 24.6, 24.7
    */

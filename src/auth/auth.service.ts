@@ -7,6 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
+import { ReferralService } from '../referrals/referral.service';
 
 @Injectable()
 export class AuthService {
@@ -14,6 +15,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private smsService: SmsService,
+    private referralService: ReferralService,
   ) {}
 
   /**
@@ -51,6 +53,7 @@ export class AuthService {
     createIfNotExists: boolean = false,
     fullName?: string,
     location?: string,
+    referredBy?: string,
   ): Promise<{ message: string }> {
     // Normalize phone number (ensure it starts with country code)
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
@@ -84,6 +87,29 @@ export class AuthService {
             ...(location && { location }),
           },
         });
+
+        // Validate and store referredBy if provided
+        if (referredBy) {
+          const referrer = await this.prisma.member.findUnique({
+            where: { referralCode: referredBy },
+            select: { id: true },
+          });
+          if (referrer) {
+            await this.prisma.member.update({
+              where: { id: member.id },
+              data: { referredBy },
+            });
+          }
+        }
+
+        // Generate referral code (fire-and-forget)
+        try {
+          await this.referralService.ensureReferralCode(member.id);
+        } catch (referralError) {
+          console.error(
+            `[AuthService] Failed to generate referral code for member ${member.id}: ${referralError?.message}`,
+          );
+        }
       } else {
         throw new BadRequestException(
           'Phone number not found. Please sign up instead.',

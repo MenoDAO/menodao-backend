@@ -27,6 +27,7 @@ import {
   MemberSearchQuery,
   AdminActionRequest,
 } from './dto/admin-search.dto';
+import { ReferralService } from '../referrals/referral.service';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -34,6 +35,7 @@ export class AdminController {
   constructor(
     private adminService: AdminService,
     private auditLogService: AuditLogService,
+    private referralService: ReferralService,
   ) {}
 
   @Post('login')
@@ -167,5 +169,55 @@ export class AdminController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getAuditLogs(@Query('limit') limit?: number) {
     return this.auditLogService.getRecentLogs(limit || 50);
+  }
+
+  // ── Referral / Champion Admin Endpoints ─────────────────────────────────────
+
+  @Get('members/:memberId/referrals')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get referral summary for a member' })
+  async getMemberReferrals(@Param('memberId') memberId: string) {
+    const [stats, referrals] = await Promise.all([
+      this.referralService.getChampionStats(memberId).catch(() => null),
+      this.referralService.getChampionReferrals(memberId, 1, 100),
+    ]);
+    return { stats, referrals };
+  }
+
+  @Get('withdrawals')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List withdrawal records (filterable by status)' })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  async listWithdrawals(@Query('status') status?: string) {
+    return this.adminService.listWithdrawals(status);
+  }
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Approve a first-payout withdrawal' })
+  async approveWithdrawal(
+    @Request() req,
+    @Param('withdrawalId') withdrawalId: string,
+  ) {
+    await this.referralService.approveWithdrawal(withdrawalId, req.admin.id);
+    return { message: 'Withdrawal approved and disbursement initiated' };
+  }
+
+  @Post('withdrawals/:withdrawalId/reject')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reject a first-payout withdrawal' })
+  async rejectWithdrawal(
+    @Request() req,
+    @Param('withdrawalId') withdrawalId: string,
+    @Body() body: { reason: string },
+  ) {
+    await this.referralService.rejectWithdrawal(
+      withdrawalId,
+      req.admin.id,
+      body.reason,
+    );
+    return { message: 'Withdrawal rejected' };
   }
 }

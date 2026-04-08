@@ -11,10 +11,11 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { ReferralModule } from '../referrals/referral.module';
 
 @Global()
 @Module({
-  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule],
+  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule, ReferralModule],
   controllers: [
     AdminController,
     StatsController,

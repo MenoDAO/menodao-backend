@@ -21,6 +21,15 @@ model Member {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  // Champion Referral System fields
+  referralCode         String?  @unique
+  referredBy           String?  // Referral code of the champion who referred this member
+  firstPaymentCleared  Boolean  @default(false)
+  commissionsBalance   Int      @default(0) // KES, whole shillings
+  commissionsWithdrawn Int      @default(0) // KES, total withdrawn to date
+  activeReferralsCount Int      @default(0)
+  isGoldMember         Boolean  @default(false)
+
   // Relations
   subscription      Subscription?
   contributions     Contribution[]
@@ -31,6 +40,11 @@ model Member {
   deviceTokens      DeviceToken[]
   visits            Visit[]
   campRegistrations CampRegistration[]
+  commissionLedger  CommissionLedger[]
+  withdrawalRecords WithdrawalRecord[]
+
+  @@index([referralCode])
+  @@index([referredBy])
 }
 
 // OTP codes for SMS authentication
@@ -690,4 +704,53 @@ model ClinicPaymentConfig {
   clinic Clinic @relation(fields: [clinicId], references: [id])
 
   @@index([clinicId])
+}
+
+// ─── Champion Referral System ────────────────────────────────────────────────
+
+enum WithdrawalStatus {
+  PENDING
+  PENDING_ADMIN_APPROVAL
+  APPROVED
+  REJECTED
+  FAILED
+  COMPLETED
+}
+
+// Commission ledger — one entry per referred user's first payment
+model CommissionLedger {
+  id             String      @id @default(uuid())
+  championId     String
+  referredUserId String
+  contributionId String
+  amount         Int         // Commission amount in KES
+  tier           PackageTier // Tier of referred user at time of commission
+  createdAt      DateTime    @default(now())
+
+  champion       Member      @relation(fields: [championId], references: [id])
+
+  @@index([championId])
+  @@index([createdAt])
+}
+
+// Withdrawal requests for champion commission payouts
+model WithdrawalRecord {
+  id                 String           @id @default(uuid())
+  championId         String
+  amount             Int              // Withdrawal amount in KES
+  status             WithdrawalStatus @default(PENDING)
+  sasaPayRequestId   String?
+  mpesaReceiptNumber String?
+  errorMessage       String?
+  rejectionReason    String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  approvedAt         DateTime?
+  completedAt        DateTime?
+
+  champion           Member           @relation(fields: [championId], references: [id])
+
+  @@index([championId])
+  @@index([status])
+  @@index([createdAt])
 }

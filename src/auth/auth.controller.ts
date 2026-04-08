@@ -31,6 +31,7 @@ export class AuthController {
       dto.createIfNotExists || false,
       dto.fullName,
       dto.location,
+      dto.referredBy,
     );
   }
 
