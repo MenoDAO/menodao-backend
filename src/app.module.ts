@@ -21,6 +21,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicsModule } from './clinics/clinics.module';
 import { Web3Module } from './web3/web3.module';
 import { ChampionsModule } from './champions/champions.module';
+import { ReferralModule } from './referrals/referral.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
@@ -59,6 +60,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     AdminModule,
     NotificationsModule,
     ChampionsModule,
+    ReferralModule,
   ],
   controllers: [AppController],
   providers: [AppService],
