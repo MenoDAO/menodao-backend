@@ -453,6 +453,11 @@ jobs:
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}]}" \
             --launch-type FARGATE || true
 
+      - name: Backfill referral codes for existing members
+        run: |
+          npm ci
+          DATABASE_URL="${{ secrets.PROD_DATABASE_URL }}" npx ts-node --project tsconfig.json scripts/backfill-referral-codes.ts || true
+
       - name: Comment deployment status
         continue-on-error: true
         uses: actions/github-script@v7
