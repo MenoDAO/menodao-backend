@@ -398,6 +398,8 @@ export class ReferralService {
       where: { id: memberId },
       select: {
         referralCode: true,
+        fullName: true,
+        phoneNumber: true,
         activeReferralsCount: true,
         commissionsBalance: true,
         commissionsWithdrawn: true,
@@ -405,16 +407,38 @@ export class ReferralService {
       },
     });
 
-    if (!member || !member.referralCode) {
+    if (!member) {
       throw new Error(`Champion stats not available for member ${memberId}`);
     }
 
+    // Generate referral code on-the-fly for existing members who don't have one yet
+    let referralCode = member.referralCode;
+    if (!referralCode) {
+      referralCode = await this.ensureReferralCode(memberId);
+    }
+
+    // If still no code (missing fullName/phoneNumber), return a placeholder response
+    if (!referralCode) {
+      const frontendBaseUrl =
+        this.config.get<string>('FRONTEND_BASE_URL') ?? '';
+      return {
+        referralCode: '',
+        inviteLink: '',
+        totalReferrals: 0,
+        activeReferrals: 0,
+        commissionsEarned: 0,
+        commissionsWithdrawn: member.commissionsWithdrawn,
+        commissionsBalance: member.commissionsBalance,
+        isGoldMember: member.isGoldMember,
+      };
+    }
+
     const frontendBaseUrl = this.config.get<string>('FRONTEND_BASE_URL') ?? '';
-    const inviteLink = `${frontendBaseUrl}/sign-up?ref=${member.referralCode}`;
+    const inviteLink = `${frontendBaseUrl}/sign-up?ref=${referralCode}`;
 
     const [totalReferrals, commissionsEarnedResult] = await Promise.all([
       this.prisma.member.count({
-        where: { referredBy: member.referralCode },
+        where: { referredBy: referralCode },
       }),
       this.prisma.commissionLedger.aggregate({
         where: { championId: memberId },
@@ -425,7 +449,7 @@ export class ReferralService {
     const commissionsEarned = commissionsEarnedResult._sum.amount ?? 0;
 
     return {
-      referralCode: member.referralCode,
+      referralCode,
       inviteLink,
       totalReferrals,
       activeReferrals: member.activeReferralsCount,
