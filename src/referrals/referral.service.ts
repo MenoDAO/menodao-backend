@@ -419,8 +419,6 @@ export class ReferralService {
 
     // If still no code (missing fullName/phoneNumber), return a placeholder response
     if (!referralCode) {
-      const frontendBaseUrl =
-        this.config.get<string>('FRONTEND_BASE_URL') ?? '';
       return {
         referralCode: '',
         inviteLink: '',
@@ -433,7 +431,15 @@ export class ReferralService {
       };
     }
 
-    const frontendBaseUrl = this.config.get<string>('FRONTEND_BASE_URL') ?? '';
+    // Generate invite link — derive host from NODE_ENV so no extra secret is needed
+    const frontendBaseUrl = (() => {
+      const nodeEnv = this.config.get<string>('NODE_ENV');
+      if (nodeEnv === 'production') return 'https://app.menodao.org';
+      // Explicit override takes precedence (useful for local dev)
+      const override = this.config.get<string>('FRONTEND_BASE_URL');
+      if (override) return override;
+      return 'https://dev.menodao.org';
+    })();
     const inviteLink = `${frontendBaseUrl}/sign-up?ref=${referralCode}`;
 
     const [totalReferrals, commissionsEarnedResult] = await Promise.all([
