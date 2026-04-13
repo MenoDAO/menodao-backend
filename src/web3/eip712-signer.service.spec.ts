@@ -141,7 +141,11 @@ describe('EIP712SignerService — property-based tests', () => {
       fc.property(
         fc.record({
           verified: fc.boolean(),
-          confidence: fc.float({ min: 0, max: 1, noNaN: true }),
+          confidence: fc.float({
+            min: Math.fround(0),
+            max: Math.fround(1),
+            noNaN: true,
+          }),
           reason: fc.string({ maxLength: 200 }),
         }),
         (aiResult) => {
@@ -201,7 +205,11 @@ describe('EIP712SignerService — property-based tests', () => {
         fc.record({
           caseOnChainId: fc.nat({ max: 100_000 }),
           visitId: fc.string({ minLength: 1, maxLength: 50 }),
-          confidence: fc.float({ min: 0.7, max: 1.0, noNaN: true }),
+          confidence: fc.float({
+            min: Math.fround(0.7),
+            max: Math.fround(1.0),
+            noNaN: true,
+          }),
           reason: fc.string({ maxLength: 100 }),
           beforeCID: fc.string({ minLength: 5, maxLength: 60 }),
           afterCID: fc.string({ minLength: 5, maxLength: 60 }),
