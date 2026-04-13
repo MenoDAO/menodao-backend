@@ -981,6 +981,43 @@
         ">=0.6.2"
       ],
       "artifacts": []
+    },
+    "/home/kiragu/Projects/menodao-backend/contracts/src/MenoDAOClaimVault.sol": {
+      "lastModificationDate": 1775981122378,
+      "contentHash": "f8639a81a5ef6e57c0ae052e9c199161",
+      "sourceName": "src/MenoDAOClaimVault.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "cancun",
+          "viaIR": true,
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.24"
+      ],
+      "artifacts": [
+        "MenoDAOClaimVault"
+      ]
     }
   }
 }

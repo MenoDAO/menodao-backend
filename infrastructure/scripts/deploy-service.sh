@@ -67,25 +67,25 @@ REGION="${AWS_REGION:-us-east-1}"
 ECR_REPOSITORY="menodao-backend"
 
 if [ "$ENV" == "prod" ]; then
-    CLUSTER_NAME="menodao-production"
-    SERVICE_NAME="menodao-backend-production"
+    CLUSTER_NAME="menodao-prod"
+    SERVICE_NAME="menodao-backend"
     TASK_FAMILY="menodao-backend-production"
     DEFAULT_TAG="prod-latest"
     CPU="512"
     MEMORY="1024"
     DESIRED_COUNT="${SCALE:-2}"
     LOG_GROUP="/ecs/menodao-production"
-    SECRETS_ARN_NAME="menodao/production/app"
+    SECRETS_ARN_NAME="menodao/api/secrets"
 else
-    CLUSTER_NAME="menodao-dev"
-    SERVICE_NAME="menodao-backend-dev"
+    CLUSTER_NAME="menodao"
+    SERVICE_NAME="menodao-api-dev"
     TASK_FAMILY="menodao-backend-dev"
     DEFAULT_TAG="dev-latest"
     CPU="256"
     MEMORY="512"
     DESIRED_COUNT="${SCALE:-1}"
     LOG_GROUP="/ecs/menodao-dev"
-    SECRETS_ARN_NAME="menodao/dev/app"
+    SECRETS_ARN_NAME="menodao/api-stg/secrets"
 fi
 
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
@@ -176,7 +176,12 @@ cat > /tmp/task-definition.json <<EOF
                 {"name": "DB_HOST", "valueFrom": "${SECRETS_ARN}:DB_HOST::"},
                 {"name": "DB_NAME", "valueFrom": "${SECRETS_ARN}:DB_NAME::"},
                 {"name": "DB_USER", "valueFrom": "${SECRETS_ARN}:DB_USER::"},
-                {"name": "DB_PASSWORD", "valueFrom": "${SECRETS_ARN}:DB_PASSWORD::"}
+                {"name": "DB_PASSWORD", "valueFrom": "${SECRETS_ARN}:DB_PASSWORD::"},
+                {"name": "CLAIM_VAULT_CONTRACT_ADDRESS", "valueFrom": "${SECRETS_ARN}:CLAIM_VAULT_CONTRACT_ADDRESS::"},
+                {"name": "CLAIM_VAULT_CHAIN_ID", "valueFrom": "${SECRETS_ARN}:CLAIM_VAULT_CHAIN_ID::"},
+                {"name": "BASE_SEPOLIA_RPC", "valueFrom": "${SECRETS_ARN}:BASE_SEPOLIA_RPC::"},
+                {"name": "AGENT_SIGNER_PRIVATE_KEY", "valueFrom": "${SECRETS_ARN}:AGENT_SIGNER_PRIVATE_KEY::"},
+                {"name": "AGENT_SIGNER_ADDRESS", "valueFrom": "${SECRETS_ARN}:AGENT_SIGNER_ADDRESS::"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",

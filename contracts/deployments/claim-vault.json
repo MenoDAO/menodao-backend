@@ -1,0 +1,10 @@
+{
+  "network": "baseSepolia",
+  "chainId": 84532,
+  "contractAddress": "0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002",
+  "agentSigner": "0x88f8E8d1faC4809B662DFD526456DB7FfdA69465",
+  "deployer": "0x88f8E8d1faC4809B662DFD526456DB7FfdA69465",
+  "deployedAt": "2026-04-13T07:24:07.506Z",
+  "txHash": "0x1a3f40dfe0657d3db2c9e37f4bca19f9322b009076c7ac7b1125d9aac2f84ac0",
+  "explorerUrl": "https://sepolia.basescan.org/address/0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002"
+}
