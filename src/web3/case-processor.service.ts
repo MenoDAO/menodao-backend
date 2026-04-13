@@ -4,14 +4,15 @@ import { FilecoinService } from './filecoin.service';
 import { BlockchainCaseService } from './blockchain-case.service';
 import { AiVerifierService } from './ai-verifier.service';
 import { HypercertService } from './hypercert.service';
+import { EIP712SignerService } from './eip712-signer.service';
 
 @Injectable()
 export class CaseProcessorService {
   private readonly logger = new Logger(CaseProcessorService.name);
 
-  // Fallback clinic wallet for demo when no real wallet is configured
+  // Demo clinic wallet — receives payouts when no real clinic wallet is configured
   private readonly DEMO_CLINIC_ADDRESS =
-    '0x000000000000000000000000000000000000dEaD';
+    '0x9091062cbC1f0F49D2477c928e538B3E19AC11eF';
 
   constructor(
     private prisma: PrismaService,
@@ -19,6 +20,7 @@ export class CaseProcessorService {
     private blockchainCase: BlockchainCaseService,
     private aiVerifier: AiVerifierService,
     private hypercert: HypercertService,
+    private eip712Signer: EIP712SignerService,
   ) {}
 
   /**
@@ -167,8 +169,34 @@ export class CaseProcessorService {
         data: { caseOnChainId: caseId, onChainTxHash: submitTxHash },
       });
 
-      // Step 3: Approve and trigger on-chain payout
-      const payoutTxHash = await this.blockchainCase.approveAndPay(caseId);
+      // Step 3: Sign claim with EIP-712 and route payout through MenoDAOClaimVault
+      let payoutTxHash: string;
+      try {
+        const signedClaim = await this.eip712Signer.signClaim({
+          caseOnChainId: caseId,
+          visitId,
+          clinicAddress,
+          amountWei: this.blockchainCase.getPayoutWei(),
+          aiResult,
+          beforeCID: visit.beforeCID,
+          afterCID: visit.afterCID,
+        });
+        payoutTxHash = await this.blockchainCase.submitSignedClaim(signedClaim);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('Claim already processed')) {
+          // Pipeline was retried after a prior successful payout — treat as success
+          this.logger.warn(
+            `Claim already processed for visit ${visitId} — treating as VERIFIED`,
+          );
+          await this.prisma.visit.update({
+            where: { id: visitId },
+            data: { web3VerificationStatus: 'VERIFIED' },
+          });
+          return;
+        }
+        throw err;
+      }
 
       // Step 4: Mint Hypercert with full member + clinic context
       const hypercertData = await this.hypercert.mintHypercert({

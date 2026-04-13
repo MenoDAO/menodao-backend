@@ -36,7 +36,7 @@ module.exports = {
       accounts: [PRIVATE_KEY],
     },
     baseSepolia: {
-      url: 'https://sepolia.base.org',
+      url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
       chainId: 84532,
       accounts: [PRIVATE_KEY],
     },

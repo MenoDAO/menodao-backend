@@ -4,6 +4,7 @@ import { BlockchainCaseService } from './blockchain-case.service';
 import { AiVerifierService } from './ai-verifier.service';
 import { HypercertService } from './hypercert.service';
 import { CaseProcessorService } from './case-processor.service';
+import { EIP712SignerService } from './eip712-signer.service';
 import { Web3CasesController } from './web3-cases.controller';
 import { StaffModule } from '../staff/staff.module';
 
@@ -15,8 +16,9 @@ import { StaffModule } from '../staff/staff.module';
     BlockchainCaseService,
     AiVerifierService,
     HypercertService,
+    EIP712SignerService,
     CaseProcessorService,
   ],
-  exports: [CaseProcessorService],
+  exports: [CaseProcessorService, EIP712SignerService],
 })
 export class Web3Module {}

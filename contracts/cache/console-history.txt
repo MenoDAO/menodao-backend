@@ -1,0 +1,17 @@
+// should return 10000000000000000n (0.01 ETH in wei)
+await ethers.provider.getBalance("0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002")
+})
+  value: ethers.parseEther("0.005")
+  to: "0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002",
+await deployer.sendTransaction({
+const [deployer] = await ethers.getSigners()
+clear()
+clear
+const [deployer] = await ethers.getSigners()await deployer.sendTransaction({  to: "0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002",  value: ethers.parseEther("0.005")})
+})
+  value: ethers.parseEther("0.01")
+  to: "0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002",
+await deployer.sendTransaction({
+const [deployer] = await ethers.getSigners()
+await vault.addClinic("0x9091062cbC1f0F49D2477c928e538B3E19AC11eF")
+const vault = await ethers.getContractAt("MenoDAOClaimVault", "0x22F360D9C3F84d5C6aC8dc450Dc6582a394dA002")
