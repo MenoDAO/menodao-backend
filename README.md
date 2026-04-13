@@ -1,8 +1,8 @@
 # MenoDAO — Verifiable Dental Care Impact on Filecoin
 
-**Live platform:** [https://app.menodao.org](https://app.menodao.org) | **Dev:** [https://dev.menodao.org](https://dev.menodao.org)
+**Prototype:** [https://app.menodao.org](https://app.menodao.org) 
 
-**Contract on Filecoin Calibration Testnet:**
+**Contract on Filecoin Calibration:**
 [`0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B`](https://calibration.filfox.info/en/address/0x660BDB1B39B5c211cFca912Fd0452E0c7ad5907B)
 
 **Tracks:** Filecoin (Data Integration + Agentic Impact Evaluation) · PL Genesis Hackathon
@@ -49,7 +49,7 @@ end-to-end impact verification pipeline that runs automatically after every trea
 Staff Treatment Room (Next.js)
         │
         ▼ upload before/after dental images
-Filecoin/IPFS (Pinata → migrating to Storacha)
+Filecoin/IPFS (Storacha)
         │ returns content-addressed CIDs
         ▼
 NestJS Backend (AWS ECS, Filecoin Calibration)
@@ -78,7 +78,7 @@ NestJS Backend (AWS ECS, Filecoin Calibration)
 ### 1. Filecoin Image Storage — Data Integration
 
 When a clinic staff member completes a treatment, they upload before/after dental images from the
-treatment room UI. These are pinned to IPFS via Pinata (migrating to Storacha/web3.storage), and
+treatment room UI. These are pinned to IPFS via Storacha, and
 the returned CIDs are stored on the visit record in PostgreSQL.
 
 ```typescript
@@ -167,7 +167,7 @@ what, when, and with what evidence:
 }
 ```
 
-This metadata is pinned to IPFS via Pinata, giving it a permanent CID. The full metadata URL is
+This metadata is pinned to IPFS via Storacha, giving it a permanent CID. The full metadata URL is
 stored on the visit record and surfaced to the member on their dashboard. On-chain ERC-1155 minting
 via the Hypercerts SDK is architecturally ready — the `mintHypercert()` method has the full
 structured schema and the SDK call is stubbed pending their stable Node.js server-side support.
@@ -202,7 +202,7 @@ transparency into social proof.
 
 **The admin dashboard shows live web3 metrics.** Total cases analyzed, success rate, pending
 verifications, and links to every on-chain transaction — all visible at a glance for monitoring
-and investor reporting.
+and reporting.
 
 ---
 
@@ -228,7 +228,7 @@ evaluations."
 
 - ✅ Filecoin Pin used for image storage and Hypercert metadata
 - ✅ Deployed to Filecoin Calibration Testnet (chainId 314159)
-- ✅ Working frontend demo at [https://dev.menodao.org](https://dev.menodao.org)
+- ✅ Working prototype at [https://app.menodao.org](https://app.menodao.org)
 - ✅ Open-source code on GitHub
 - ✅ Demo video (see submission)
 
@@ -289,8 +289,6 @@ needing real tFIL or a Pinata account.
 
 ## What's Next
 
-- **Storacha migration:** Switching from Pinata to Storacha (web3.storage) for native Filecoin
-  storage deals with better redundancy guarantees. Pending account setup.
 - **Real vision model:** Wiring in a dental-specific vision model for production AI verification.
   The architecture is ready — just needs `VISION_API_KEY` and `VISION_API_ENDPOINT`.
 - **Hypercerts SDK on-chain minting:** The metadata schema is complete and aligned with the
@@ -309,7 +307,7 @@ needing real tFIL or a Pinata account.
 | Database        | PostgreSQL + Prisma ORM                           |
 | Frontend        | Next.js 14, Tailwind CSS, AWS Amplify             |
 | Payments        | SasaPay M-Pesa (STK Push)                         |
-| IPFS            | Pinata (→ Storacha)                               |
+| IPFS            | Storacha                                          |
 | Smart Contracts | Solidity 0.8.24, Hardhat, ethers.js v6            |
 | Blockchain      | Filecoin Calibration Testnet (chainId 314159)     |
 | AI Agent        | Configurable vision API, `did:menodao:verifier-1` |
@@ -320,8 +318,6 @@ needing real tFIL or a Pinata account.
 ## Contact
 
 - Platform: [https://menodao.org](https://menodao.org)
-- Email: hello@menodao.org
+- Email: said@menodao.org
 
----
 
-_Built for the PL Genesis Hackathon — Filecoin Track_
