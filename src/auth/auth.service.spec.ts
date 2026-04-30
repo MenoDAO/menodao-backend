@@ -194,6 +194,7 @@ describe('AuthService', () => {
       expect(mockSmsService.sendOtp).toHaveBeenCalledWith(
         '+254712345678',
         expect.stringMatching(/^\d{6}$/),
+        undefined,
       );
     });
 

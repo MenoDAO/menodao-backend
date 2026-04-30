@@ -3,6 +3,7 @@ import { ClaimsService } from './claims.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { SasaPayService } from '../sasapay/sasapay.service';
+import { SmsService } from '../sms/sms.service';
 import { ConfigService } from '@nestjs/config';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
@@ -41,6 +42,15 @@ describe('ClaimsService', () => {
     }),
   };
 
+  const mockSmsService = {
+    sendOtp: jest.fn(),
+    sendWelcome: jest.fn(),
+    sendSubscriptionConfirmation: jest.fn(),
+    sendPaymentReminder: jest.fn(),
+    sendClaimUpdate: jest.fn(),
+    sendBulkSms: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,6 +59,7 @@ describe('ClaimsService', () => {
         { provide: BlockchainService, useValue: mockBlockchainService },
         { provide: SasaPayService, useValue: mockSasaPayService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: SmsService, useValue: mockSmsService },
       ],
     }).compile();
 
@@ -57,6 +68,25 @@ describe('ClaimsService', () => {
     blockchainService = module.get(BlockchainService);
 
     jest.clearAllMocks();
+
+    // Re-apply default implementations after clearAllMocks
+    mockSasaPayService.isConfigured.mockReturnValue(false);
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'NODE_ENV') return 'development';
+      return undefined;
+    });
+    mockSmsService.sendOtp.mockResolvedValue({ success: true });
+    mockSmsService.sendWelcome.mockResolvedValue({ success: true });
+    mockSmsService.sendSubscriptionConfirmation.mockResolvedValue({
+      success: true,
+    });
+    mockSmsService.sendPaymentReminder.mockResolvedValue({ success: true });
+    mockSmsService.sendClaimUpdate.mockResolvedValue({ success: true });
+    mockSmsService.sendBulkSms.mockResolvedValue({
+      total: 0,
+      successful: 0,
+      failed: 0,
+    });
   });
 
   describe('createClaim', () => {
@@ -212,7 +242,11 @@ describe('ClaimsService', () => {
           status: 'PENDING',
           memberId: 'member-1',
           amount: 1000,
-          member: { id: 'member-1', subscription: { tier: 'GOLD' } },
+          member: {
+            id: 'member-1',
+            phoneNumber: '+254700000001',
+            subscription: { tier: 'GOLD' },
+          },
         })
         // Second findUnique for processDisbursement
         .mockResolvedValueOnce({
@@ -220,11 +254,16 @@ describe('ClaimsService', () => {
           status: 'APPROVED',
           memberId: 'member-1',
           amount: 1000,
-          member: { id: 'member-1' },
+          member: { id: 'member-1', phoneNumber: '+254700000001' },
         });
       mockPrismaService.claim.findMany.mockResolvedValue([]);
       mockPrismaService.claim.update
-        .mockResolvedValueOnce({ id: 'claim-1', status: 'APPROVED' }) // approve
+        .mockResolvedValueOnce({
+          id: 'claim-1',
+          status: 'APPROVED',
+          claimType: 'DENTAL_CHECKUP',
+          member: { phoneNumber: '+254700000001', preferredLanguage: 'en' },
+        }) // approve
         .mockResolvedValueOnce({ id: 'claim-1', status: 'PROCESSING' }) // processing
         .mockResolvedValueOnce({ id: 'claim-1', status: 'DISBURSED' }); // disbursed
 
@@ -331,7 +370,9 @@ describe('ClaimsService', () => {
       mockPrismaService.claim.update.mockResolvedValue({
         id: 'claim-1',
         status: 'REJECTED',
+        claimType: 'DENTAL_CHECKUP',
         rejectionReason: 'Insufficient documentation',
+        member: { phoneNumber: '+254700000001', preferredLanguage: 'en' },
       });
 
       const result = await service.rejectClaim(
