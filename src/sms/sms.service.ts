@@ -279,9 +279,15 @@ export class SmsService {
   /**
    * Send welcome SMS after successful registration
    */
-  async sendWelcome(phoneNumber: string, name?: string): Promise<SMSResult> {
-    const greeting = name ? `Hello ${name}` : 'Hello';
-    const message = `${greeting}! Welcome to MenoDAO. Your dental health membership is now active. Download the app or visit menodao.org to get started.`;
+  async sendWelcome(
+    phoneNumber: string,
+    name?: string,
+    preferredLanguage?: string | null,
+  ): Promise<SMSResult> {
+    const isSwahili = preferredLanguage === 'sw';
+    const message = isSwahili
+      ? `${name ? `Habari ${name}` : 'Habari'}! Karibu MenoDAO. Uanachama wako wa afya ya meno umewashwa. Pakua programu au tembelea menodao.org kuanza.`
+      : `${name ? `Hello ${name}` : 'Hello'}! Welcome to MenoDAO. Your dental health membership is now active. Download the app or visit menodao.org to get started.`;
     return this.sendSms(phoneNumber, message);
   }
 
@@ -292,8 +298,12 @@ export class SmsService {
     phoneNumber: string,
     tier: string,
     amount: number,
+    preferredLanguage?: string | null,
   ): Promise<SMSResult> {
-    const message = `Your MenoDAO ${tier} subscription is now active! Monthly contribution: KES ${amount}. Thank you for joining the dental health community.`;
+    const isSwahili = preferredLanguage === 'sw';
+    const message = isSwahili
+      ? `Usajili wako wa MenoDAO ${tier} umewashwa! Mchango wa kila mwezi: KES ${amount}. Asante kwa kujiunga na jamii ya afya ya meno.`
+      : `Your MenoDAO ${tier} subscription is now active! Monthly contribution: KES ${amount}. Thank you for joining the dental health community.`;
     return this.sendSms(phoneNumber, message);
   }
 
@@ -304,8 +314,12 @@ export class SmsService {
     phoneNumber: string,
     amount: number,
     dueDate: string,
+    preferredLanguage?: string | null,
   ): Promise<SMSResult> {
-    const message = `Reminder: Your MenoDAO contribution of KES ${amount} is due on ${dueDate}. Pay now to maintain your membership benefits.`;
+    const isSwahili = preferredLanguage === 'sw';
+    const message = isSwahili
+      ? `Kumbusho: Mchango wako wa MenoDAO wa KES ${amount} unastahili tarehe ${dueDate}. Lipa sasa kudumisha faida za uanachama wako.`
+      : `Reminder: Your MenoDAO contribution of KES ${amount} is due on ${dueDate}. Pay now to maintain your membership benefits.`;
     return this.sendSms(phoneNumber, message);
   }
 
@@ -316,8 +330,25 @@ export class SmsService {
     phoneNumber: string,
     status: string,
     claimType: string,
+    preferredLanguage?: string | null,
   ): Promise<SMSResult> {
-    const message = `Your MenoDAO ${claimType} claim has been ${status.toLowerCase()}. Check the app for details.`;
+    const isSwahili = preferredLanguage === 'sw';
+    const statusMap: Record<string, { en: string; sw: string }> = {
+      approved: { en: 'approved', sw: 'imeidhinishwa' },
+      rejected: { en: 'rejected', sw: 'imekataliwa' },
+      disbursed: {
+        en: 'disbursed — payment sent to your M-Pesa',
+        sw: 'imelipwa — malipo yametumwa kwenye M-Pesa yako',
+      },
+      processing: { en: 'being processed', sw: 'inashughulikiwa' },
+    };
+    const statusText = statusMap[status.toLowerCase()] || {
+      en: status.toLowerCase(),
+      sw: status.toLowerCase(),
+    };
+    const message = isSwahili
+      ? `Dai lako la MenoDAO la ${claimType} ${statusText.sw}. Angalia programu kwa maelezo zaidi.`
+      : `Your MenoDAO ${claimType} claim has been ${statusText.en}. Check the app for details.`;
     return this.sendSms(phoneNumber, message);
   }
   /**

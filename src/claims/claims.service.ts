@@ -11,6 +11,7 @@ import {
   SasaPayService,
   SasaPayB2CCallbackData,
 } from '../sasapay/sasapay.service';
+import { SmsService } from '../sms/sms.service';
 import { ClaimType, ClaimStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -31,6 +32,7 @@ export class ClaimsService {
     private blockchainService: BlockchainService,
     private sasaPayService: SasaPayService,
     private configService: ConfigService,
+    private smsService: SmsService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -151,6 +153,20 @@ export class ClaimsService {
       include: { member: true },
     });
 
+    // Notify member via SMS
+    try {
+      await this.smsService.sendClaimUpdate(
+        approved.member.phoneNumber,
+        'approved',
+        approved.claimType,
+        (approved.member as any).preferredLanguage,
+      );
+    } catch (smsErr) {
+      this.logger.error(
+        `[SMS] Failed to send claim approval notification: ${smsErr.message}`,
+      );
+    }
+
     // Trigger disbursal automatically
     await this.processDisbursement(claimId);
 
@@ -179,15 +195,32 @@ export class ClaimsService {
       throw new BadRequestException('A rejection reason is required');
     }
 
-    return this.prisma.claim.update({
-      where: { id: claimId },
-      data: {
-        status: ClaimStatus.REJECTED,
-        rejectionReason: reason.trim(),
-        processedAt: new Date(),
-      },
-      include: { member: true },
-    });
+    return this.prisma.claim
+      .update({
+        where: { id: claimId },
+        data: {
+          status: ClaimStatus.REJECTED,
+          rejectionReason: reason.trim(),
+          processedAt: new Date(),
+        },
+        include: { member: true },
+      })
+      .then(async (rejected) => {
+        // Notify member via SMS
+        try {
+          await this.smsService.sendClaimUpdate(
+            rejected.member.phoneNumber,
+            'rejected',
+            rejected.claimType,
+            (rejected.member as any).preferredLanguage,
+          );
+        } catch (smsErr) {
+          this.logger.error(
+            `[SMS] Failed to send claim rejection notification: ${smsErr.message}`,
+          );
+        }
+        return rejected;
+      });
   }
 
   /**
@@ -358,6 +391,20 @@ export class ClaimsService {
         this.logger.log(
           `Claim ${claim.id} disbursed successfully. M-Pesa receipt: ${MpesaReceiptNumber}, amount: ${Amount}`,
         );
+
+        // Notify member via SMS
+        try {
+          await this.smsService.sendClaimUpdate(
+            claim.member.phoneNumber,
+            'disbursed',
+            claim.claimType,
+            (claim.member as any).preferredLanguage,
+          );
+        } catch (smsErr) {
+          this.logger.error(
+            `[SMS] Failed to send disbursal notification: ${smsErr.message}`,
+          );
+        }
 
         return {
           success: true,
