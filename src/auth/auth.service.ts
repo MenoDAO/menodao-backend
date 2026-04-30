@@ -127,8 +127,12 @@ export class AuthService {
       },
     });
 
-    // Send OTP via SMS
-    const smsResult = await this.smsService.sendOtp(normalizedPhone, code);
+    // Send OTP via SMS — use member's preferred language
+    const smsResult = await this.smsService.sendOtp(
+      normalizedPhone,
+      code,
+      member?.preferredLanguage,
+    );
 
     if (!smsResult.success) {
       // Log the error but don't expose internal details

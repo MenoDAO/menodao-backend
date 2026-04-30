@@ -262,10 +262,17 @@ export class SmsService {
   }
 
   /**
-   * Send OTP code via SMS
+   * Send OTP code via SMS — uses member's preferred language if provided
    */
-  async sendOtp(phoneNumber: string, code: string): Promise<SMSResult> {
-    const message = `Your MenoDAO verification code is: ${code}. Valid for 5 minutes. Do not share this code.`;
+  async sendOtp(
+    phoneNumber: string,
+    code: string,
+    preferredLanguage?: string | null,
+  ): Promise<SMSResult> {
+    const isSwahili = preferredLanguage === 'sw';
+    const message = isSwahili
+      ? `Nambari yako ya uthibitisho wa MenoDAO ni: ${code}. Inatumika kwa dakika 5. Usishiriki nambari hii.`
+      : `Your MenoDAO verification code is: ${code}. Valid for 5 minutes. Do not share this code.`;
     return this.sendSms(phoneNumber, message);
   }
 
