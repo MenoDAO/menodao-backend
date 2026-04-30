@@ -1,4 +1,4 @@
-import { IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, IsIn } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateMemberDto {
@@ -16,4 +16,13 @@ export class UpdateMemberDto {
   @IsString()
   @IsOptional()
   preferredChain?: string;
+
+  @ApiPropertyOptional({
+    enum: ['en', 'sw'],
+    description: 'Preferred language for UI and notifications',
+  })
+  @IsString()
+  @IsOptional()
+  @IsIn(['en', 'sw'])
+  preferredLanguage?: string;
 }

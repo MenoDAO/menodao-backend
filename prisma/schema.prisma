@@ -17,9 +17,10 @@ model Member {
   walletAddress  String?  @unique
   isVerified     Boolean  @default(false)
   branch         String?
-  preferredChain String?  @default("celo")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  preferredChain    String?  @default("celo")
+  preferredLanguage String?  @default("en")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   // Champion Referral System fields
   referralCode         String?  @unique

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { MembersService } from './members.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotFoundException } from '@nestjs/common';
+import * as fc from 'fast-check';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -165,5 +166,72 @@ describe('MembersService', () => {
       expect(result.data).toEqual(mockTxs);
       expect(result.meta.totalPages).toBe(2);
     });
+  });
+});
+
+// Feature: performance-and-i18n-improvements, Property 7: Backend preferredLanguage round-trip
+describe('preferredLanguage round-trip (Property 7)', () => {
+  let service: MembersService;
+
+  const mockPrismaService = {
+    member: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    contribution: { findMany: jest.fn(), count: jest.fn() },
+    claim: { findMany: jest.fn(), count: jest.fn() },
+    blockchainTransaction: { findMany: jest.fn(), count: jest.fn() },
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MembersService,
+        { provide: PrismaService, useValue: mockPrismaService },
+      ],
+    }).compile();
+
+    service = module.get<MembersService>(MembersService);
+    jest.clearAllMocks();
+  });
+
+  it('Property 7: preferredLanguage round-trip - saved value is returned on fetch', async () => {
+    // Validates: Requirements 2.4, 2.5
+    await fc.assert(
+      fc.asyncProperty(fc.constantFrom('en', 'sw'), async (locale) => {
+        const memberId = 'member-1';
+
+        // Mock update to return the member with the saved preferredLanguage
+        const updatedMember = {
+          id: memberId,
+          preferredLanguage: locale,
+          subscription: { tier: 'SILVER' },
+        };
+        mockPrismaService.member.update.mockResolvedValue(updatedMember);
+
+        // Mock findUnique to return the member with the saved preferredLanguage
+        const fetchedMember = {
+          id: memberId,
+          preferredLanguage: locale,
+          subscription: { tier: 'SILVER' },
+          contributions: [],
+          claims: [],
+          nfts: [],
+        };
+        mockPrismaService.member.findUnique.mockResolvedValue(fetchedMember);
+
+        // Call update with the preferredLanguage
+        const updateResult = await service.update(memberId, {
+          preferredLanguage: locale,
+        });
+
+        // Call findById to fetch the member
+        const fetchResult = await service.findById(memberId);
+
+        // Assert the returned preferredLanguage equals the saved value
+        expect(updateResult.preferredLanguage).toBe(locale);
+        expect(fetchResult.preferredLanguage).toBe(locale);
+      }),
+    );
   });
 });

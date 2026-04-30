@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  SmsTemplateService,
+  SmsTemplateKey,
+  SmsTemplateVars,
+} from './sms-templates';
 
 export interface DeliveryResult {
   success: boolean;
@@ -205,6 +210,7 @@ class AWSSNSSMSProvider implements SMSProvider {
 export class SMSService {
   private readonly logger = new Logger(SMSService.name);
   private provider: SMSProvider;
+  private readonly smsTemplateService = new SmsTemplateService();
 
   constructor(private configService: ConfigService) {
     this.initializeProvider();
@@ -311,6 +317,33 @@ export class SMSService {
         timestamp: new Date(),
       };
     }
+  }
+
+  /**
+   * Send a templated SMS using the bilingual SMS template catalogue.
+   * Renders the template for the given key and preferred language, then
+   * delegates to sendSMS() for delivery.
+   *
+   * Requirements: 3.1, 3.2, 3.5
+   *
+   * @param phone - Phone number in E.164 format
+   * @param key - Template key from the SMS catalogue
+   * @param vars - Variables to interpolate into the template
+   * @param preferredLanguage - Optional language preference ('sw' for Swahili, defaults to 'en')
+   * @returns DeliveryResult with success status and details
+   */
+  async sendTemplatedSMS(
+    phone: string,
+    key: SmsTemplateKey,
+    vars: SmsTemplateVars,
+    preferredLanguage?: string | null,
+  ): Promise<DeliveryResult> {
+    const message = this.smsTemplateService.render(
+      key,
+      preferredLanguage,
+      vars,
+    );
+    return this.sendSMS(phone, message);
   }
 
   /**
