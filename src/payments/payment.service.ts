@@ -379,7 +379,14 @@ export class PaymentService {
                 day: 'numeric',
               });
 
-              const message = `Dear ${subscription.member.fullName || 'Member'}, Your MenoDAO subscription has been upgraded to Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
+              const isSwahili =
+                (subscription.member as any).preferredLanguage === 'sw';
+              const tierName = `Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}`;
+              const memberName = subscription.member.fullName || 'Member';
+
+              const message = isSwahili
+                ? `Habari ${memberName}, Usajili wako wa MenoDAO umeboreshwa hadi ${tierName}. Faida zako mpya zimeanza. Unaweza kuanza kudai tarehe ${formattedDate} (siku ${waitingDays} za kusubiri). Asante kwa kuchagua MenoDAO!`
+                : `Dear ${memberName}, Your MenoDAO subscription has been upgraded to ${tierName}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
 
               await this.smsService.sendSms(
                 subscription.member.phoneNumber,
@@ -453,9 +460,13 @@ export class PaymentService {
                 day: 'numeric',
               });
 
+              const isSwahili =
+                (subscription.member as any).preferredLanguage === 'sw';
               const tierName = `Meno${subscription.tier.charAt(0) + subscription.tier.slice(1).toLowerCase()}`;
-              const memberName = subscription.member.fullName || 'Member';
-              const message = `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
+
+              const message = isSwahili
+                ? `Karibu MenoDAO! Usajili wako wa ${tierName} umewashwa. Unaweza kuanza kudai tarehe ${formattedDate} (siku ${waitingDays} za kusubiri). Tembelea dashibodi yako kuona faida zako. Asante kwa kujiunga nasi!`
+                : `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
 
               await this.smsService.sendSms(
                 subscription.member.phoneNumber,
