@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -23,6 +24,7 @@ import {
 } from './dto/create-camp.dto';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
 import { JwtOrStaffAuthGuard } from '../auth/guards/jwt-or-staff-auth.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Camps')
 @Controller('camps')
@@ -71,6 +73,13 @@ export class CampsController {
       parseFloat(lon),
       parseFloat(radius),
     );
+  }
+
+  @Get('my-registrations')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get current member camp registrations' })
+  getMyRegistrations(@Request() req: { user: { sub: string } }) {
+    return this.campsService.getMemberRegistrations(req.user.sub);
   }
 
   @Get('member/:memberId')
