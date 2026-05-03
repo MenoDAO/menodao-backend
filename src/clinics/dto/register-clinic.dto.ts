@@ -5,7 +5,9 @@ import {
   IsBoolean,
   IsOptional,
   IsInt,
+  IsNumber,
   Min,
+  Max,
   IsEnum,
   IsArray,
 } from 'class-validator';
@@ -112,4 +114,19 @@ export class RegisterClinicDto {
   @ApiProperty({ example: true })
   @IsBoolean()
   agreedToNoChargePolicy: boolean;
+
+  // Optional geo fields (can be submitted from the registration form)
+  @ApiPropertyOptional({ example: -1.2921 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ example: 36.8219 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
 }

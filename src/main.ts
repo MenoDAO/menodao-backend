@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import * as express from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -48,6 +49,19 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3000;
+
+  // Preserve raw body for HMAC validation on the webhook route.
+  // This must be registered before app.listen() so it runs ahead of the
+  // NestJS global body parser on this specific route.
+  app.use('/whatsapp/webhook', (req: any, res: any, next: any) => {
+    express.raw({ type: 'application/json' })(req, res, (err) => {
+      if (err) return next(err);
+      req.rawBody = req.body;
+      req.body = JSON.parse(req.body.toString());
+      next();
+    });
+  });
+
   await app.listen(port);
   console.log(`🚀 MenoDAO API running on http://localhost:${port}`);
   console.log(`📚 API Docs available at http://localhost:${port}/api/docs`);

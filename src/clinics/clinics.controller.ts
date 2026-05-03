@@ -8,6 +8,8 @@ import {
   UseGuards,
   Request,
   HttpCode,
+  BadRequestException,
+  Patch,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,6 +19,8 @@ import {
 } from '@nestjs/swagger';
 import { ClinicsService } from './clinics.service';
 import { RegisterClinicDto } from './dto/register-clinic.dto';
+import { UpdateClinicDto } from './dto/update-clinic.dto';
+import { AdminCreateClinicDto } from './dto/admin-create-clinic.dto';
 import { AdminAuthGuard } from '../admin/guards/admin-auth.guard';
 import { ClinicStatus } from '@prisma/client';
 
@@ -32,6 +36,43 @@ export class ClinicsController {
   @ApiOperation({ summary: 'Register a new partner clinic (public)' })
   async register(@Body() dto: RegisterClinicDto) {
     return this.clinicsService.registerClinic(dto);
+  }
+
+  @Get('map')
+  @ApiOperation({ summary: 'Get all approved clinics for the member map' })
+  async getMapClinics() {
+    return this.clinicsService.getMapClinics();
+  }
+
+  @Get('nearby')
+  @ApiOperation({
+    summary: 'Get approved clinics near a location, sorted by distance',
+  })
+  @ApiQuery({ name: 'lat', type: Number, required: true })
+  @ApiQuery({ name: 'lng', type: Number, required: true })
+  @ApiQuery({
+    name: 'radius',
+    type: Number,
+    required: false,
+    description: 'Radius in km (default 50)',
+  })
+  async getNearbyClinics(
+    @Query('lat') lat: string,
+    @Query('lng') lng: string,
+    @Query('radius') radius?: string,
+  ) {
+    if (!lat || !lng) {
+      throw new BadRequestException(
+        'lat and lng query parameters are required',
+      );
+    }
+    const latNum = parseFloat(lat);
+    const lngNum = parseFloat(lng);
+    if (isNaN(latNum) || isNaN(lngNum)) {
+      throw new BadRequestException('lat and lng must be valid numbers');
+    }
+    const radiusNum = radius ? parseFloat(radius) : 50;
+    return this.clinicsService.getNearbyClinics(latNum, lngNum, radiusNum);
   }
 
   @Get('ping')
@@ -57,10 +98,32 @@ export class AdminClinicsController {
     return this.clinicsService.listClinics(status);
   }
 
+  @Post()
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Admin-create a new clinic directly' })
+  async adminCreateClinic(
+    @Body() dto: AdminCreateClinicDto,
+    @Request() req: { admin: { id: string } },
+  ) {
+    return this.clinicsService.adminCreateClinic(dto, req.admin.id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get clinic details (admin)' })
   async getClinic(@Param('id') id: string) {
     return this.clinicsService.getClinic(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update clinic fields (admin)' })
+  async updateClinic(@Param('id') id: string, @Body() dto: UpdateClinicDto) {
+    return this.clinicsService.updateClinic(id, dto);
+  }
+
+  @Get(':id/branches')
+  @ApiOperation({ summary: 'Get all branch clinics for a parent clinic' })
+  async getClinicBranches(@Param('id') id: string) {
+    return this.clinicsService.getClinicBranches(id);
   }
 
   @Post(':id/approve')

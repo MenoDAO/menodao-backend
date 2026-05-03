@@ -11,6 +11,19 @@ import { CreateDependantDto } from './dto/create-dependant.dto';
 export class MembersService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Look up a member by their E.164 phone number.
+   * Returns null if not found (does not throw).
+   */
+  async findByPhone(phoneNumber: string) {
+    return this.prisma.member.findUnique({
+      where: { phoneNumber },
+      include: {
+        subscription: true,
+      },
+    });
+  }
+
   async findById(id: string) {
     const member = await this.prisma.member.findUnique({
       where: { id },

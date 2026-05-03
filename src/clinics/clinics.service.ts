@@ -8,8 +8,27 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
 import { RegisterClinicDto } from './dto/register-clinic.dto';
+import { UpdateClinicDto } from './dto/update-clinic.dto';
+import { AdminCreateClinicDto } from './dto/admin-create-clinic.dto';
 import { ClinicStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { haversineKm } from '../common/utils/haversine';
+
+export interface ClinicMapRecord {
+  id: string;
+  name: string;
+  subCounty: string;
+  physicalLocation: string;
+  operatingHours: string;
+  whatsappNumber: string;
+  googleMapsLink: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface ClinicWithDistance extends ClinicMapRecord {
+  distanceKm: number;
+}
 
 @Injectable()
 export class ClinicsService {
@@ -55,6 +74,8 @@ export class ClinicsService {
         specializedServices: dto.specializedServices,
         agreedToRateCard: dto.agreedToRateCard,
         agreedToNoChargePolicy: dto.agreedToNoChargePolicy,
+        latitude: dto.latitude ?? null,
+        longitude: dto.longitude ?? null,
       },
     });
 
@@ -229,6 +250,174 @@ export class ClinicsService {
 
     this.logger.log(`Clinic ${clinic.name} rejected: ${reason}`);
     return { success: true, message: 'Clinic rejected' };
+  }
+
+  /**
+   * Public: Get all APPROVED clinics for the member map (includes null-coord clinics)
+   */
+  async getMapClinics(): Promise<ClinicMapRecord[]> {
+    const clinics = await this.prisma.clinic.findMany({
+      where: { status: 'APPROVED' },
+      select: {
+        id: true,
+        name: true,
+        subCounty: true,
+        physicalLocation: true,
+        operatingHours: true,
+        whatsappNumber: true,
+        googleMapsLink: true,
+        latitude: true,
+        longitude: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+    return clinics;
+  }
+
+  /**
+   * Public: Get APPROVED geo-located clinics within radius km, sorted by distance
+   */
+  async getNearbyClinics(
+    lat: number,
+    lng: number,
+    radius: number = 50,
+  ): Promise<ClinicWithDistance[]> {
+    const clinics = await this.prisma.clinic.findMany({
+      where: {
+        status: 'APPROVED',
+        latitude: { not: null },
+        longitude: { not: null },
+      },
+      select: {
+        id: true,
+        name: true,
+        subCounty: true,
+        physicalLocation: true,
+        operatingHours: true,
+        whatsappNumber: true,
+        googleMapsLink: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+
+    const withDistance: ClinicWithDistance[] = clinics
+      .filter((c) => c.latitude != null && c.longitude != null)
+      .map((c) => ({
+        ...c,
+        latitude: c.latitude as number,
+        longitude: c.longitude as number,
+        distanceKm:
+          Math.round(
+            haversineKm(lat, lng, c.latitude as number, c.longitude as number) *
+              100,
+          ) / 100,
+      }))
+      .filter((c) => c.distanceKm <= radius)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    return withDistance;
+  }
+
+  /**
+   * Admin: Partial update of any clinic field
+   */
+  async updateClinic(id: string, dto: UpdateClinicDto) {
+    const clinic = await this.prisma.clinic.findUnique({ where: { id } });
+    if (!clinic) throw new NotFoundException('Clinic not found');
+
+    // Validate parentClinicId if provided
+    if (dto.parentClinicId) {
+      const parent = await this.prisma.clinic.findUnique({
+        where: { id: dto.parentClinicId },
+      });
+      if (!parent) {
+        throw new BadRequestException('Parent clinic not found');
+      }
+      if (dto.parentClinicId === id) {
+        throw new BadRequestException('A clinic cannot be its own parent');
+      }
+    }
+
+    const updated = await this.prisma.clinic.update({
+      where: { id },
+      data: dto as any,
+    });
+
+    this.logger.log(`Clinic ${id} updated`);
+    return updated;
+  }
+
+  /**
+   * Admin: Create a clinic directly (bypasses self-registration)
+   */
+  async adminCreateClinic(dto: AdminCreateClinicDto, adminId: string) {
+    // Validate parentClinicId if provided
+    if (dto.parentClinicId) {
+      const parent = await this.prisma.clinic.findUnique({
+        where: { id: dto.parentClinicId },
+      });
+      if (!parent) {
+        throw new BadRequestException('Parent clinic not found');
+      }
+    }
+
+    const targetStatus = dto.status ?? 'PENDING';
+
+    const clinic = await this.prisma.clinic.create({
+      data: {
+        name: dto.name,
+        subCounty: dto.subCounty,
+        physicalLocation: dto.physicalLocation,
+        googleMapsLink: dto.googleMapsLink,
+        operatingHours: dto.operatingHours,
+        operatesOnWeekends: dto.operatesOnWeekends,
+        leadDentistName: dto.leadDentistName,
+        ownerPhone: dto.ownerPhone,
+        managerName: dto.managerName,
+        whatsappNumber: dto.whatsappNumber,
+        email: dto.email,
+        mpesaTillOrPaybill: dto.mpesaTillOrPaybill,
+        tillPaybillName: dto.tillPaybillName,
+        bankAccountName: dto.bankAccountName,
+        bankAccountNumber: dto.bankAccountNumber,
+        kmpdcRegNumber: dto.kmpdcRegNumber,
+        activeDentalChairs: dto.activeDentalChairs,
+        xrayCapability: dto.xrayCapability,
+        specializedServices: dto.specializedServices,
+        agreedToRateCard: dto.agreedToRateCard,
+        agreedToNoChargePolicy: dto.agreedToNoChargePolicy,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        branchName: dto.branchName,
+        parentClinicId: dto.parentClinicId,
+        status: targetStatus,
+      },
+    });
+
+    this.logger.log(
+      `Clinic ${clinic.name} created by admin ${adminId} with status ${targetStatus}`,
+    );
+
+    // If created as APPROVED, generate staff credentials
+    if (targetStatus === 'APPROVED') {
+      await this.approveClinic(clinic.id, adminId);
+    }
+
+    return clinic;
+  }
+
+  /**
+   * Admin: Get all branch clinics for a given parent clinic
+   */
+  async getClinicBranches(id: string) {
+    const parent = await this.prisma.clinic.findUnique({ where: { id } });
+    if (!parent) throw new NotFoundException('Clinic not found');
+
+    return this.prisma.clinic.findMany({
+      where: { parentClinicId: id },
+      orderBy: { name: 'asc' },
+    });
   }
 
   /**

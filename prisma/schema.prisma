@@ -675,13 +675,22 @@ model Clinic {
   approvedBy             String?
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
+  // Geo fields
+  latitude               Float?
+  longitude              Float?
+  // Branch fields
+  parentClinicId         String?
+  branchName             String?
   // Relations
   staffUsers             StaffUser[]
   disbursals             Disbursal[]
   paymentConfig          ClinicPaymentConfig?
+  parentClinic           Clinic?  @relation("ClinicBranches", fields: [parentClinicId], references: [id])
+  branches               Clinic[] @relation("ClinicBranches")
 
   @@index([status])
   @@index([subCounty])
+  @@index([parentClinicId])
 }
 
 // Clinic payment configuration for disbursals
