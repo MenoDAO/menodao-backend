@@ -1,42 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsString,
-  IsNumber,
-  IsOptional,
-  Min,
-  Max,
-  IsEnum,
-} from 'class-validator';
+import { IsString, IsOptional, IsEnum } from 'class-validator';
 import { ClinicStatus } from '@prisma/client';
 import { RegisterClinicDto } from './register-clinic.dto';
 
 /**
  * DTO for admin-initiated clinic creation via POST /admin/clinics.
- * Extends RegisterClinicDto with optional geo, branch, and status fields.
+ * Extends RegisterClinicDto with optional branch and status fields.
+ * lat/lng are already inherited from RegisterClinicDto.
  * Defaults to PENDING status unless APPROVED is explicitly requested.
  */
 export class AdminCreateClinicDto extends RegisterClinicDto {
-  // Geo fields
-  @ApiPropertyOptional({
-    example: -1.2921,
-    description: 'Latitude in decimal degrees (-90 to 90).',
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(-90)
-  @Max(90)
-  latitude?: number;
-
-  @ApiPropertyOptional({
-    example: 36.8219,
-    description: 'Longitude in decimal degrees (-180 to 180).',
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(-180)
-  @Max(180)
-  longitude?: number;
-
   // Branch fields
   @ApiPropertyOptional({ example: 'Westlands Branch' })
   @IsOptional()
