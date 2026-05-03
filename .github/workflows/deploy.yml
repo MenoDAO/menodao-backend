@@ -160,12 +160,22 @@ jobs:
             --output text)
           echo "Registered task definition: $NEW_TD_ARN"
 
-          # Run migration using the new revision (command override only — image already baked in)
+          # Auto-discover network config from the existing ECS service
+          NET_CONFIG=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER_DEV }} \
+            --services ${{ env.ECS_SERVICE_DEV }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json)
+          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
+          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
+          echo "Subnets: $SUBNETS"
+          echo "Security groups: $SGS"
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -321,11 +331,19 @@ jobs:
             --output text)
           echo "Registered task definition: $NEW_TD_ARN"
 
+          NET_CONFIG=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER_DEV }} \
+            --services ${{ env.ECS_SERVICE_DEV }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json)
+          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
+          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -431,11 +449,19 @@ jobs:
             --output text)
           echo "Registered task definition: $NEW_TD_ARN"
 
+          NET_CONFIG=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER_PROD }} \
+            --services ${{ env.ECS_SERVICE_PROD }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json)
+          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
+          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -510,11 +536,19 @@ jobs:
             --output text)
           echo "Registered task definition: $NEW_TD_ARN"
 
+          NET_CONFIG=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER_PROD }} \
+            --services ${{ env.ECS_SERVICE_PROD }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json)
+          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
+          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
