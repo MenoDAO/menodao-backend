@@ -105,11 +105,9 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build with --no-cache to ensure clean build
           docker build --no-cache -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-          # Also tag as latest for the environment
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
@@ -139,13 +137,34 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Run database migrations (before deploy)
+      - name: Download task definition
         run: |
-          IMAGE="${{ needs.docker-build.outputs.image }}"
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Render task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.docker-build.outputs.image }}
+
+      - name: Register task definition and run migration
+        run: |
+          # Register the new task definition revision
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "Registered task definition: $NEW_TD_ARN"
+
+          # Run migration using the new revision (command override only — image already baked in)
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --overrides "{\"containerOverrides\":[{\"name\":\"${{ env.CONTAINER_NAME }}\",\"image\":\"$IMAGE\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\"]}]}" \
+            --task-definition "$NEW_TD_ARN" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
@@ -160,20 +179,6 @@ jobs:
           echo "Exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ] || { echo "❌ Migration failed — aborting deploy"; exit 1; }
           echo "✅ Migration completed"
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.docker-build.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -294,13 +299,32 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Run database migrations (before deploy)
+      - name: Download task definition
         run: |
-          IMAGE="${{ steps.build-image.outputs.image }}"
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Render task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Register task definition and run migration
+        run: |
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "Registered task definition: $NEW_TD_ARN"
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --overrides "{\"containerOverrides\":[{\"name\":\"${{ env.CONTAINER_NAME }}\",\"image\":\"$IMAGE\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\"]}]}" \
+            --task-definition "$NEW_TD_ARN" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
@@ -315,20 +339,6 @@ jobs:
           echo "Exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ] || { echo "❌ Migration failed — aborting deploy"; exit 1; }
           echo "✅ Migration completed"
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -399,13 +409,32 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Run database migrations (before deploy)
+      - name: Download task definition
         run: |
-          IMAGE="${{ steps.build-image.outputs.image }}"
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Render task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Register task definition and run migration
+        run: |
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "Registered task definition: $NEW_TD_ARN"
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
-            --overrides "{\"containerOverrides\":[{\"name\":\"${{ env.CONTAINER_NAME }}\",\"image\":\"$IMAGE\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\"]}]}" \
+            --task-definition "$NEW_TD_ARN" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
@@ -420,20 +449,6 @@ jobs:
           echo "Exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ] || { echo "❌ Migration failed — aborting deploy"; exit 1; }
           echo "✅ Migration completed"
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -479,13 +494,26 @@ jobs:
             --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
             --query taskDefinition > task-definition.json
 
-      - name: Run database migrations (before deploy)
+      - name: Render task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.docker-build.outputs.image }}
+
+      - name: Register task definition and run migration
         run: |
-          IMAGE="${{ needs.docker-build.outputs.image }}"
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "Registered task definition: $NEW_TD_ARN"
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
-            --overrides "{\"containerOverrides\":[{\"name\":\"${{ env.CONTAINER_NAME }}\",\"image\":\"$IMAGE\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\"]}]}" \
+            --task-definition "$NEW_TD_ARN" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
@@ -500,14 +528,6 @@ jobs:
           echo "Exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ] || { echo "❌ Migration failed — aborting deploy"; exit 1; }
           echo "✅ Migration completed"
-
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.docker-build.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
