@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
+import { CreateDependantDto } from './dto/create-dependant.dto';
 
 @Injectable()
 export class MembersService {
@@ -191,5 +196,51 @@ export class MembersService {
       visits: formattedVisits,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
+  }
+
+  async addDependant(memberId: string, dto: CreateDependantDto) {
+    const TIER_MAX: Record<string, number> = { SILVER: 1, GOLD: 2 };
+
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { memberId },
+    });
+
+    if (
+      !subscription ||
+      !subscription.isActive ||
+      subscription.tier === 'BRONZE'
+    ) {
+      throw new BadRequestException(
+        'Dependant coverage requires a Silver or Gold subscription',
+      );
+    }
+
+    const existingCount = await this.prisma.dependant.count({
+      where: { memberId },
+    });
+
+    const limit = TIER_MAX[subscription.tier];
+    if (existingCount >= limit) {
+      const message =
+        subscription.tier === 'SILVER'
+          ? 'Silver plan allows a maximum of 1 dependant'
+          : 'Gold plan allows a maximum of 2 dependants';
+      throw new BadRequestException(message);
+    }
+
+    return this.prisma.dependant.create({
+      data: {
+        memberId,
+        fullName: dto.fullName,
+        relationship: dto.relationship,
+      },
+    });
+  }
+
+  async getDependants(memberId: string) {
+    return await this.prisma.dependant.findMany({
+      where: { memberId },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 }

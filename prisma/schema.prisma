@@ -43,6 +43,7 @@ model Member {
   campRegistrations CampRegistration[]
   commissionLedger  CommissionLedger[]
   withdrawalRecords WithdrawalRecord[]
+  dependants        Dependant[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -754,4 +755,19 @@ model WithdrawalRecord {
   @@index([championId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ─── Dependant Model ─────────────────────────────────────────────────────────
+
+model Dependant {
+  id           String   @id @default(uuid())
+  memberId     String
+  fullName     String
+  relationship String   // "Parent/Child"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
 }

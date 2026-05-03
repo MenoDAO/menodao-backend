@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
   Body,
   Query,
   UseGuards,
@@ -15,6 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
+import { CreateDependantDto } from './dto/create-dependant.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Members')
@@ -92,5 +94,17 @@ export class MembersController {
     @Query('limit') limit = 20,
   ) {
     return this.membersService.getMemberHistory(req.user.id, +page, +limit);
+  }
+
+  @Post('dependants')
+  @ApiOperation({ summary: 'Add a dependant to the member subscription' })
+  async addDependant(@Request() req, @Body() dto: CreateDependantDto) {
+    return this.membersService.addDependant(req.user.id, dto);
+  }
+
+  @Get('dependants')
+  @ApiOperation({ summary: 'Get dependants for the authenticated member' })
+  async getDependants(@Request() req) {
+    return this.membersService.getDependants(req.user.id);
   }
 }
