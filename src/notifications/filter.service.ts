@@ -96,6 +96,25 @@ export class FilterService {
       });
     }
 
+    // Sub-county filter (case-insensitive)
+    if (filters.subCounty) {
+      conditions.push({
+        subCounty: {
+          equals: filters.subCounty,
+          mode: 'insensitive',
+        },
+      });
+    }
+
+    // Tier filter (skip when 'ALL')
+    if (filters.tier && filters.tier !== 'ALL') {
+      conditions.push({
+        subscription: {
+          tier: filters.tier,
+        },
+      });
+    }
+
     // Combine all conditions with AND logic
     if (conditions.length === 0) {
       return {};

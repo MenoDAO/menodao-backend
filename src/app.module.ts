@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { JwtModule } from '@nestjs/jwt';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -23,6 +24,7 @@ import { Web3Module } from './web3/web3.module';
 import { ChampionsModule } from './champions/champions.module';
 import { ReferralModule } from './referrals/referral.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { RenewalReminderModule } from './renewal-reminders/renewal-reminder.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
@@ -31,6 +33,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     JwtModule.registerAsync({
       global: true,
       imports: [ConfigModule],
@@ -63,6 +66,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ChampionsModule,
     ReferralModule,
     WhatsAppModule,
+    RenewalReminderModule,
   ],
   controllers: [AppController],
   providers: [AppService],

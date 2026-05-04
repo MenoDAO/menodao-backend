@@ -9,4 +9,6 @@ export class RecipientFilters {
   subscriptionStatus?: 'active' | 'inactive';
   singlePhoneNumber?: string;
   csvPhoneNumbers?: string[];
+  subCounty?: string;
+  tier?: PackageTier | 'ALL';
 }

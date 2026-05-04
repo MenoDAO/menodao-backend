@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from './subscriptions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { RenewalReminderService } from '../renewal-reminders/renewal-reminder.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('SubscriptionsService', () => {
@@ -29,6 +30,10 @@ describe('SubscriptionsService', () => {
     mintMembershipNFT: jest.fn(),
   };
 
+  const mockRenewalReminderService = {
+    sendPostRenewalNotification: jest.fn().mockResolvedValue(undefined),
+  };
+
   const mockConfigService = {
     get: jest.fn().mockImplementation((key: string) => {
       if (key === 'NODE_ENV') return 'test';
@@ -43,6 +48,10 @@ describe('SubscriptionsService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: BlockchainService, useValue: mockBlockchainService },
         { provide: ConfigService, useValue: mockConfigService },
+        {
+          provide: RenewalReminderService,
+          useValue: mockRenewalReminderService,
+        },
       ],
     }).compile();
 

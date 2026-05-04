@@ -17,6 +17,8 @@ model Member {
   walletAddress  String?  @unique
   isVerified     Boolean  @default(false)
   branch         String?
+  subCounty      String?
+  county         String?
   preferredChain    String?  @default("celo")
   preferredLanguage String?  @default("en")
   createdAt         DateTime @default(now())
@@ -47,6 +49,7 @@ model Member {
 
   @@index([referralCode])
   @@index([referredBy])
+  @@index([subCounty])
 }
 
 // OTP codes for SMS authentication
@@ -606,6 +609,11 @@ enum SmsStatus {
   FAILED
 }
 
+enum ReminderLogStatus {
+  SENT
+  FAILED
+}
+
 // Site visit tracking for landing page analytics
 model SiteVisit {
   id          String   @id @default(uuid())
@@ -779,4 +787,18 @@ model Dependant {
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([memberId])
+}
+
+// SMS reminder log for automated renewal reminders (no FK to Member — survives member deletion)
+model SmsReminderLog {
+  id                String            @id @default(uuid())
+  memberId          String
+  phoneNumber       String
+  templateKey       String
+  sentAt            DateTime          @default(now())
+  deliveryStatus    ReminderLogStatus
+  providerMessageId String?
+
+  @@index([memberId, templateKey, sentAt])
+  @@index([sentAt])
 }

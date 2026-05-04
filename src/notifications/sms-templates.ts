@@ -3,7 +3,10 @@ export type SmsTemplateKey =
   | 'payment_confirmation'
   | 'subscription_renewal_reminder'
   | 'claim_status_update'
-  | 'welcome';
+  | 'welcome'
+  | 'subscription_renewal_7day'
+  | 'subscription_renewal_1day'
+  | 'subscription_active_with_clinics';
 
 export interface SmsTemplateVars {
   [key: string]: string | number;
@@ -36,6 +39,18 @@ export const SMS_TEMPLATES: SmsTemplateCatalogue = {
   welcome: {
     en: 'Welcome to MenoDAO, {{name}}! Your community dental cover is now active.',
     sw: 'Karibu MenoDAO, {{name}}! Bima yako ya meno ya jamii imewashwa.',
+  },
+  subscription_renewal_7day: {
+    en: 'Hi {{name}}, your MenoDAO {{tier}} subscription expires on {{expiryDate}}. Renew now to keep your dental cover active.',
+    sw: 'Habari {{name}}, usajili wako wa MenoDAO {{tier}} unaisha tarehe {{expiryDate}}. Fanya upya sasa ili kudumisha bima yako ya meno.',
+  },
+  subscription_renewal_1day: {
+    en: 'Urgent: Hi {{name}}, your MenoDAO {{tier}} subscription expires tomorrow ({{expiryDate}}). Renew today to avoid losing your dental cover.',
+    sw: 'Haraka: Habari {{name}}, usajili wako wa MenoDAO {{tier}} unaisha kesho ({{expiryDate}}). Fanya upya leo ili usipoteze bima yako ya meno.',
+  },
+  subscription_active_with_clinics: {
+    en: 'Welcome {{name}}! Your MenoDAO {{tier}} cover is now active. Nearby approved clinics: {{clinicList}}. Visit any to start your dental care.',
+    sw: 'Karibu {{name}}! Bima yako ya MenoDAO {{tier}} imewashwa. Kliniki zilizoidhinishwa karibu nawe: {{clinicList}}. Tembelea yoyote kuanza huduma ya meno.',
   },
 };
 

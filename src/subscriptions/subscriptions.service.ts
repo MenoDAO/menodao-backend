@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { RenewalReminderService } from '../renewal-reminders/renewal-reminder.service';
 import { PackageTier } from '@prisma/client';
 
 // Package pricing in KES (Protocol v5.0 - March 20th Launch)
@@ -109,6 +110,7 @@ export class SubscriptionsService {
     private prisma: PrismaService,
     private blockchainService: BlockchainService,
     private configService: ConfigService,
+    private renewalReminderService: RenewalReminderService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -329,6 +331,13 @@ export class SubscriptionsService {
       where: { memberId },
       data: { isActive: true },
     });
+
+    // Send post-renewal notification (non-blocking)
+    try {
+      await this.renewalReminderService.sendPostRenewalNotification(memberId);
+    } catch (error) {
+      this.logger.error('Post-renewal notification failed:', error);
+    }
 
     // Mint NFT for the member
     try {
