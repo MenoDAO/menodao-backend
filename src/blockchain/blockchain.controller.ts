@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { BlockchainService } from './blockchain.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 
 @ApiTags('Blockchain')
 @Controller('blockchain')
@@ -49,7 +50,7 @@ export class BlockchainController {
   }
 
   @Get('wallet')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Get or create custodial wallet for current member',
@@ -65,7 +66,7 @@ export class BlockchainController {
   }
 
   @Get('nfts')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all NFTs for current member' })
   async getNFTs(@Request() req) {
@@ -73,7 +74,7 @@ export class BlockchainController {
   }
 
   @Post('nfts/:id/claim')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Claim NFT to external wallet' })
   @ApiBody({

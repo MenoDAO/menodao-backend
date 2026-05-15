@@ -25,6 +25,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from './subscriptions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { SubscribeDto } from './dto/subscribe.dto';
 import { UpgradeDto } from './dto/upgrade.dto';
 
@@ -43,7 +44,7 @@ export class SubscriptionsController {
   }
 
   @Get('current')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current member subscription' })
   async getCurrent(@Request() req: RequestWithUser) {
@@ -51,7 +52,7 @@ export class SubscriptionsController {
   }
 
   @Post('subscribe')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Subscribe to a package' })
   async subscribe(@Request() req: RequestWithUser, @Body() dto: SubscribeDto) {
@@ -63,7 +64,7 @@ export class SubscriptionsController {
   }
 
   @Post('upgrade')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Upgrade to a higher tier package' })
   async upgrade(@Request() req: RequestWithUser, @Body() dto: UpgradeDto) {
@@ -84,7 +85,7 @@ export class SubscriptionsController {
   }
 
   @Get('waiting-period-status')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get waiting period status for current member' })
   async getWaitingPeriodStatus(@Request() req: RequestWithUser) {

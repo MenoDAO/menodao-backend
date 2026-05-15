@@ -12,6 +12,7 @@ import {
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CaseProcessorService } from './case-processor.service';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
+import { StaffJwtCaptchaGuard } from '../captcha/guards/staff-jwt-captcha.guard';
 
 interface MulterFile {
   fieldname: string;
@@ -22,7 +23,7 @@ interface MulterFile {
 }
 
 @Controller('web3/cases')
-@UseGuards(StaffAuthGuard)
+@UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
 export class Web3CasesController {
   private readonly logger = new Logger(Web3CasesController.name);
 

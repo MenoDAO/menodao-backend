@@ -11,6 +11,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { ContributionsService } from './contributions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { ClaimsService } from '../claims/claims.service';
 import {
@@ -29,7 +30,7 @@ export class ContributionsController {
   ) {}
 
   @Get('summary')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get contribution summary for current member' })
   async getSummary(@Request() req: any) {
@@ -38,7 +39,7 @@ export class ContributionsController {
   }
 
   @Post('pay')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Initiate a contribution payment via M-Pesa' })
   @ApiBody({

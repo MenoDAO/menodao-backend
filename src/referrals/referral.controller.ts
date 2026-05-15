@@ -17,6 +17,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { ReferralService } from './referral.service';
 
 class WithdrawDto {
@@ -25,7 +26,7 @@ class WithdrawDto {
 
 @ApiTags('Referrals')
 @Controller('referrals')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, JwtCaptchaGuard)
 @ApiBearerAuth()
 export class ReferralController {
   constructor(private readonly referralService: ReferralService) {}

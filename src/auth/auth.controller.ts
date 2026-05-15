@@ -11,7 +11,8 @@ import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-
+import { CaptchaGuard } from '../captcha/captcha.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
@@ -24,6 +25,7 @@ export class AuthController {
   }
 
   @Post('request-otp')
+  @UseGuards(CaptchaGuard)
   @ApiOperation({ summary: 'Request OTP code sent to phone number' })
   async requestOtp(@Body() dto: RequestOtpDto) {
     return this.authService.requestOtp(
@@ -36,16 +38,28 @@ export class AuthController {
   }
 
   @Post('verify-otp')
+  @UseGuards(CaptchaGuard)
   @ApiOperation({ summary: 'Verify OTP and get access token' })
   async verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto.phoneNumber, dto.code);
   }
 
+  @Post('refresh-captcha')
+  @UseGuards(JwtAuthGuard, CaptchaGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Verify CAPTCHA and refresh JWT with captchaVerified claim',
+  })
+  async refreshCaptcha(@Request() req) {
+    return this.authService.refreshCaptchaSession(req.user.id);
+  }
+
   @Get('me')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current authenticated member' })
   async getMe(@Request() req) {
-    return req.user;
+    const { captchaVerified: _, ...member } = req.user;
+    return member;
   }
 }

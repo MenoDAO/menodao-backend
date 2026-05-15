@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
 import { StaffAuthGuard } from './guards/staff-auth.guard';
 import { StaffLoginDto, ChangePasswordDto } from './dto/staff-login.dto';
+import { CaptchaGuard } from '../captcha/captcha.guard';
 import { EnrollStaffDto } from './dto/enroll-staff.dto';
 import { StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -35,10 +36,21 @@ export class StaffController {
 
   @Post('login')
   @HttpCode(200)
+  @UseGuards(CaptchaGuard)
   @ApiOperation({ summary: 'Staff login' })
   @ApiBody({ type: StaffLoginDto })
   async login(@Body() dto: StaffLoginDto) {
     return this.staffService.login(dto.username, dto.password);
+  }
+
+  @Post('refresh-captcha')
+  @UseGuards(StaffAuthGuard, CaptchaGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Verify CAPTCHA and refresh staff JWT with captchaVerified claim',
+  })
+  async refreshCaptcha(@Request() req: AuthenticatedRequest) {
+    return this.staffService.refreshCaptchaSession(req.staff.id);
   }
 
   @Get('profile')

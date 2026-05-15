@@ -23,11 +23,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; phone: string }) {
+  async validate(payload: {
+    sub: string;
+    phone: string;
+    captchaVerified?: boolean;
+  }) {
     const member = await this.authService.validateToken(payload.sub);
     if (!member) {
       throw new UnauthorizedException();
     }
-    return member;
+    return {
+      ...member,
+      captchaVerified: payload.captchaVerified === true,
+    };
   }
 }

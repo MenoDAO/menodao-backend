@@ -420,6 +420,7 @@ resource "aws_secretsmanager_secret_version" "app" {
     DB_NAME               = aws_db_instance.main.db_name
     DB_USER               = aws_db_instance.main.username
     DB_PASSWORD           = var.db_password
+    TURNSTILE_SECRET_KEY  = var.turnstile_secret_key
   })
 }
 
@@ -449,6 +450,7 @@ resource "aws_ecs_task_definition" "backend" {
       environment = [
         { name = "NODE_ENV", value = var.environment }
         { name = "PORT", value = "3000" }
+        { name = "CAPTCHA_DISABLED", value = "false" }
       ]
       
       secrets = [
@@ -469,6 +471,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "DB_NAME", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_NAME::" }
         { name = "DB_USER", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_USER::" }
         { name = "DB_PASSWORD", valueFrom = "${aws_secretsmanager_secret.app.arn}:DB_PASSWORD::" }
+        { name = "TURNSTILE_SECRET_KEY", valueFrom = "${aws_secretsmanager_secret.app.arn}:TURNSTILE_SECRET_KEY::" }
       ]
       
       logConfiguration = {

@@ -1,7 +1,8 @@
 import { IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { CaptchaTokenDto } from '../../captcha/dto/captcha-token.dto';
 
-export class AdminLoginDto {
+export class AdminLoginDto extends CaptchaTokenDto {
   @ApiProperty({ example: 'admin' })
   @IsString()
   username: string;

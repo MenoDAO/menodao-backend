@@ -48,7 +48,10 @@ export class StaffAuthGuard implements CanActivate {
         throw new UnauthorizedException('Staff not found or inactive');
       }
 
-      request.staff = staff;
+      request.staff = {
+        ...staff,
+        captchaVerified: payload.captchaVerified === true,
+      };
       return true;
     } catch (error) {
       if (error instanceof UnauthorizedException) {

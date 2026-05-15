@@ -10,6 +10,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { VisitsService } from './visits.service';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
+import { StaffJwtCaptchaGuard } from '../captcha/guards/staff-jwt-captcha.guard';
 import { CheckInDto } from './dto/check-in.dto';
 import { SearchMemberDto } from './dto/search-member.dto';
 import { AddProcedureDto } from './dto/add-procedure.dto';
@@ -27,7 +28,7 @@ interface RequestWithStaff extends ExpressRequest {
 
 @ApiTags('Visits')
 @Controller('visits')
-@UseGuards(StaffAuthGuard)
+@UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
 @ApiBearerAuth()
 export class VisitsController {
   constructor(private visitsService: VisitsService) {}

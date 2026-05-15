@@ -48,3 +48,10 @@ variable "sms_username" {
   type        = string
   default     = ""
 }
+
+variable "turnstile_secret_key" {
+  description = "Cloudflare Turnstile secret key for CAPTCHA verification"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

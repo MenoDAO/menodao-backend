@@ -172,6 +172,7 @@ Add these secrets to your GitHub repositories:
 ### Backend (menodao-backend)
 - `AWS_ACCESS_KEY_ID` - AWS IAM access key
 - `AWS_SECRET_ACCESS_KEY` - AWS IAM secret key
+- `TURNSTILE_SECRET_KEY` - Cloudflare Turnstile secret (synced to Secrets Manager + ECS on each deploy)
 - `PRIVATE_SUBNET_IDS` - Private subnet IDs (comma-separated)
 - `SECURITY_GROUP_ID` - ECS security group ID
 

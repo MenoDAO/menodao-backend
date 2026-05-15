@@ -18,7 +18,9 @@ import {
 } from '@nestjs/swagger';
 import { ClaimsService } from './claims.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
+import { StaffJwtCaptchaGuard } from '../captcha/guards/staff-jwt-captcha.guard';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { ClaimStatus } from '@prisma/client';
 
@@ -30,7 +32,7 @@ export class ClaimsController {
   constructor(private claimsService: ClaimsService) {}
 
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all claims for current member' })
   async getMyClaims(@Request() req) {
@@ -38,7 +40,7 @@ export class ClaimsController {
   }
 
   @Get('staff')
-  @UseGuards(StaffAuthGuard)
+  @UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all claims for staff management' })
   @ApiQuery({ name: 'status', enum: ClaimStatus, required: false })
@@ -51,7 +53,7 @@ export class ClaimsController {
   }
 
   @Get(':id')
-  @UseGuards(StaffAuthGuard)
+  @UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get claim details' })
   async getClaim(@Param('id') id: string) {
@@ -59,7 +61,7 @@ export class ClaimsController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, JwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Submit a new claim' })
   async createClaim(@Request() req: any, @Body() dto: CreateClaimDto) {
@@ -73,7 +75,7 @@ export class ClaimsController {
   }
 
   @Post(':id/approve')
-  @UseGuards(StaffAuthGuard)
+  @UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Approve a pending claim and trigger disbursal',
@@ -83,7 +85,7 @@ export class ClaimsController {
   }
 
   @Post(':id/reject')
-  @UseGuards(StaffAuthGuard)
+  @UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reject a pending claim with a reason' })
   @ApiBody({

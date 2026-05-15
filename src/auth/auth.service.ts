@@ -197,10 +197,11 @@ export class AuthService {
       },
     });
 
-    // Generate JWT
+    // Generate JWT (captchaVerified set when Turnstile is enabled on verify-otp)
     const payload = {
       sub: member.id,
       phone: member.phoneNumber,
+      captchaVerified: true,
     };
     const accessToken = this.jwtService.sign(payload);
 
@@ -235,6 +236,27 @@ export class AuthService {
     }
 
     return cleaned;
+  }
+
+  /**
+   * Re-issue JWT after CAPTCHA verification (for sessions created before CAPTCHA rollout).
+   */
+  async refreshCaptchaSession(memberId: string): Promise<{ accessToken: string }> {
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+    });
+
+    if (!member) {
+      throw new UnauthorizedException('Member not found');
+    }
+
+    const payload = {
+      sub: member.id,
+      phone: member.phoneNumber,
+      captchaVerified: true,
+    };
+
+    return { accessToken: this.jwtService.sign(payload) };
   }
 
   /**

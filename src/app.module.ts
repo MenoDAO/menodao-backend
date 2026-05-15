@@ -26,6 +26,7 @@ import { ReferralModule } from './referrals/referral.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RenewalReminderModule } from './renewal-reminders/renewal-reminder.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { CaptchaModule } from './captcha/captcha.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
       },
     }),
     PrismaModule,
+    CaptchaModule,
     ClinicsModule,
     Web3Module,
     SmsModule,

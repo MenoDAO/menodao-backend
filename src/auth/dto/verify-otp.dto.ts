@@ -1,7 +1,8 @@
 import { IsString, IsNotEmpty, Length, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { CaptchaTokenDto } from '../../captcha/dto/captcha-token.dto';
 
-export class VerifyOtpDto {
+export class VerifyOtpDto extends CaptchaTokenDto {
   @ApiProperty({
     example: '+254712345678',
     description: 'Phone number the OTP was sent to',

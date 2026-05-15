@@ -28,6 +28,7 @@ import {
   AdminActionRequest,
 } from './dto/admin-search.dto';
 import { ReferralService } from '../referrals/referral.service';
+import { CaptchaGuard } from '../captcha/captcha.guard';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -40,6 +41,7 @@ export class AdminController {
 
   @Post('login')
   @HttpCode(200)
+  @UseGuards(CaptchaGuard)
   @ApiOperation({ summary: 'Admin login' })
   @ApiBody({ type: AdminLoginDto })
   async login(@Body() dto: AdminLoginDto) {

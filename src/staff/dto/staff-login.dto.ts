@@ -1,7 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, MinLength, IsNotEmpty } from 'class-validator';
+import { CaptchaTokenDto } from '../../captcha/dto/captcha-token.dto';
 
-export class StaffLoginDto {
+export class StaffLoginDto extends CaptchaTokenDto {
   @ApiProperty({ example: 'staff001' })
   @IsString()
   @IsNotEmpty()

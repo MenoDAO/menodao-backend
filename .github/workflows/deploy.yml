@@ -143,6 +143,13 @@ jobs:
             --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
             --query taskDefinition > task-definition.json
 
+      - name: Sync Turnstile CAPTCHA to AWS
+        env:
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
+          ./infrastructure/scripts/sync-captcha-to-aws.sh dev task-definition.json
+
       - name: Render task definition with new image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -309,6 +316,13 @@ jobs:
             --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
             --query taskDefinition > task-definition.json
 
+      - name: Sync Turnstile CAPTCHA to AWS
+        env:
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
+          ./infrastructure/scripts/sync-captcha-to-aws.sh dev task-definition.json
+
       - name: Render task definition with new image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -421,6 +435,13 @@ jobs:
             --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
             --query taskDefinition > task-definition.json
 
+      - name: Sync Turnstile CAPTCHA to AWS
+        env:
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
+          ./infrastructure/scripts/sync-captcha-to-aws.sh prod task-definition.json
+
       - name: Render task definition with new image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -501,6 +522,13 @@ jobs:
           aws ecs describe-task-definition \
             --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
             --query taskDefinition > task-definition.json
+
+      - name: Sync Turnstile CAPTCHA to AWS
+        env:
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
+          ./infrastructure/scripts/sync-captcha-to-aws.sh prod task-definition.json
 
       - name: Render task definition with new image
         id: task-def

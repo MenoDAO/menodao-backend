@@ -3,9 +3,11 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AdminService } from '../admin.service';
+import { CaptchaService } from '../../captcha/captcha.service';
 import * as jwt from 'jsonwebtoken';
 
 @Injectable()
@@ -13,6 +15,7 @@ export class AdminAuthGuard implements CanActivate {
   constructor(
     private configService: ConfigService,
     private adminService: AdminService,
+    private captchaService: CaptchaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -59,6 +62,16 @@ export class AdminAuthGuard implements CanActivate {
       if (payload.type !== 'admin') {
         console.log(`[AdminAuthGuard] Invalid token type: ${payload.type}`);
         throw new UnauthorizedException('Invalid token type');
+      }
+
+      if (
+        this.captchaService.isEnabled() &&
+        payload.captchaVerified !== true
+      ) {
+        throw new ForbiddenException({
+          message: 'CAPTCHA verification required',
+          code: 'CAPTCHA_REQUIRED',
+        });
       }
 
       const admin = await this.adminService.validateAdminToken(payload);

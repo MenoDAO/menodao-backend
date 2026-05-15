@@ -6,8 +6,9 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { CaptchaTokenDto } from '../../captcha/dto/captcha-token.dto';
 
-export class RequestOtpDto {
+export class RequestOtpDto extends CaptchaTokenDto {
   @ApiProperty({
     example: '+254712345678',
     description: 'Phone number to send OTP to',

@@ -155,7 +155,8 @@ cat > /tmp/task-definition.json <<EOF
             ],
             "environment": [
                 {"name": "NODE_ENV", "value": "${NODE_ENV_VAL}"},
-                {"name": "PORT", "value": "3000"}
+                {"name": "PORT", "value": "3000"},
+                {"name": "CAPTCHA_DISABLED", "value": "false"}
             ],
             "secrets": [
                 {"name": "DATABASE_URL", "valueFrom": "${SECRETS_ARN}:DATABASE_URL::"},
@@ -181,7 +182,8 @@ cat > /tmp/task-definition.json <<EOF
                 {"name": "CLAIM_VAULT_CHAIN_ID", "valueFrom": "${SECRETS_ARN}:CLAIM_VAULT_CHAIN_ID::"},
                 {"name": "BASE_SEPOLIA_RPC", "valueFrom": "${SECRETS_ARN}:BASE_SEPOLIA_RPC::"},
                 {"name": "AGENT_SIGNER_PRIVATE_KEY", "valueFrom": "${SECRETS_ARN}:AGENT_SIGNER_PRIVATE_KEY::"},
-                {"name": "AGENT_SIGNER_ADDRESS", "valueFrom": "${SECRETS_ARN}:AGENT_SIGNER_ADDRESS::"}
+                {"name": "AGENT_SIGNER_ADDRESS", "valueFrom": "${SECRETS_ARN}:AGENT_SIGNER_ADDRESS::"},
+                {"name": "TURNSTILE_SECRET_KEY", "valueFrom": "${SECRETS_ARN}:TURNSTILE_SECRET_KEY::"}
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",

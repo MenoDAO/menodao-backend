@@ -125,6 +125,7 @@ export class StaffService implements OnModuleInit {
       role: staff.role,
       clinicId: staff.clinicId,
       type: 'staff',
+      captchaVerified: true,
     };
 
     const secret = this.configService.get<string>('JWT_SECRET');
@@ -182,6 +183,40 @@ export class StaffService implements OnModuleInit {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  /**
+   * Re-issue staff JWT after CAPTCHA verification.
+   */
+  async refreshCaptchaSession(staffId: string): Promise<{ accessToken: string }> {
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffId },
+    });
+
+    if (!staff || !staff.isActive) {
+      throw new UnauthorizedException('Staff not found or inactive');
+    }
+
+    const payload = {
+      sub: staff.id,
+      username: staff.username,
+      role: staff.role,
+      clinicId: staff.clinicId,
+      type: 'staff',
+      captchaVerified: true,
+    };
+
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new UnauthorizedException('JWT_SECRET is not configured');
+    }
+
+    const accessToken = this.jwtService.sign(payload, {
+      secret,
+      expiresIn: '24h',
+    });
+
+    return { accessToken };
   }
 
   /**

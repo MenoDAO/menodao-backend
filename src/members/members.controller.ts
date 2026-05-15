@@ -18,10 +18,11 @@ import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { CreateDependantDto } from './dto/create-dependant.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 
 @ApiTags('Members')
 @Controller('members')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, JwtCaptchaGuard)
 @ApiBearerAuth()
 export class MembersController {
   constructor(private membersService: MembersService) {}

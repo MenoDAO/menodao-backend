@@ -2,11 +2,12 @@ import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ProceduresService } from './procedures.service';
 import { StaffAuthGuard } from '../staff/guards/staff-auth.guard';
+import { StaffJwtCaptchaGuard } from '../captcha/guards/staff-jwt-captcha.guard';
 import { PackageTier } from '@prisma/client';
 
 @ApiTags('Procedures')
 @Controller('procedures')
-@UseGuards(StaffAuthGuard)
+@UseGuards(StaffAuthGuard, StaffJwtCaptchaGuard)
 @ApiBearerAuth()
 export class ProceduresController {
   constructor(private proceduresService: ProceduresService) {}

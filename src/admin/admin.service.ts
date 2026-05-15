@@ -103,6 +103,7 @@ export class AdminService implements OnModuleInit {
       username: admin.username,
       role: admin.role,
       type: 'admin',
+      captchaVerified: true,
     };
 
     const secret = this.configService.get<string>('JWT_SECRET');
