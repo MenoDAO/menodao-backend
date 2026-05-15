@@ -313,6 +313,7 @@ describe('AuthService', () => {
       expect(mockJwtService.sign).toHaveBeenCalledWith({
         sub: 'member-1',
         phone: '+254712345678',
+        captchaVerified: true,
       });
       expect(result.accessToken).toBe('jwt-token');
     });

@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { CaptchaGuard } from '../captcha/captcha.guard';
+import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+
+const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -9,13 +14,21 @@ describe('AuthController', () => {
   const mockAuthService = {
     requestOtp: jest.fn(),
     verifyOtp: jest.fn(),
+    refreshCaptchaSession: jest.fn(),
   };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [{ provide: AuthService, useValue: mockAuthService }],
-    }).compile();
+    })
+      .overrideGuard(CaptchaGuard)
+      .useValue(mockGuard)
+      .overrideGuard(JwtCaptchaGuard)
+      .useValue(mockGuard)
+      .overrideGuard(JwtAuthGuard)
+      .useValue(mockGuard)
+      .compile();
 
     controller = module.get<AuthController>(AuthController);
     authService = module.get(AuthService);
@@ -86,12 +99,17 @@ describe('AuthController', () => {
         id: 'member-1',
         phoneNumber: '+254712345678',
         fullName: 'Test User',
+        captchaVerified: true,
       };
       const req = { user: mockUser };
 
       const result = await controller.getMe(req);
 
-      expect(result).toEqual(mockUser);
+      expect(result).toEqual({
+        id: 'member-1',
+        phoneNumber: '+254712345678',
+        fullName: 'Test User',
+      });
     });
   });
 });
