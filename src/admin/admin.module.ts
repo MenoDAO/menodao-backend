@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -15,7 +15,12 @@ import { ReferralModule } from '../referrals/referral.module';
 
 @Global()
 @Module({
-  imports: [PrismaModule, AnalyticsModule, SubscriptionsModule, ReferralModule],
+  imports: [
+    PrismaModule,
+    AnalyticsModule,
+    forwardRef(() => SubscriptionsModule),
+    forwardRef(() => ReferralModule),
+  ],
   controllers: [
     AdminController,
     StatsController,

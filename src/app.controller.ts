@@ -16,14 +16,18 @@ export class AppController {
     timestamp: string;
     environment: string;
     version: string;
-    deployedAt?: string;
+    gitSha?: string;
+    captchaEnabled: boolean;
   } {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
-      version: '1.0.1',
-      deployedAt: '2026-02-25T06:54:00Z', // FINAL FIX
+      version: process.env.npm_package_version || '0.0.1',
+      gitSha: process.env.GIT_SHA,
+      captchaEnabled:
+        process.env.CAPTCHA_DISABLED !== 'true' &&
+        !!process.env.TURNSTILE_SECRET_KEY,
     };
   }
 }

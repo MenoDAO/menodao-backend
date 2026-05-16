@@ -22,6 +22,9 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 WORKDIR /app
 
 # Create non-root user for security
