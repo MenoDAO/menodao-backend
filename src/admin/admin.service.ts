@@ -643,6 +643,123 @@ export class AdminService implements OnModuleInit {
   }
 
   /**
+   * List all members with subscription details for renewal management.
+   * Returns tier, status, first subscription date, renewal date, and days to expiry.
+   */
+  async listSubscriptions(params: {
+    sortBy?: 'daysToExpiry' | 'tier' | 'startDate' | 'renewalDate';
+    order?: 'asc' | 'desc';
+    tier?: string;
+    status?: 'active' | 'inactive' | 'all';
+    limit?: number;
+    offset?: number;
+  }) {
+    const {
+      sortBy = 'daysToExpiry',
+      order = 'asc',
+      tier,
+      status = 'all',
+      limit = 100,
+      offset = 0,
+    } = params;
+
+    const where: any = {};
+    if (tier && tier !== 'ALL') where.tier = tier;
+    if (status === 'active') where.isActive = true;
+    if (status === 'inactive') where.isActive = false;
+
+    const subscriptions = await this.prisma.subscription.findMany({
+      where,
+      include: {
+        member: {
+          select: { id: true, fullName: true, phoneNumber: true },
+        },
+      },
+      take: limit,
+      skip: offset,
+    });
+
+    const now = Date.now();
+
+    const rows = subscriptions.map((sub) => {
+      const startDate = sub.startDate ?? sub.subscriptionStartDate;
+      const isAnnual = sub.paymentFrequency === 'ANNUAL';
+
+      // Compute renewal date: startDate + N * period, where N is the number of
+      // completed periods so that renewalDate is the next upcoming date.
+      let renewalDate: Date | null = null;
+      let daysToExpiry: number | null = null;
+
+      if (startDate) {
+        const start = new Date(startDate);
+        if (isAnnual) {
+          // Find next annual renewal
+          const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+          const elapsed = now - start.getTime();
+          const yearsElapsed = Math.floor(elapsed / msPerYear);
+          renewalDate = new Date(
+            start.getTime() + (yearsElapsed + 1) * msPerYear,
+          );
+        } else {
+          // Monthly: find next monthly renewal
+          const msPerMonth = 30.44 * 24 * 60 * 60 * 1000;
+          const elapsed = now - start.getTime();
+          const monthsElapsed = Math.floor(elapsed / msPerMonth);
+          renewalDate = new Date(
+            start.getTime() + (monthsElapsed + 1) * msPerMonth,
+          );
+        }
+        daysToExpiry = Math.ceil(
+          (renewalDate.getTime() - now) / (24 * 60 * 60 * 1000),
+        );
+      }
+
+      return {
+        memberId: sub.memberId,
+        memberName: sub.member?.fullName ?? null,
+        phoneNumber: sub.member?.phoneNumber ?? null,
+        tier: sub.tier,
+        isActive: sub.isActive,
+        paymentFrequency: sub.paymentFrequency,
+        firstSubscriptionDate: startDate,
+        renewalDate,
+        daysToExpiry,
+      };
+    });
+
+    // Sort in-memory (Prisma can't sort by computed fields)
+    rows.sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+      switch (sortBy) {
+        case 'daysToExpiry':
+          aVal = a.daysToExpiry ?? Infinity;
+          bVal = b.daysToExpiry ?? Infinity;
+          break;
+        case 'tier':
+          aVal = a.tier;
+          bVal = b.tier;
+          break;
+        case 'startDate':
+          aVal = a.firstSubscriptionDate?.getTime() ?? 0;
+          bVal = b.firstSubscriptionDate?.getTime() ?? 0;
+          break;
+        case 'renewalDate':
+          aVal = a.renewalDate?.getTime() ?? Infinity;
+          bVal = b.renewalDate?.getTime() ?? Infinity;
+          break;
+        default:
+          return 0;
+      }
+      if (aVal < bVal) return order === 'asc' ? -1 : 1;
+      if (aVal > bVal) return order === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return { data: rows, total: rows.length };
+  }
+
+  /**
    * List withdrawal records, optionally filtered by status
    */
   listWithdrawals(status?: string) {

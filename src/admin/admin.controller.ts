@@ -79,6 +79,47 @@ export class AdminController {
     return this.adminService.searchMembers(query);
   }
 
+  @Get('subscriptions')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all subscriptions with renewal/expiry data' })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['daysToExpiry', 'tier', 'startDate', 'renewalDate'],
+  })
+  @ApiQuery({ name: 'order', required: false, enum: ['asc', 'desc'] })
+  @ApiQuery({
+    name: 'tier',
+    required: false,
+    enum: ['ALL', 'BRONZE', 'SILVER', 'GOLD'],
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['active', 'inactive', 'all'],
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  async listSubscriptions(
+    @Query('sortBy')
+    sortBy?: 'daysToExpiry' | 'tier' | 'startDate' | 'renewalDate',
+    @Query('order') order?: 'asc' | 'desc',
+    @Query('tier') tier?: string,
+    @Query('status') status?: 'active' | 'inactive' | 'all',
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ) {
+    return this.adminService.listSubscriptions({
+      sortBy,
+      order,
+      tier,
+      status,
+      limit,
+      offset,
+    });
+  }
+
   @Get('members/:memberId')
   @UseGuards(AdminAuthGuard)
   @ApiBearerAuth()
