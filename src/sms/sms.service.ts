@@ -238,25 +238,51 @@ export class SmsService {
    */
   private mapProviderError(code: number | string, description: string): string {
     const codeNum = typeof code === 'string' ? parseInt(code, 10) : code;
+    const normalizedDesc = description?.toLowerCase() ?? '';
 
     switch (codeNum) {
       case 401:
+      case 1006:
         return 'SMS authentication failed. Please contact support.';
       case 402:
+      case 1004:
         return 'Insufficient SMS credits. Please contact support.';
       case 403:
+      case 1001:
         return 'Invalid sender ID. Please contact support.';
       case 404:
+      case 1003:
         return 'Invalid phone number format.';
       case 405:
+      case 1009:
+      case 1010:
         return 'Message content is invalid or too long.';
       case 429:
         return 'Too many SMS requests. Please wait and try again.';
+      case 1002:
+        return 'SMS delivery is not available for this mobile network.';
+      case 1005:
+      case 1007:
+        return 'SMS provider system error. Please try again in a moment.';
+      case 4090:
+        return 'SMS service is busy. Please wait 5 minutes and try again.';
+      case 4091:
+        return 'SMS partner ID is not configured. Please contact support.';
+      case 4092:
+        return 'SMS API key is not configured. Please contact support.';
+      case 4093:
+        return 'SMS account details not found. Please contact support.';
       case 500:
       case 502:
       case 503:
         return 'SMS service temporarily unavailable. Please try again later.';
       default:
+        if (normalizedDesc.includes('system error')) {
+          return 'SMS provider system error. Please try again in a moment.';
+        }
+        if (normalizedDesc.includes('low') && normalizedDesc.includes('credit')) {
+          return 'Insufficient SMS credits. Please contact support.';
+        }
         return description || 'SMS sending failed. Please try again.';
     }
   }
