@@ -101,10 +101,22 @@ export class NotificationExceptionFilter implements ExceptionFilter {
     status: number,
   ): ErrorResponse {
     const exceptionResponse = exception.getResponse();
+    const responseObj =
+      typeof exceptionResponse === 'object' && exceptionResponse !== null
+        ? (exceptionResponse as Record<string, unknown>)
+        : null;
+    const nestedMessage = responseObj?.message;
+    const customCode =
+      typeof responseObj?.code === 'string' ? responseObj.code : undefined;
+
     const message =
       typeof exceptionResponse === 'string'
         ? exceptionResponse
-        : (exceptionResponse as any).message || exception.message;
+        : typeof nestedMessage === 'string'
+          ? nestedMessage
+          : Array.isArray(nestedMessage)
+            ? nestedMessage.join(', ')
+            : exception.message;
 
     // Handle specific HTTP status codes
     switch (status) {
@@ -112,7 +124,7 @@ export class NotificationExceptionFilter implements ExceptionFilter {
         return {
           success: false,
           error: {
-            code: 'VALIDATION_ERROR',
+            code: customCode || 'VALIDATION_ERROR',
             message: Array.isArray(message) ? message.join(', ') : message,
             details:
               typeof exceptionResponse === 'object' ? exceptionResponse : null,
@@ -124,7 +136,7 @@ export class NotificationExceptionFilter implements ExceptionFilter {
         return {
           success: false,
           error: {
-            code: 'AUTHENTICATION_ERROR',
+            code: customCode || 'AUTHENTICATION_ERROR',
             message: message || 'Authentication required',
           },
           timestamp: new Date().toISOString(),
@@ -134,7 +146,7 @@ export class NotificationExceptionFilter implements ExceptionFilter {
         return {
           success: false,
           error: {
-            code: 'AUTHORIZATION_ERROR',
+            code: customCode || 'AUTHORIZATION_ERROR',
             message: message || 'Insufficient permissions',
           },
           timestamp: new Date().toISOString(),
