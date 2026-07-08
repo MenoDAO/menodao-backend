@@ -77,6 +77,7 @@ export class ContributionsController {
       dto.phoneNumber,
       dto.isUpgrade,
       dto.newTier,
+      dto.paymentFrequency,
     );
   }
 

@@ -13,7 +13,7 @@ import {
   PaymentCallbackData,
 } from '../payments/payment.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
-import { PaymentStatus } from '@prisma/client';
+import { PackageTier, PaymentFrequency, PaymentStatus } from '@prisma/client';
 
 @Injectable()
 export class ContributionsService {
@@ -37,6 +37,7 @@ export class ContributionsService {
     phoneNumber?: string,
     isUpgrade?: boolean,
     newTier?: string,
+    paymentFrequency?: PaymentFrequency,
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -72,17 +73,32 @@ export class ContributionsService {
       );
     }
 
-    // Get the actual charge amount from subscriptions service (uses dev pricing in dev environment)
-    const packages = this.subscriptionsService.getPackages();
-    const memberPackage = packages.find(
-      (p) => p.tier === member.subscription?.tier,
-    );
+    const normalizedFrequency =
+      paymentFrequency || member.subscription.paymentFrequency || 'MONTHLY';
+    const normalizedNewTier = newTier as PackageTier | undefined;
+    let actualAmount = amount;
 
-    // Use the actual charge amount (dev pricing) instead of the frontend amount
-    const actualAmount = memberPackage?.actualMonthlyCharge ?? amount;
+    if (isUpgrade && normalizedNewTier) {
+      // Recalculate upgrade amount on the server to avoid client-side mismatch.
+      const upgradeInfo = await this.subscriptionsService.upgrade(
+        memberId,
+        normalizedNewTier,
+      );
+      actualAmount = upgradeInfo.paymentAmount;
+    } else {
+      // Resolve charge from backend package pricing by selected frequency.
+      const packages = this.subscriptionsService.getPackages();
+      const memberPackage = packages.find(
+        (p) => p.tier === member.subscription?.tier,
+      );
+      actualAmount =
+        normalizedFrequency === 'ANNUAL'
+          ? (memberPackage?.actualAnnualCharge ?? amount)
+          : (memberPackage?.actualMonthlyCharge ?? amount);
+    }
 
     this.logger.log(
-      `Payment for ${member.subscription.tier}: display=${amount}, actual=${actualAmount}`,
+      `Payment for ${member.subscription.tier} (${normalizedFrequency}): display=${amount}, actual=${actualAmount}`,
     );
 
     // Validate amount (use minimum 1 for dev environment)
@@ -98,16 +114,23 @@ export class ContributionsService {
     const contribution = await this.prisma.contribution.create({
       data: {
         memberId,
-        amount, // Store display amount
+        amount: actualAmount,
         month: new Date(),
         paymentMethod: 'MPESA',
         status: PaymentStatus.PENDING,
         metadata: isUpgrade
           ? {
               isUpgrade: true,
-              newTier,
+              newTier: normalizedNewTier,
+              displayAmount: amount,
+              paymentFrequency: normalizedFrequency,
+              chargedAmount: actualAmount,
             }
-          : undefined,
+          : {
+              paymentFrequency: normalizedFrequency,
+              displayAmount: amount,
+              chargedAmount: actualAmount,
+            },
       },
     });
 
@@ -126,7 +149,7 @@ export class ContributionsService {
       actualAmount, // Use actual (dev) amount for payment
       contribution.id,
       isUpgrade
-        ? `MenoDAO Upgrade to ${newTier}`
+        ? `MenoDAO Upgrade to ${normalizedNewTier}`
         : `MenoDAO ${member.subscription.tier} Contribution`,
     );
 
@@ -148,7 +171,9 @@ export class ContributionsService {
 
     return {
       contributionId: contribution.id,
-      amount,
+      amount: actualAmount,
+      displayAmount: amount,
+      paymentFrequency: normalizedFrequency,
       paymentMethod: 'MPESA',
       status: 'PENDING',
       reference: paymentResult.reference,
