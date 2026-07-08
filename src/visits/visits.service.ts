@@ -493,18 +493,28 @@ export class VisitsService {
     const newTotalClaimed = totalClaimed + visit.totalCost;
     const newRemainingLimit = allocatedLimit - newTotalClaimed;
 
-    // Send SMS notification
+    // Send SMS in the background so a slow SMS provider cannot
+    // stall the response and cause browser "Failed to fetch" / timeouts.
     const memberName = visit.member.fullName || 'Member';
     const smsMessage = `Dear ${memberName}, MenoDAO covered KES ${visit.totalCost} for your visit today. Your new limit is KES ${newRemainingLimit}. Get well soon!`;
+    const phoneNumber = visit.member.phoneNumber;
 
-    try {
-      await this.smsService.sendSms(visit.member.phoneNumber, smsMessage);
-      this.logger.log(`Discharge SMS sent to ${visit.member.phoneNumber}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to send discharge SMS: ${message}`);
-      // Don't fail the discharge if SMS fails
-    }
+    void this.smsService
+      .sendSms(phoneNumber, smsMessage)
+      .then((result) => {
+        if (result.success) {
+          this.logger.log(`Discharge SMS sent to ${phoneNumber}`);
+        } else {
+          this.logger.error(
+            `Failed to send discharge SMS: ${result.error || 'Unknown error'}`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`Failed to send discharge SMS: ${message}`);
+      });
 
     return {
       visit: dischargedVisit,
