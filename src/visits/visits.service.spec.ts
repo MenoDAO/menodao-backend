@@ -195,12 +195,17 @@ describe('VisitsService', () => {
         ...mockVisit,
         status: VisitStatus.DISCHARGED,
       });
+      mockPrisma.claim.create.mockResolvedValue({ id: 'claim-1' });
+      mockSmsService.sendSms.mockResolvedValue({ success: true });
 
       const result = await service.dischargeVisit('visit-1');
 
       expect(result.visit.status).toBe(VisitStatus.DISCHARGED);
       expect(mockPrisma.claim.create).toHaveBeenCalled();
-      expect(mockSmsService.sendSms).toHaveBeenCalled();
+      expect(mockSmsService.sendSms).toHaveBeenCalledWith(
+        '+254712345678',
+        expect.stringContaining('MenoDAO covered KES 1000'),
+      );
     });
   });
 });
