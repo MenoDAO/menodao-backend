@@ -9,7 +9,7 @@ import {
   IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PackageTier } from '@prisma/client';
+import { PackageTier, PaymentFrequency } from '@prisma/client';
 
 export class InitiatePaymentDto {
   @ApiProperty({
@@ -56,4 +56,14 @@ export class InitiatePaymentDto {
   @IsOptional()
   @IsEnum(PackageTier)
   newTier?: PackageTier;
+
+  @ApiPropertyOptional({
+    example: 'MONTHLY',
+    description:
+      'Payment frequency for subscription/renewal charges (MONTHLY or ANNUAL)',
+    enum: ['MONTHLY', 'ANNUAL'],
+  })
+  @IsOptional()
+  @IsEnum(PaymentFrequency)
+  paymentFrequency?: PaymentFrequency;
 }
