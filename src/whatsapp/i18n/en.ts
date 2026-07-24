@@ -55,8 +55,8 @@ export const mainMenuSections = {
     },
     blockchain: {
       id: 'menu_8',
-      title: 'Blockchain & NFTs',
-      description: 'Your impact proof on-chain',
+      title: 'Activity History',
+      description: 'Verified care records',
     },
     accountSettings: {
       id: 'menu_9',
@@ -285,10 +285,12 @@ export const visitHistory = {
     `🦷 ${procedures}\n` +
     `💰 Covered: KES ${costCovered.toLocaleString()}`,
 
-  hypercertVerified: (tokenId: string, metadataUrl: string): string =>
-    `🔗 *Blockchain Verified*\nNFT: ${tokenId}\n${metadataUrl}`,
+  hypercertVerified: (_tokenId: string, metadataUrl: string): string =>
+    metadataUrl
+      ? `✅ *Verified Care Record*\nView details: ${metadataUrl}`
+      : `✅ *Verified Care Record*`,
 
-  hypercertPending: `⏳ Blockchain verification for this visit is in progress.`,
+  hypercertPending: `⏳ Verification of this visit's care record is in progress.`,
 
   noVisits: `You don't have any recorded dental visits yet.\n\nVisit a *MenoHub clinic* to get started with your dental care journey! 🦷`,
 
@@ -323,32 +325,31 @@ export const referrals = {
 // ─── Blockchain Flow ──────────────────────────────────────────────────────────
 
 export const blockchain = {
-  header: '⛓️ *Your Blockchain Impact Proof*\n',
+  header: '📋 *Your Verified Care Records*\n',
 
-  nftEntry: (tokenId: string, date: string, metadataUrl: string): string =>
-    `🏅 *Hypercert NFT*\n` +
-    `Token: ${tokenId}\n` +
+  nftEntry: (_tokenId: string, date: string, metadataUrl: string): string =>
+    `✅ *Verified Visit*\n` +
     `Visit date: ${date}\n` +
-    `🔗 ${metadataUrl}\n\n` +
-    `This NFT is verifiable proof of dental care recorded permanently on the Filecoin Calibration blockchain.`,
+    (metadataUrl ? `View details: ${metadataUrl}\n\n` : '\n') +
+    `This is a verifiable record of your dental care at a MenoHub clinic.`,
 
   txEntry: (type: string, amount: number, maskedHash: string): string =>
-    `• ${type} — KES ${amount.toLocaleString()}\n  Tx: ${maskedHash}`,
+    `• ${type} — KES ${amount.toLocaleString()}\n  Ref: ${maskedHash}`,
 
-  txHeader: '\n📜 *Transaction History*\n',
+  txHeader: '\n📜 *Payment & Contribution History*\n',
 
   nftHoldings: (count: number): string =>
-    `\n🎖️ You hold *${count}* MenoDAO NFT${count !== 1 ? 's' : ''}.`,
+    `\n🎖️ You have *${count}* verified care record${count !== 1 ? 's' : ''}.`,
 
-  rejectedVisit: `⚠️ The blockchain verification for one of your visits was not successful.\n\nPlease contact support at support@menodao.org if you believe this is an error.`,
+  rejectedVisit: `⚠️ Verification for one of your visits could not be completed.\n\nPlease contact support at support@menodao.org if you believe this is an error.`,
 
   noRecords:
-    `You don't have any blockchain records yet.\n\n` +
+    `You don't have any verified care records yet.\n\n` +
     `Here's how it works:\n` +
     `1️⃣ You visit a MenoHub clinic\n` +
-    `2️⃣ Your treatment is AI-verified\n` +
-    `3️⃣ A record is submitted on-chain via MenoDAOCases.sol on Filecoin Calibration\n` +
-    `4️⃣ A Hypercert NFT is minted as your permanent impact proof 🏅`,
+    `2️⃣ Your treatment is reviewed and verified\n` +
+    `3️⃣ A secure care record is created for your visit\n` +
+    `4️⃣ You can view your verified visits anytime in Visit History 🦷`,
 
   footer: '\nType *menu* to return to the main menu.',
 };

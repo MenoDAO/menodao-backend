@@ -54,8 +54,8 @@ export const mainMenuSections = {
     },
     blockchain: {
       id: 'menu_8',
-      title: 'Blockchain & NFTs',
-      description: 'Uthibitisho wako wa athari',
+      title: 'Historia ya Shughuli',
+      description: 'Rekodi za huduma zilizothibitishwa',
     },
     accountSettings: {
       id: 'menu_9',
@@ -283,10 +283,12 @@ export const visitHistory = {
     `🦷 ${procedures}\n` +
     `💰 Iliyolipwa: KES ${costCovered.toLocaleString()}`,
 
-  hypercertVerified: (tokenId: string, metadataUrl: string): string =>
-    `🔗 *Imethibitishwa na Blockchain*\nNFT: ${tokenId}\n${metadataUrl}`,
+  hypercertVerified: (_tokenId: string, metadataUrl: string): string =>
+    metadataUrl
+      ? `✅ *Rekodi ya Huduma Iliyothibitishwa*\nAngalia maelezo: ${metadataUrl}`
+      : `✅ *Rekodi ya Huduma Iliyothibitishwa*`,
 
-  hypercertPending: `⏳ Uthibitisho wa blockchain kwa ziara hii bado unaendelea.`,
+  hypercertPending: `⏳ Uthibitisho wa rekodi ya huduma kwa ziara hii bado unaendelea.`,
 
   noVisits: `Bado huna ziara za meno zilizorekodi.\n\nTembelea *kliniki ya MenoHub* kuanza safari yako ya utunzaji wa meno! 🦷`,
 
@@ -321,32 +323,33 @@ export const referrals = {
 // ─── Blockchain Flow ──────────────────────────────────────────────────────────
 
 export const blockchain = {
-  header: '⛓️ *Uthibitisho Wako wa Athari ya Blockchain*\n',
+  header: '📋 *Rekodi Zako za Huduma Zilizothibitishwa*\n',
 
-  nftEntry: (tokenId: string, date: string, metadataUrl: string): string =>
-    `🏅 *Hypercert NFT*\n` +
-    `Tokeni: ${tokenId}\n` +
+  nftEntry: (_tokenId: string, date: string, metadataUrl: string): string =>
+    `✅ *Ziara Iliyothibitishwa*\n` +
     `Tarehe ya ziara: ${date}\n` +
-    `🔗 ${metadataUrl}\n\n` +
-    `NFT hii ni uthibitisho unaoweza kuthibitishwa wa huduma ya meno iliyorekodiwa kudumu kwenye blockchain ya Filecoin Calibration.`,
+    (metadataUrl ? `Angalia maelezo: ${metadataUrl}\n\n` : '\n') +
+    `Hii ni rekodi inayoweza kuthibitishwa ya huduma yako ya meno kwenye kliniki ya MenoHub.`,
 
   txEntry: (type: string, amount: number, maskedHash: string): string =>
-    `• ${type} — KES ${amount.toLocaleString()}\n  Tx: ${maskedHash}`,
+    `• ${type} — KES ${amount.toLocaleString()}\n  Rej: ${maskedHash}`,
 
-  txHeader: '\n📜 *Historia ya Miamala*\n',
+  txHeader: '\n📜 *Historia ya Malipo na Michango*\n',
 
   nftHoldings: (count: number): string =>
-    `\n🎖️ Una *${count}* NFT${count !== 1 ? 's' : ''} za MenoDAO.`,
+    count === 1
+      ? `\n🎖️ Una rekodi *1* ya huduma iliyothibitishwa.`
+      : `\n🎖️ Una rekodi *${count}* za huduma zilizothibitishwa.`,
 
-  rejectedVisit: `⚠️ Uthibitisho wa blockchain kwa moja ya ziara zako haukufanikiwa.\n\nTafadhali wasiliana na msaada kwa support@menodao.org ikiwa unaamini hii ni kosa.`,
+  rejectedVisit: `⚠️ Uthibitisho wa moja ya ziara zako haukuweza kukamilika.\n\nTafadhali wasiliana na msaada kwa support@menodao.org ikiwa unaamini hii ni kosa.`,
 
   noRecords:
-    `Bado huna rekodi za blockchain.\n\n` +
+    `Bado huna rekodi za huduma zilizothibitishwa.\n\n` +
     `Hivi ndivyo inavyofanya kazi:\n` +
     `1️⃣ Unatembelea kliniki ya MenoHub\n` +
-    `2️⃣ Matibabu yako yanathibitishwa na AI\n` +
-    `3️⃣ Rekodi inawasilishwa kwenye blockchain kupitia MenoDAOCases.sol kwenye Filecoin Calibration\n` +
-    `4️⃣ Hypercert NFT inachapishwa kama uthibitisho wako wa kudumu wa athari 🏅`,
+    `2️⃣ Matibabu yako yanakaguliwa na kuthibitishwa\n` +
+    `3️⃣ Rekodi salama ya huduma huundwa kwa ziara yako\n` +
+    `4️⃣ Unaweza kuona ziara zako zilizothibitishwa wakati wowote kwenye Historia ya Ziara 🦷`,
 
   footer: '\nAndika *menyu* kurudi kwenye menyu kuu.',
 };
