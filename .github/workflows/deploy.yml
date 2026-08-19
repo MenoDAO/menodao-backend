@@ -182,7 +182,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -350,7 +350,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -468,7 +468,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
@@ -555,7 +555,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)

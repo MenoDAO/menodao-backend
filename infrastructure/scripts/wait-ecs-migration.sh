@@ -13,25 +13,22 @@ fi
 echo "Waiting for migration task to stop: $TASK_ARN"
 aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
 
-EXIT_CODE="$(aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --query 'tasks[0].containers[0].exitCode' \
-  --output text)"
-REASON="$(aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --query 'tasks[0].containers[0].reason' \
-  --output text)"
-
-echo "Migration exit code: ${EXIT_CODE:-unknown}"
-if [[ -n "$REASON" && "$REASON" != "None" ]]; then
-  echo "Container reason: $REASON"
-fi
-
-if [[ "$EXIT_CODE" != "0" ]]; then
-  echo "Prisma migrate deploy failed"
-  exit 1
-fi
+aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --output json | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+task = payload["tasks"][0]
+container = (task.get("containers") or [{}])[0]
+stop_code = task.get("stopCode")
+stopped_reason = task.get("stoppedReason")
+exit_code = container.get("exitCode")
+reason = container.get("reason")
+print(f"stopCode: {stop_code}")
+print(f"stoppedReason: {stopped_reason}")
+print(f"container exit: {exit_code}")
+if reason:
+    print(f"container reason: {reason}")
+ok = stop_code != "TaskFailedToStart" and exit_code in (0, "0")
+sys.exit(0 if ok else 1)
+'
 
 echo "Migration completed successfully"
