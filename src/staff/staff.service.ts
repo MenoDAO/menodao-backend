@@ -113,7 +113,29 @@ export class StaffService implements OnModuleInit {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Update last login
+    return this.issueSession(staff);
+  }
+
+  async issueSessionById(staffId: string) {
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffId },
+      include: {
+        clinic: { select: { id: true, name: true } },
+      },
+    });
+    if (!staff || !staff.isActive) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    return this.issueSession(staff);
+  }
+
+  private async issueSession(staff: {
+    id: string;
+    username: string;
+    fullName: string;
+    role: string;
+    clinicId: string | null;
+  }) {
     await this.prisma.staffUser.update({
       where: { id: staff.id },
       data: { lastLogin: new Date() },
@@ -135,7 +157,7 @@ export class StaffService implements OnModuleInit {
 
     const accessToken = this.jwtService.sign(payload, {
       secret,
-      expiresIn: '8h', // 8 hour expiry for staff sessions
+      expiresIn: '8h',
     });
 
     return {

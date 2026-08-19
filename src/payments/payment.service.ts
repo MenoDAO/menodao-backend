@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -6,9 +6,10 @@ import {
   SasaPayC2BCallbackData,
 } from '../sasapay/sasapay.service';
 import { SmsService } from '../sms/sms.service';
-import { PackageTier, PaymentFrequency } from '@prisma/client';
+import { PackageTier, PaymentFrequency, CareEventType } from '@prisma/client';
 import * as crypto from 'crypto';
 import { ReferralService } from '../referrals/referral.service';
+import { CareEventsService } from '../care-intelligence/care-events.service';
 
 export interface PaymentResult {
   success: boolean;
@@ -33,6 +34,7 @@ export class PaymentService {
     private sasaPayService: SasaPayService,
     private smsService: SmsService,
     private referralService: ReferralService,
+    @Optional() private careEvents?: CareEventsService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -312,6 +314,14 @@ export class PaymentService {
           `✅ Contribution ${contribution.id} updated to COMPLETED, M-Pesa receipt: ${MpesaReceiptNumber}`,
         );
 
+        if (contribution.status !== 'COMPLETED') {
+          void this.careEvents?.track({
+            type: CareEventType.MEMBERSHIP_PAYMENT_SUCCESS,
+            memberId: contribution.memberId,
+            metadata: { contributionId: contribution.id, amount: Amount },
+          });
+        }
+
         // ── Champion Referral: credit commission (fire-and-forget) ──────────
         try {
           await this.referralService.creditCommission(contribution.id);
@@ -512,6 +522,11 @@ export class PaymentService {
         this.logger.warn(
           `Payment failed for contribution ${contribution.id}: ${ResultDesc}`,
         );
+        void this.careEvents?.track({
+          type: CareEventType.MEMBERSHIP_PAYMENT_FAILED,
+          memberId: contribution.memberId,
+          metadata: { contributionId: contribution.id, resultCode: ResultCode },
+        });
         return { success: true, message: 'Payment failure recorded' };
       }
     } catch (error) {

@@ -319,6 +319,28 @@ export class ClinicsService {
     return withDistance;
   }
 
+  async getPublicClinic(id: string) {
+    const clinic = await this.prisma.clinic.findFirst({
+      where: { id, status: 'APPROVED' },
+      select: {
+        id: true,
+        name: true,
+        subCounty: true,
+        physicalLocation: true,
+        operatingHours: true,
+        operatesOnWeekends: true,
+        leadDentistName: true,
+        whatsappNumber: true,
+        googleMapsLink: true,
+        latitude: true,
+        longitude: true,
+        activeDentalChairs: true,
+      },
+    });
+    if (!clinic) throw new NotFoundException('Clinic not found');
+    return clinic;
+  }
+
   /**
    * Admin: Partial update of any clinic field
    */

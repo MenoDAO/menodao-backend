@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { CaptchaGuard } from '../captcha/captcha.guard';
 import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { WebAuthnService } from '../webauthn/webauthn.service';
 
 const mockGuard = { canActivate: jest.fn().mockReturnValue(true) };
 
@@ -15,12 +16,25 @@ describe('AuthController', () => {
     requestOtp: jest.fn(),
     verifyOtp: jest.fn(),
     refreshCaptchaSession: jest.fn(),
+    issueSessionById: jest.fn(),
+  };
+
+  const mockWebAuthnService = {
+    authenticationOptions: jest.fn(),
+    verifyAuthentication: jest.fn(),
+    registrationOptions: jest.fn(),
+    verifyRegistration: jest.fn(),
+    listCredentials: jest.fn(),
+    deleteCredential: jest.fn(),
   };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: mockAuthService }],
+      providers: [
+        { provide: AuthService, useValue: mockAuthService },
+        { provide: WebAuthnService, useValue: mockWebAuthnService },
+      ],
     })
       .overrideGuard(CaptchaGuard)
       .useValue(mockGuard)

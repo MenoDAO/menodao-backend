@@ -92,7 +92,24 @@ export class AdminService implements OnModuleInit {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Update last login
+    return this.issueSession(admin);
+  }
+
+  async issueSessionById(adminId: string) {
+    const admin = await this.prisma.adminUser.findUnique({
+      where: { id: adminId },
+    });
+    if (!admin) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    return this.issueSession(admin);
+  }
+
+  private async issueSession(admin: {
+    id: string;
+    username: string;
+    role: string;
+  }) {
     await this.prisma.adminUser.update({
       where: { id: admin.id },
       data: { lastLogin: new Date() },

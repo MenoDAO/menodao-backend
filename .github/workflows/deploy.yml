@@ -182,14 +182,13 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -198,6 +197,14 @@ jobs:
           service: ${{ env.ECS_SERVICE_DEV }}
           cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
+
+      - name: Verify ECS is running the new image
+        run: |
+          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
+          ./infrastructure/scripts/verify-ecs-deployment.sh \
+            "${{ env.ECS_CLUSTER_DEV }}" \
+            "${{ env.ECS_SERVICE_DEV }}" \
+            "${{ github.sha }}"
 
       - name: Comment deployment status
         continue-on-error: true
@@ -351,14 +358,13 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_DEV }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -367,6 +373,14 @@ jobs:
           service: ${{ env.ECS_SERVICE_DEV }}
           cluster: ${{ env.ECS_CLUSTER_DEV }}
           wait-for-service-stability: true
+
+      - name: Verify ECS is running the new image
+        run: |
+          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
+          ./infrastructure/scripts/verify-ecs-deployment.sh \
+            "${{ env.ECS_CLUSTER_DEV }}" \
+            "${{ env.ECS_SERVICE_DEV }}" \
+            "${{ github.sha }}"
 
       - name: Comment on PR
         uses: actions/github-script@v7
@@ -470,14 +484,13 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -486,6 +499,14 @@ jobs:
           service: ${{ env.ECS_SERVICE_PROD }}
           cluster: ${{ env.ECS_CLUSTER_PROD }}
           wait-for-service-stability: true
+
+      - name: Verify ECS is running the new image
+        run: |
+          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
+          ./infrastructure/scripts/verify-ecs-deployment.sh \
+            "${{ env.ECS_CLUSTER_PROD }}" \
+            "${{ env.ECS_SERVICE_PROD }}" \
+            "${{ github.sha }}"
 
       - name: Comment on PR
         uses: actions/github-script@v7
@@ -558,14 +579,13 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER_PROD }} \
             --task-definition "$NEW_TD_ARN" \
             --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
             --launch-type FARGATE \
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -574,6 +594,14 @@ jobs:
           service: ${{ env.ECS_SERVICE_PROD }}
           cluster: ${{ env.ECS_CLUSTER_PROD }}
           wait-for-service-stability: true
+
+      - name: Verify ECS is running the new image
+        run: |
+          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
+          ./infrastructure/scripts/verify-ecs-deployment.sh \
+            "${{ env.ECS_CLUSTER_PROD }}" \
+            "${{ env.ECS_SERVICE_PROD }}" \
+            "${{ github.sha }}"
 
       - name: Backfill referral codes for existing members
         run: |

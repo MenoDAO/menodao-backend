@@ -42,7 +42,9 @@ model Member {
   transactions      BlockchainTransaction[]
   deviceTokens      DeviceToken[]
   visits            Visit[]
+  appointments      Appointment[]
   campRegistrations CampRegistration[]
+  webauthnCredentials WebAuthnCredential[]
   commissionLedger  CommissionLedger[]
   withdrawalRecords WithdrawalRecord[]
   dependants        Dependant[]
@@ -50,6 +52,8 @@ model Member {
   @@index([referralCode])
   @@index([referredBy])
   @@index([subCounty])
+  @@index([county])
+  @@index([createdAt])
 }
 
 // OTP codes for SMS authentication
@@ -355,6 +359,7 @@ model AdminUser {
 
   notifications Notification[]
   auditLogs     AuditLog[]
+  webauthnCredentials WebAuthnCredential[]
 }
 
 // Audit log for admin actions
@@ -390,13 +395,56 @@ model StaffUser {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  visits Visit[]
-  clinic Clinic? @relation(fields: [clinicId], references: [id])
+  visits        Visit[]
+  appointments  Appointment[]
+  clinic        Clinic? @relation(fields: [clinicId], references: [id])
+  webauthnCredentials WebAuthnCredential[]
 }
 
 enum StaffRole {
   STAFF // Can check-in and add claims
   ADMIN // Can override limits and void claims
+}
+
+// Device passkeys for staff/admin login. Public keys only — never store biometrics.
+model WebAuthnCredential {
+  id           String   @id @default(uuid())
+  credentialId String   @unique
+  publicKey    Bytes
+  counter      BigInt   @default(0)
+  deviceType   String?
+  backedUp     Boolean  @default(false)
+  transports   String[] @default([])
+  label        String?
+  staffUserId  String?
+  adminUserId  String?
+  memberId     String?
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime?
+
+  staffUser StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  adminUser AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  member    Member?    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId])
+  @@index([adminUserId])
+  @@index([memberId])
+}
+
+model WebAuthnChallenge {
+  id        String   @id @default(uuid())
+  kind      String
+  type      String
+  userId    String?
+  username  String   @default("")
+  challenge String
+  origin    String
+  rpId      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([kind, type, username])
+  @@index([expiresAt])
 }
 
 // Patient visit record
@@ -426,6 +474,7 @@ model Visit {
   procedures    VisitProcedure[]
   claims        Claim[]
   questionnaire QuestionnaireData? // CDCQ-v1 data
+  appointment   Appointment?
 
   // Clinical data for SACCO/Insurance and data privacy compliance
   chiefComplaint String?
@@ -437,6 +486,8 @@ model Visit {
   @@index([memberId])
   @@index([staffId])
   @@index([status])
+  @@index([checkedInAt])
+  @@index([dischargedAt])
 }
 
 // Comprehensive Dental Check-Up Questionnaire (CDCQ-v1)
@@ -693,6 +744,7 @@ model Clinic {
   staffUsers             StaffUser[]
   disbursals             Disbursal[]
   paymentConfig          ClinicPaymentConfig?
+  appointments           Appointment[]
   parentClinic           Clinic?  @relation("ClinicBranches", fields: [parentClinicId], references: [id])
   branches               Clinic[] @relation("ClinicBranches")
 
@@ -723,6 +775,102 @@ model ClinicPaymentConfig {
   clinic Clinic @relation(fields: [clinicId], references: [id])
 
   @@index([clinicId])
+}
+
+enum AppointmentStatus {
+  BOOKED
+  RESCHEDULED
+  CANCELLED_BY_MEMBER
+  CANCELLED_BY_CLINIC
+  ATTENDED
+  NO_SHOW
+}
+
+enum AppointmentActor {
+  MEMBER
+  STAFF
+  SYSTEM
+}
+
+enum AppointmentReminderKind {
+  DAY_BEFORE
+  HOUR_BEFORE
+}
+
+enum AppointmentChannel {
+  SMS
+  EMAIL
+}
+
+model Appointment {
+  id                         String            @id @default(uuid())
+  memberId                   String
+  clinicId                   String
+  staffId                    String?
+  visitId                    String?           @unique
+  scheduledAt                DateTime
+  durationMinutes            Int               @default(30)
+  status                     AppointmentStatus @default(BOOKED)
+  intakeReason               String
+  painLevel                  Int?
+  allergies                  String?
+  currentMedications         String?
+  medicalConditions          String?
+  hasConsent                 Boolean           @default(false)
+  memberNotes                String?
+  clinicNotes                String?
+  cancelReason               String?
+  rescheduleReason           String?
+  dayBeforeReminderSentAt    DateTime?
+  hourBeforeReminderSentAt   DateTime?
+  noShowNotedAt              DateTime?
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+
+  member    Member              @relation(fields: [memberId], references: [id])
+  clinic    Clinic              @relation(fields: [clinicId], references: [id])
+  staff     StaffUser?          @relation(fields: [staffId], references: [id])
+  visit     Visit?              @relation(fields: [visitId], references: [id])
+  events    AppointmentEvent[]
+  reminders AppointmentReminder[]
+
+  @@index([memberId, scheduledAt])
+  @@index([clinicId, scheduledAt])
+  @@index([status, scheduledAt])
+  @@index([staffId])
+}
+
+model AppointmentEvent {
+  id               String           @id @default(uuid())
+  appointmentId    String
+  type             String
+  actor            AppointmentActor
+  actorId          String?
+  reason           String?
+  fromScheduledAt  DateTime?
+  toScheduledAt    DateTime?
+  metadata         Json?
+  createdAt        DateTime         @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
+}
+
+model AppointmentReminder {
+  id            String                  @id @default(uuid())
+  appointmentId String
+  kind          AppointmentReminderKind
+  channel       AppointmentChannel
+  recipient     String
+  status        String
+  errorMessage  String?
+  sentAt        DateTime                @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, kind, channel])
+  @@index([appointmentId])
 }
 
 // ─── Champion Referral System ────────────────────────────────────────────────
@@ -801,4 +949,217 @@ model SmsReminderLog {
 
   @@index([memberId, templateKey, sentAt])
   @@index([sentAt])
+}
+
+// ---------------------------------------------------------------------------
+// Care Intelligence & Data Room
+// Operational DB remains the source of truth for members/visits/treatments.
+// These tables are the analytics, AI, experiment, and donor-export layers.
+// ---------------------------------------------------------------------------
+
+enum CareEventType {
+  MEMBER_REGISTERED
+  MEMBERSHIP_VIEWED
+  MEMBERSHIP_STARTED
+  MEMBERSHIP_PAYMENT_ATTEMPTED
+  MEMBERSHIP_PAYMENT_SUCCESS
+  MEMBERSHIP_PAYMENT_FAILED
+  MEMBERSHIP_CANCELLED
+  APPOINTMENT_REQUESTED
+  APPOINTMENT_BOOKED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_ATTENDED
+  APPOINTMENT_NO_SHOW
+  TREATMENT_STARTED
+  TREATMENT_COMPLETED
+  FOLLOWUP_REQUIRED
+  FOLLOWUP_COMPLETED
+  REFERRAL_CREATED
+  REFERRAL_CONVERTED
+  AI_CONVERSATION_STARTED
+  AI_INTAKE_COMPLETED
+  AI_ESCALATED
+  AI_HANDOFF_COMPLETED
+}
+
+enum CarePrivacyClass {
+  OPERATIONAL
+  ANALYTICS
+  CLINICAL
+  AGGREGATE
+}
+
+enum CareInsightKind {
+  OBSERVED
+  INTERPRETED
+  ACTION
+}
+
+enum CareInsightStatus {
+  OPEN
+  ACKNOWLEDGED
+  ACTED
+  DISMISSED
+}
+
+enum CareExperimentStatus {
+  DRAFT
+  RUNNING
+  COMPLETED
+  KILLED
+  KEPT
+  MODIFIED
+}
+
+enum CareAlertSeverity {
+  CRITICAL
+  WARNING
+  OPPORTUNITY
+  FOLLOW_UP
+}
+
+enum CareRecommendationStatus {
+  RECOMMENDED
+  VIEWED
+  IN_PROGRESS
+  DONE
+  DISMISSED
+}
+
+// Append-only care-loop events. Do not store clinical notes or biometrics.
+model CareEvent {
+  id              String           @id @default(uuid())
+  type            CareEventType
+  occurredAt      DateTime         @default(now())
+  memberId        String?
+  sessionId       String?
+  conversationId  String?
+  source          String?
+  county          String?
+  subCounty       String?
+  metadata        Json?
+  privacyClass    CarePrivacyClass @default(ANALYTICS)
+  createdAt       DateTime         @default(now())
+
+  @@index([type, occurredAt])
+  @@index([occurredAt])
+  @@index([memberId, occurredAt])
+  @@index([source])
+  @@index([county])
+}
+
+// Daily aggregated snapshots so the dashboard does not scan raw tables as data grows.
+model CareMetricSnapshot {
+  id        String   @id @default(uuid())
+  metricId  String
+  period    String // day | week | month
+  periodStart DateTime
+  geography String  @default("ALL")
+  value     Float
+  sampleSize Int     @default(0)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@unique([metricId, period, periodStart, geography])
+  @@index([metricId, periodStart])
+}
+
+// Admin-configurable conversion and volume targets.
+model CareLoopTarget {
+  id            String   @id @default(uuid())
+  metricId      String   @unique
+  targetValue   Float
+  minSampleSize Int      @default(10)
+  impactWeight  Float    @default(1)
+  controllability Float  @default(0.8)
+  notes         String?
+  updatedAt     DateTime @updatedAt
+  updatedBy     String?
+}
+
+model CareInsight {
+  id             String            @id @default(uuid())
+  generatedAt    DateTime          @default(now())
+  metricId       String
+  kind           CareInsightKind
+  observation    String
+  interpretation String?
+  recommendation String?
+  evidence       Json
+  confidence     String // low | medium | high
+  actionTaken    String?
+  outcome        String?
+  owner          String?
+  status         CareInsightStatus @default(OPEN)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([generatedAt])
+  @@index([metricId])
+  @@index([status])
+}
+
+model CareExperiment {
+  id          String                @id @default(uuid())
+  name        String
+  hypothesis  String
+  metricId    String
+  baseline    Float?
+  target      Float?
+  startDate   DateTime
+  endDate     DateTime?
+  owner       String?
+  status      CareExperimentStatus  @default(DRAFT)
+  result      String?
+  decision    String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@index([status])
+  @@index([metricId])
+}
+
+model CareAlert {
+  id          String           @id @default(uuid())
+  severity    CareAlertSeverity
+  title       String
+  body        String
+  metricId    String?
+  cohortKey   String?
+  firedAt     DateTime         @default(now())
+  resolvedAt  DateTime?
+  metadata    Json?
+
+  @@index([firedAt])
+  @@index([severity, resolvedAt])
+}
+
+model CareRecommendation {
+  id              String                   @id @default(uuid())
+  problem         String
+  evidence        String
+  metricId        String
+  suggestedAction String
+  expectedImpact  String
+  confidence      String
+  status          CareRecommendationStatus @default(RECOMMENDED)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MessageTemplate {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  name        String
+  category    String // membership | appointment | followup | referral | satisfaction | payment
+  body        String
+  approved    Boolean  @default(false)
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

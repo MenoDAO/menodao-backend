@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Optional,
   UnauthorizedException,
   BadRequestException,
   ServiceUnavailableException,
@@ -8,6 +9,8 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
 import { ReferralService } from '../referrals/referral.service';
+import { CareEventsService } from '../care-intelligence/care-events.service';
+import { CareEventType } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +19,7 @@ export class AuthService {
     private jwtService: JwtService,
     private smsService: SmsService,
     private referralService: ReferralService,
+    @Optional() private careEvents?: CareEventsService,
   ) {}
 
   /**
@@ -110,6 +114,15 @@ export class AuthService {
             `[AuthService] Failed to generate referral code for member ${member.id}: ${referralError?.message}`,
           );
         }
+
+        void this.careEvents?.track({
+          type: CareEventType.MEMBER_REGISTERED,
+          memberId: member.id,
+          source: referredBy ? 'referral' : 'direct',
+          county: member.county,
+          subCounty: member.subCounty,
+          metadata: { referredBy: referredBy || null },
+        });
       } else {
         throw new BadRequestException(
           'Phone number not found. Please sign up instead.',
@@ -197,16 +210,36 @@ export class AuthService {
       },
     });
 
-    // Generate JWT (captchaVerified set when Turnstile is enabled on verify-otp)
+    return this.issueSession(member);
+  }
+
+  async issueSessionById(memberId: string) {
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      include: { subscription: true },
+    });
+    if (!member) {
+      throw new UnauthorizedException('Member not found');
+    }
+    return this.issueSession(member);
+  }
+
+  private issueSession(member: {
+    id: string;
+    phoneNumber: string;
+    fullName: string | null;
+    location: string | null;
+    walletAddress: string | null;
+    isVerified: boolean;
+    subscription?: unknown;
+  }) {
     const payload = {
       sub: member.id,
       phone: member.phoneNumber,
       captchaVerified: true,
     };
-    const accessToken = this.jwtService.sign(payload);
-
     return {
-      accessToken,
+      accessToken: this.jwtService.sign(payload),
       member: {
         id: member.id,
         phoneNumber: member.phoneNumber,
@@ -214,7 +247,7 @@ export class AuthService {
         location: member.location,
         walletAddress: member.walletAddress,
         isVerified: member.isVerified,
-        subscription: (member as any).subscription,
+        subscription: member.subscription,
       },
     };
   }
