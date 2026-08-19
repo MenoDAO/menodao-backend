@@ -55,6 +55,13 @@ export class CheckInDto {
   hasConsent: boolean;
 
   @ApiPropertyOptional({
+    description: 'Booked appointment to attach at check-in',
+  })
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
+
+  @ApiPropertyOptional({
     description: 'Comprehensive Dental Check-Up Questionnaire (CDCQ-v1) data',
     type: QuestionnaireDto,
   })

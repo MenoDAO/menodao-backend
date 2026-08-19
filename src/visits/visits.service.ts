@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   NotFoundException,
   Logger,
@@ -14,7 +15,10 @@ import {
   VisitStatus,
   ClaimStatus,
   ClaimType,
+  CareEventType,
 } from '@prisma/client';
+import { CareEventsService } from '../care-intelligence/care-events.service';
+import { AppointmentsService } from '../appointments/appointments.service';
 import { CheckInDto } from './dto/check-in.dto';
 
 // Updated claim limits per tier (KES amounts claimable, not number of claims)
@@ -71,6 +75,8 @@ export class VisitsService {
     private prisma: PrismaService,
     private proceduresService: ProceduresService,
     private smsService: SmsService,
+    @Optional() private careEvents?: CareEventsService,
+    @Optional() private appointments?: AppointmentsService,
   ) {}
 
   /**
@@ -261,6 +267,28 @@ export class VisitsService {
       `Check-in successful for member ${vm.phoneNumber} by staff ${staffId}`,
     );
 
+    void this.careEvents?.track({
+      type: CareEventType.APPOINTMENT_ATTENDED,
+      memberId: vm.id,
+      metadata: { visitId: visit.id, staffId },
+    });
+
+    let appointmentId = dto.appointmentId;
+    if (!appointmentId && this.appointments) {
+      const staff = await this.prisma.staffUser.findUnique({
+        where: { id: staffId },
+        select: { clinicId: true },
+      });
+      const booked = await this.appointments.findOpenForMemberAtClinic(
+        vm.id,
+        staff?.clinicId || undefined,
+      );
+      appointmentId = booked?.id;
+    }
+    if (appointmentId) {
+      await this.appointments?.attachVisit(appointmentId, visit.id, staffId);
+    }
+
     return {
       visit: {
         id: v.id,
@@ -377,6 +405,14 @@ export class VisitsService {
         addedBy: staffId,
       },
     });
+
+    if (visit.procedures.length === 0) {
+      void this.careEvents?.track({
+        type: CareEventType.TREATMENT_STARTED,
+        memberId: visit.memberId,
+        metadata: { visitId: visit.id, procedureId: procedure.id },
+      });
+    }
 
     // Update visit total cost
     const updatedVisit = await this.prisma.visit.update({
@@ -515,6 +551,16 @@ export class VisitsService {
           error instanceof Error ? error.message : 'Unknown error';
         this.logger.error(`Failed to send discharge SMS: ${message}`);
       });
+
+    void this.careEvents?.track({
+      type: CareEventType.TREATMENT_COMPLETED,
+      memberId: visit.memberId,
+      metadata: {
+        visitId: visit.id,
+        proceduresCount: visit.procedures.length,
+        totalCost: visit.totalCost,
+      },
+    });
 
     return {
       visit: dischargedVisit,

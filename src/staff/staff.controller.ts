@@ -8,6 +8,7 @@ import {
   HttpCode,
   ForbiddenException,
   Query,
+  Param,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
@@ -17,7 +18,16 @@ import { CaptchaGuard } from '../captcha/captcha.guard';
 import { EnrollStaffDto } from './dto/enroll-staff.dto';
 import { StaffRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { Request as ExpressRequest } from 'express';
+import type { Request as ExpressRequest } from 'express';
+import { WebAuthnService } from '../webauthn/webauthn.service';
+import {
+  WebAuthnLoginOptionsDto,
+  WebAuthnVerifyDto,
+} from '../webauthn/webauthn.dto';
+import {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/server';
 
 interface AuthenticatedRequest extends ExpressRequest {
   staff: {
@@ -32,7 +42,10 @@ interface AuthenticatedRequest extends ExpressRequest {
 @ApiTags('Staff')
 @Controller('staff')
 export class StaffController {
-  constructor(private staffService: StaffService) {}
+  constructor(
+    private staffService: StaffService,
+    private webauthn: WebAuthnService,
+  ) {}
 
   @Post('login')
   @HttpCode(200)
@@ -41,6 +54,90 @@ export class StaffController {
   @ApiBody({ type: StaffLoginDto })
   async login(@Body() dto: StaffLoginDto) {
     return this.staffService.login(dto.username, dto.password);
+  }
+
+  @Post('webauthn/login/options')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Begin fingerprint / Face ID / Windows Hello login' })
+  async webauthnLoginOptions(
+    @Body() dto: WebAuthnLoginOptionsDto,
+    @Request() req: ExpressRequest,
+  ) {
+    return this.webauthn.authenticationOptions(
+      'staff',
+      dto?.username,
+      originOf(req),
+    );
+  }
+
+  @Post('webauthn/login/verify')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Finish device biometric staff login' })
+  async webauthnLoginVerify(
+    @Body() dto: WebAuthnVerifyDto,
+    @Request() req: ExpressRequest,
+  ) {
+    const staffId = await this.webauthn.verifyAuthentication(
+      'staff',
+      dto.credential as unknown as AuthenticationResponseJSON,
+      originOf(req),
+    );
+    return this.staffService.issueSessionById(staffId);
+  }
+
+  @Post('webauthn/register/options')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Begin registering this device for biometric login' })
+  async webauthnRegisterOptions(@Request() req: AuthenticatedRequest) {
+    const profile = await this.staffService.getProfile(req.staff.id);
+    if (!profile) throw new ForbiddenException('Staff not found');
+    return this.webauthn.registrationOptions(
+      'staff',
+      {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.fullName,
+      },
+      originOf(req),
+    );
+  }
+
+  @Post('webauthn/register/verify')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save this device passkey (public key only)' })
+  async webauthnRegisterVerify(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: WebAuthnVerifyDto,
+  ) {
+    return this.webauthn.verifyRegistration(
+      'staff',
+      req.staff.id,
+      dto.credential as unknown as RegistrationResponseJSON,
+      originOf(req),
+      dto.label,
+    );
+  }
+
+  @Get('webauthn/credentials')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List devices registered for biometric login' })
+  listWebauthn(@Request() req: AuthenticatedRequest) {
+    return this.webauthn.listCredentials('staff', req.staff.id);
+  }
+
+  @Post('webauthn/credentials/:id/delete')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Remove a registered device' })
+  deleteWebauthn(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.webauthn.deleteCredential('staff', req.staff.id, id);
   }
 
   @Post('refresh-captcha')
@@ -156,4 +253,11 @@ export class StaffController {
   async getClinics(@Request() req: AuthenticatedRequest) {
     return this.staffService.getClinics();
   }
+}
+
+function originOf(req: ExpressRequest): string | undefined {
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin) return origin;
+  const referer = req.headers.referer;
+  return typeof referer === 'string' ? referer : undefined;
 }

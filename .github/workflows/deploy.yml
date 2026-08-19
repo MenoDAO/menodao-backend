@@ -187,9 +187,8 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -356,9 +355,8 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -475,9 +473,8 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
@@ -563,9 +560,8 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
           echo "Migration task started: $TASK_ARN"
-          echo "⏳ Waiting 45s for migration to complete..."
-          sleep 45
-          echo "✅ Migration wait complete — proceeding with deploy"
+          chmod +x infrastructure/scripts/wait-ecs-migration.sh
+          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1

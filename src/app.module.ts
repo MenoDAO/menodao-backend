@@ -27,6 +27,9 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RenewalReminderModule } from './renewal-reminders/renewal-reminder.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { CaptchaModule } from './captcha/captcha.module';
+import { CareIntelligenceModule } from './care-intelligence/care-intelligence.module';
+import { AppointmentsModule } from './appointments/appointments.module';
+import { WebAuthnModule } from './webauthn/webauthn.module';
 
 @Module({
   imports: [
@@ -69,6 +72,9 @@ import { CaptchaModule } from './captcha/captcha.module';
     ReferralModule,
     WhatsAppModule,
     RenewalReminderModule,
+    CareIntelligenceModule,
+    AppointmentsModule,
+    WebAuthnModule,
   ],
   controllers: [AppController],
   providers: [AppService],

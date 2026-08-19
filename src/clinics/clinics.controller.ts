@@ -80,6 +80,12 @@ export class ClinicsController {
   async ping() {
     return { status: 'ok', timestamp: new Date().toISOString() };
   }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Approved clinic details for booking' })
+  async getPublicClinic(@Param('id') id: string) {
+    return this.clinicsService.getPublicClinic(id);
+  }
 }
 
 @ApiTags('Admin Clinics')

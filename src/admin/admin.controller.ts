@@ -29,6 +29,16 @@ import {
 } from './dto/admin-search.dto';
 import { ReferralService } from '../referrals/referral.service';
 import { CaptchaGuard } from '../captcha/captcha.guard';
+import { WebAuthnService } from '../webauthn/webauthn.service';
+import {
+  WebAuthnLoginOptionsDto,
+  WebAuthnVerifyDto,
+} from '../webauthn/webauthn.dto';
+import {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/server';
+import type { Request as ExpressRequest } from 'express';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -37,6 +47,7 @@ export class AdminController {
     private adminService: AdminService,
     private auditLogService: AuditLogService,
     private referralService: ReferralService,
+    private webauthn: WebAuthnService,
   ) {}
 
   @Post('login')
@@ -46,6 +57,86 @@ export class AdminController {
   @ApiBody({ type: AdminLoginDto })
   async login(@Body() dto: AdminLoginDto) {
     return this.adminService.login(dto.username, dto.password);
+  }
+
+  @Post('webauthn/login/options')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Begin fingerprint / Face ID login for admin' })
+  webauthnLoginOptions(
+    @Body() dto: WebAuthnLoginOptionsDto,
+    @Request() req: ExpressRequest,
+  ) {
+    return this.webauthn.authenticationOptions(
+      'admin',
+      dto?.username,
+      adminOrigin(req),
+    );
+  }
+
+  @Post('webauthn/login/verify')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Finish device biometric admin login' })
+  async webauthnLoginVerify(
+    @Body() dto: WebAuthnVerifyDto,
+    @Request() req: ExpressRequest,
+  ) {
+    const adminId = await this.webauthn.verifyAuthentication(
+      'admin',
+      dto.credential as unknown as AuthenticationResponseJSON,
+      adminOrigin(req),
+    );
+    return this.adminService.issueSessionById(adminId);
+  }
+
+  @Post('webauthn/register/options')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Begin registering this device for admin biometric login' })
+  async webauthnRegisterOptions(@Request() req) {
+    const profile = await this.adminService.getProfile(req.admin.id);
+    if (!profile) {
+      return { message: 'Admin not found' };
+    }
+    return this.webauthn.registrationOptions(
+      'admin',
+      {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.username,
+      },
+      adminOrigin(req),
+    );
+  }
+
+  @Post('webauthn/register/verify')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Save this device passkey (public key only)' })
+  webauthnRegisterVerify(@Request() req, @Body() dto: WebAuthnVerifyDto) {
+    return this.webauthn.verifyRegistration(
+      'admin',
+      req.admin.id,
+      dto.credential as unknown as RegistrationResponseJSON,
+      adminOrigin(req),
+      dto.label,
+    );
+  }
+
+  @Get('webauthn/credentials')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List devices registered for biometric login' })
+  listWebauthn(@Request() req) {
+    return this.webauthn.listCredentials('admin', req.admin.id);
+  }
+
+  @Post('webauthn/credentials/:id/delete')
+  @UseGuards(AdminAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Remove a registered device' })
+  deleteWebauthn(@Request() req, @Param('id') id: string) {
+    return this.webauthn.deleteCredential('admin', req.admin.id, id);
   }
 
   @Get('profile')
@@ -263,4 +354,11 @@ export class AdminController {
     );
     return { message: 'Withdrawal rejected' };
   }
+}
+
+function adminOrigin(req: ExpressRequest): string | undefined {
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin) return origin;
+  const referer = req.headers.referer;
+  return typeof referer === 'string' ? referer : undefined;
 }

@@ -25,6 +25,7 @@
     "db:validate": "node scripts/validate-database.js"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1113.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -36,6 +37,7 @@
     "@nestjs/swagger": "^11.2.3",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.19.1",
+    "@simplewebauthn/server": "^13.3.2",
     "@storacha/client": "^2.1.3",
     "@types/form-data": "^2.2.1",
     "@ucanto/core": "^10.4.6",
@@ -49,6 +51,7 @@
     "firebase-admin": "^13.6.0",
     "form-data": "^4.0.5",
     "ioredis": "^5.10.1",
+    "nodemailer": "^9.0.5",
     "openai": "^6.35.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -67,6 +70,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
     "@types/uuid": "^10.0.0",

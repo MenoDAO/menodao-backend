@@ -6,8 +6,16 @@ import { ProceduresModule } from '../procedures/procedures.module';
 import { SmsModule } from '../sms/sms.module';
 import { StaffModule } from '../staff/staff.module';
 
+import { AppointmentsModule } from '../appointments/appointments.module';
+
 @Module({
-  imports: [PrismaModule, ProceduresModule, SmsModule, StaffModule],
+  imports: [
+    PrismaModule,
+    ProceduresModule,
+    SmsModule,
+    StaffModule,
+    AppointmentsModule,
+  ],
   controllers: [VisitsController],
   providers: [VisitsService],
   exports: [VisitsService],
