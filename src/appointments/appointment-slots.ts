@@ -16,6 +16,20 @@ export function eatDateStart(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00${EAT}`);
 }
 
+export function eatDateStr(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(
+    date,
+  );
+}
+
+export function isOnClinicGrid(
+  scheduledAt: Date,
+  operatesOnWeekends: boolean,
+): boolean {
+  const slots = generateDaySlots(eatDateStr(scheduledAt), operatesOnWeekends);
+  return slots.some((slot) => slot.getTime() === scheduledAt.getTime());
+}
+
 export function formatEat(date: Date): string {
   return new Intl.DateTimeFormat('en-KE', {
     timeZone: 'Africa/Nairobi',

@@ -4,6 +4,7 @@ import {
   inHourBeforeWindow,
   isBookableTime,
   isNoShowDue,
+  isOnClinicGrid,
   overlaps,
 } from './appointment-slots';
 
@@ -52,5 +53,23 @@ describe('appointment-slots', () => {
     const appt = new Date('2026-08-20T10:00:00+03:00');
     expect(isNoShowDue(appt, new Date('2026-08-20T11:00:00+03:00'))).toBe(false);
     expect(isNoShowDue(appt, new Date('2026-08-20T12:00:00+03:00'))).toBe(true);
+  });
+
+  it('rejects bookings more than 60 days ahead', () => {
+    const now = new Date('2026-08-20T10:00:00+03:00');
+    const tooFar = new Date('2026-10-20T10:00:00+03:00');
+    expect(isBookableTime(tooFar, now)).toMatch(/60 days/i);
+  });
+
+  it('offers weekday slots from 08:00 to 16:30 EAT', () => {
+    const slots = generateDaySlots('2026-08-20', false);
+    expect(slots[0].toISOString()).toBe('2026-08-20T05:00:00.000Z');
+    expect(slots[slots.length - 1].toISOString()).toBe('2026-08-20T13:30:00.000Z');
+  });
+
+  it('only accepts times that sit on the clinic grid', () => {
+    expect(isOnClinicGrid(new Date('2026-08-20T10:00:00+03:00'), false)).toBe(true);
+    expect(isOnClinicGrid(new Date('2026-08-20T10:07:00+03:00'), false)).toBe(false);
+    expect(isOnClinicGrid(new Date('2026-08-23T10:00:00+03:00'), false)).toBe(false);
   });
 });

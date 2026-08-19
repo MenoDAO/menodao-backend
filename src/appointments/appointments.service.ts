@@ -29,6 +29,7 @@ import {
   inHourBeforeWindow,
   isBookableTime,
   isNoShowDue,
+  isOnClinicGrid,
   overlaps,
   SLOT_MINUTES,
 } from './appointment-slots';
@@ -135,6 +136,7 @@ export class AppointmentsService {
     }
 
     const clinic = await this.getClinicForBooking(dto.clinicId);
+    this.assertOnGrid(scheduledAt, clinic.operatesOnWeekends);
     await this.assertSlotFree(clinic.id, scheduledAt, clinic.activeDentalChairs || 1);
 
     const existingOpen = await this.prisma.appointment.findFirst({
@@ -336,11 +338,26 @@ export class AppointmentsService {
     return updated;
   }
 
-  async attachVisit(appointmentId: string, visitId: string, staffId: string) {
+  async attachVisit(
+    appointmentId: string,
+    visitId: string,
+    staffId: string,
+    expected?: { memberId?: string; clinicId?: string },
+  ) {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
     });
-    if (!appointment) return;
+    if (!appointment) {
+      throw new NotFoundException('Appointment not found');
+    }
+    if (expected?.memberId && appointment.memberId !== expected.memberId) {
+      throw new BadRequestException(
+        'This appointment does not belong to the member being checked in.',
+      );
+    }
+    if (expected?.clinicId && appointment.clinicId !== expected.clinicId) {
+      throw new BadRequestException('This appointment is not at this clinic.');
+    }
     if (!OPEN.includes(appointment.status) && appointment.status !== AppointmentStatus.ATTENDED) {
       return;
     }
@@ -426,6 +443,7 @@ export class AppointmentsService {
     const timing = isBookableTime(scheduledAt);
     if (timing) throw new BadRequestException(timing);
     const clinic = await this.getClinicForBooking(appointment.clinicId);
+    this.assertOnGrid(scheduledAt, clinic.operatesOnWeekends);
     await this.assertSlotFree(
       clinic.id,
       scheduledAt,
@@ -553,6 +571,14 @@ export class AppointmentsService {
     });
     if (!staff?.clinicId || staff.clinicId !== clinicId) {
       throw new ForbiddenException('This appointment belongs to another clinic.');
+    }
+  }
+
+  private assertOnGrid(scheduledAt: Date, operatesOnWeekends: boolean) {
+    if (!isOnClinicGrid(scheduledAt, operatesOnWeekends)) {
+      throw new BadRequestException(
+        'Choose a listed clinic slot. Appointments are 30 minutes in Nairobi time.',
+      );
     }
   }
 

@@ -274,11 +274,11 @@ export class VisitsService {
     });
 
     let appointmentId = dto.appointmentId;
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffId },
+      select: { clinicId: true },
+    });
     if (!appointmentId && this.appointments) {
-      const staff = await this.prisma.staffUser.findUnique({
-        where: { id: staffId },
-        select: { clinicId: true },
-      });
       const booked = await this.appointments.findOpenForMemberAtClinic(
         vm.id,
         staff?.clinicId || undefined,
@@ -286,7 +286,10 @@ export class VisitsService {
       appointmentId = booked?.id;
     }
     if (appointmentId) {
-      await this.appointments?.attachVisit(appointmentId, visit.id, staffId);
+      await this.appointments?.attachVisit(appointmentId, visit.id, staffId, {
+        memberId: vm.id,
+        clinicId: staff?.clinicId || undefined,
+      });
     }
 
     return {

@@ -17,6 +17,9 @@ describe('VisitsService', () => {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
     },
+    staffUser: {
+      findUnique: jest.fn(),
+    },
     visit: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
@@ -56,6 +59,7 @@ describe('VisitsService', () => {
     smsService = module.get(SmsService);
 
     jest.clearAllMocks();
+    mockPrisma.staffUser.findUnique.mockResolvedValue({ clinicId: 'clinic-1' });
   });
 
   describe('normalizePhoneNumber', () => {
