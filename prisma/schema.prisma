@@ -44,6 +44,7 @@ model Member {
   visits            Visit[]
   appointments      Appointment[]
   campRegistrations CampRegistration[]
+  webauthnCredentials WebAuthnCredential[]
   commissionLedger  CommissionLedger[]
   withdrawalRecords WithdrawalRecord[]
   dependants        Dependant[]
@@ -417,14 +418,17 @@ model WebAuthnCredential {
   label        String?
   staffUserId  String?
   adminUserId  String?
+  memberId     String?
   createdAt    DateTime @default(now())
   lastUsedAt   DateTime?
 
   staffUser StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
   adminUser AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  member    Member?    @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([staffUserId])
   @@index([adminUserId])
+  @@index([memberId])
 }
 
 model WebAuthnChallenge {

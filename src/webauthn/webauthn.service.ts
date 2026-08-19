@@ -22,6 +22,37 @@ import {
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
+function ownerWhere(kind: WebAuthnKind, userId: string) {
+  if (kind === 'staff') return { staffUserId: userId };
+  if (kind === 'admin') return { adminUserId: userId };
+  return { memberId: userId };
+}
+
+function ownerIdOf(
+  kind: WebAuthnKind,
+  stored: {
+    staffUserId: string | null;
+    adminUserId: string | null;
+    memberId: string | null;
+  },
+): string | null {
+  if (kind === 'staff') return stored.staffUserId;
+  if (kind === 'admin') return stored.adminUserId;
+  return stored.memberId;
+}
+
+function normalizePhone(phone: string): string {
+  let cleaned = phone.replace(/[\s\-()]/g, '');
+  if (cleaned.startsWith('0')) {
+    cleaned = '+254' + cleaned.substring(1);
+  } else if (cleaned.startsWith('254')) {
+    cleaned = '+' + cleaned;
+  } else if (!cleaned.startsWith('+')) {
+    cleaned = '+' + cleaned;
+  }
+  return cleaned;
+}
+
 @Injectable()
 export class WebAuthnService {
   constructor(
@@ -56,7 +87,7 @@ export class WebAuthnService {
   ) {
     const { origin, rpID } = this.rp(originHeader);
     const existing = await this.prisma.webAuthnCredential.findMany({
-      where: kind === 'staff' ? { staffUserId: user.id } : { adminUserId: user.id },
+      where: ownerWhere(kind, user.id),
       select: { credentialId: true, transports: true },
     });
     const options = await generateRegistrationOptions({
@@ -69,7 +100,7 @@ export class WebAuthnService {
       preferredAuthenticatorType: 'localDevice',
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
-        residentKey: 'preferred',
+        residentKey: 'required',
         userVerification: 'required',
       },
       excludeCredentials: existing.map((row) => ({
@@ -126,6 +157,7 @@ export class WebAuthnService {
         label: label?.trim() || 'This device',
         staffUserId: kind === 'staff' ? userId : null,
         adminUserId: kind === 'admin' ? userId : null,
+        memberId: kind === 'member' ? userId : null,
       },
     });
     return {
@@ -150,10 +182,7 @@ export class WebAuthnService {
       if (account) {
         userId = account.id;
         const creds = await this.prisma.webAuthnCredential.findMany({
-          where:
-            kind === 'staff'
-              ? { staffUserId: account.id }
-              : { adminUserId: account.id },
+          where: ownerWhere(kind, account.id),
         });
         allowCredentials = creds.map((row) => ({
           id: row.credentialId,
@@ -187,8 +216,7 @@ export class WebAuthnService {
     const stored = await this.prisma.webAuthnCredential.findUnique({
       where: { credentialId: response.id },
     });
-    const ownerId =
-      kind === 'staff' ? stored?.staffUserId : stored?.adminUserId;
+    const ownerId = stored ? ownerIdOf(kind, stored) : null;
     if (!stored || !ownerId) {
       throw new UnauthorizedException('Unknown or unregistered device');
     }
@@ -230,7 +258,7 @@ export class WebAuthnService {
 
   async listCredentials(kind: WebAuthnKind, userId: string) {
     return this.prisma.webAuthnCredential.findMany({
-      where: kind === 'staff' ? { staffUserId: userId } : { adminUserId: userId },
+      where: ownerWhere(kind, userId),
       select: {
         id: true,
         label: true,
@@ -246,7 +274,7 @@ export class WebAuthnService {
     const row = await this.prisma.webAuthnCredential.findFirst({
       where: {
         id,
-        ...(kind === 'staff' ? { staffUserId: userId } : { adminUserId: userId }),
+        ...ownerWhere(kind, userId),
       },
     });
     if (!row) throw new BadRequestException('Device not found');
@@ -256,13 +284,21 @@ export class WebAuthnService {
 
   private async findAccount(kind: WebAuthnKind, username: string) {
     if (kind === 'staff') {
-      return this.prisma.staffUser.findUnique({
-        where: { username },
-        select: { id: true, isActive: true },
-      }).then((row) => (row?.isActive ? row : null));
+      return this.prisma.staffUser
+        .findUnique({
+          where: { username },
+          select: { id: true, isActive: true },
+        })
+        .then((row) => (row?.isActive ? row : null));
     }
-    return this.prisma.adminUser.findUnique({
-      where: { username },
+    if (kind === 'admin') {
+      return this.prisma.adminUser.findUnique({
+        where: { username },
+        select: { id: true },
+      });
+    }
+    return this.prisma.member.findUnique({
+      where: { phoneNumber: normalizePhone(username) },
       select: { id: true },
     });
   }

@@ -210,16 +210,36 @@ export class AuthService {
       },
     });
 
-    // Generate JWT (captchaVerified set when Turnstile is enabled on verify-otp)
+    return this.issueSession(member);
+  }
+
+  async issueSessionById(memberId: string) {
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      include: { subscription: true },
+    });
+    if (!member) {
+      throw new UnauthorizedException('Member not found');
+    }
+    return this.issueSession(member);
+  }
+
+  private issueSession(member: {
+    id: string;
+    phoneNumber: string;
+    fullName: string | null;
+    location: string | null;
+    walletAddress: string | null;
+    isVerified: boolean;
+    subscription?: unknown;
+  }) {
     const payload = {
       sub: member.id,
       phone: member.phoneNumber,
       captchaVerified: true,
     };
-    const accessToken = this.jwtService.sign(payload);
-
     return {
-      accessToken,
+      accessToken: this.jwtService.sign(payload),
       member: {
         id: member.id,
         phoneNumber: member.phoneNumber,
@@ -227,7 +247,7 @@ export class AuthService {
         location: member.location,
         walletAddress: member.walletAddress,
         isVerified: member.isVerified,
-        subscription: (member as any).subscription,
+        subscription: member.subscription,
       },
     };
   }

@@ -1,4 +1,4 @@
-export type WebAuthnKind = 'staff' | 'admin';
+export type WebAuthnKind = 'staff' | 'admin' | 'member';
 
 const DEFAULT_ORIGINS = [
   'http://localhost:3000',
