@@ -296,10 +296,22 @@ export class AdminController {
 
   // Audit Logs
 
-  @Get('audit-logs')
+  @Get('audit-logs/me')
   @UseGuards(AdminAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get recent audit logs' })
+  @ApiOperation({ summary: "Get this admin's recent actions" })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getMyAuditLogs(@Request() req, @Query('limit') limit?: number) {
+    return this.auditLogService.getMyActivity(req.admin.id, limit || 20);
+  }
+
+  @Get('audit-logs')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get the global operations log (SUPER_ADMIN only)',
+  })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getAuditLogs(@Query('limit') limit?: number) {
     return this.auditLogService.getRecentLogs(limit || 50);

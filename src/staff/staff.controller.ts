@@ -158,6 +158,17 @@ export class StaffController {
     return this.staffService.getProfile(req.staff.id);
   }
 
+  @Get('activity')
+  @UseGuards(StaffAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Recent activity for the logged-in staff member' })
+  async getActivity(
+    @Request() req: AuthenticatedRequest,
+    @Query('limit') limit?: string,
+  ) {
+    return this.staffService.getActivity(req.staff.id, Number(limit) || 20);
+  }
+
   @Get('users')
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
