@@ -11,6 +11,7 @@ build
 .env.*.local
 .env.production
 .env.development
+.env.claimvault
 
 # Prisma generated
 /generated/prisma

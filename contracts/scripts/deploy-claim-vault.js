@@ -114,8 +114,7 @@ async function main() {
     `CLAIM_VAULT_CONTRACT_ADDRESS=${vaultAddress}`,
     `CLAIM_VAULT_CHAIN_ID=${chainId}`,
     `AGENT_SIGNER_ADDRESS=${agentSignerAddress}`,
-    `# Hackathon shortcut: AGENT_SIGNER_PRIVATE_KEY can equal BLOCKCHAIN_PRIVATE_KEY for demo`,
-    `# In production these MUST be separate keys`,
+    `# Do not commit this file. AGENT_SIGNER_PRIVATE_KEY belongs in Secrets Manager only.`,
   ].join('\n');
 
   fs.writeFileSync(path.join(__dirname, '../.env.claimvault'), envContent);

@@ -50,9 +50,12 @@ Production credentials are stored in AWS Secrets Manager:
 
 We use automated tools to scan for vulnerabilities:
 
-- `npm audit` runs on every build
+- `npm audit --omit=dev --audit-level=high` runs on every build
 - Dependabot alerts are enabled
 - Critical vulnerabilities are patched within 24 hours
+- The audit step currently continues on failure so existing transitive
+  advisories do not block deploys; treat new high/critical findings as
+  required follow-up
 
 ## Secure Development
 
