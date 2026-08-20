@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuditLogEntry {
@@ -62,8 +63,12 @@ export class AuditLogService {
   /**
    * Get all actions by a specific admin
    */
-  async getAdminActions(adminId: string, dateRange?: { from: Date; to: Date }) {
-    const where: any = { adminId };
+  async getAdminActions(
+    adminId: string,
+    dateRange?: { from: Date; to: Date },
+    limit = 20,
+  ) {
+    const where: Prisma.AuditLogWhereInput = { adminId };
 
     if (dateRange) {
       where.timestamp = {
@@ -75,8 +80,27 @@ export class AuditLogService {
     return this.prisma.auditLog.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: 100,
+      take: Math.min(50, Math.max(1, limit)),
     });
+  }
+
+  async getMyActivity(adminId: string, limit = 20) {
+    const logs = await this.getAdminActions(adminId, undefined, limit);
+    const titles: Record<string, string> = {
+      SUSPEND_MEMBER: 'Suspended a member',
+      DEACTIVATE_SUBSCRIPTION: 'Deactivated a subscription',
+      VERIFY_PAYMENT: 'Verified a payment',
+      SYNC_PAYMENT_STATUS: 'Synced payment status',
+    };
+    return {
+      items: logs.map((log) => ({
+        id: log.id,
+        at: log.timestamp.toISOString(),
+        kind: 'AUDIT' as const,
+        title: titles[log.action] || log.action.replace(/_/g, ' ').toLowerCase(),
+        detail: [log.targetType, log.reason].filter(Boolean).join(' — ') || undefined,
+      })),
+    };
   }
 
   /**

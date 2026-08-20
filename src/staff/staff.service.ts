@@ -7,9 +7,14 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { StaffRole } from '@prisma/client';
+import { AppointmentActor, StaffRole } from '@prisma/client';
 import { SmsService } from '../sms/sms.service';
 import * as bcrypt from 'bcrypt';
+import {
+  activityFromAppointmentEvents,
+  activityFromVisits,
+  mergeActivity,
+} from './staff-activity';
 
 @Injectable()
 export class StaffService implements OnModuleInit {
@@ -304,12 +309,72 @@ export class StaffService implements OnModuleInit {
             id: true,
             name: true,
             subCounty: true,
+            physicalLocation: true,
+            operatingHours: true,
+            operatesOnWeekends: true,
+            status: true,
+            email: true,
+            whatsappNumber: true,
+            leadDentistName: true,
+            branchName: true,
+            parentClinic: {
+              select: { id: true, name: true },
+            },
           },
         },
       },
     });
 
     return staff;
+  }
+
+  async getActivity(staffId: string, limit = 20) {
+    const take = Math.min(50, Math.max(1, limit));
+    const [visits, appointmentEvents] = await Promise.all([
+      this.prisma.visit.findMany({
+        where: { staffId },
+        orderBy: { checkedInAt: 'desc' },
+        take,
+        select: {
+          id: true,
+          checkedInAt: true,
+          dischargedAt: true,
+          member: { select: { fullName: true, phoneNumber: true } },
+        },
+      }),
+      this.prisma.appointmentEvent.findMany({
+        where: { actor: AppointmentActor.STAFF, actorId: staffId },
+        orderBy: { createdAt: 'desc' },
+        take,
+        select: {
+          id: true,
+          type: true,
+          reason: true,
+          createdAt: true,
+          appointment: {
+            select: {
+              clinic: { select: { name: true } },
+              member: { select: { fullName: true, phoneNumber: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const items = mergeActivity(
+      [
+        ...activityFromVisits(visits),
+        ...activityFromAppointmentEvents(appointmentEvents),
+      ],
+      take,
+    );
+
+    return {
+      items: items.map((item) => ({
+        ...item,
+        at: item.at.toISOString(),
+      })),
+    };
   }
 
   /**
