@@ -31,6 +31,9 @@ logs
 *.log
 npm-debug.log*
 
+# Uploaded site media
+/uploads
+
 # Test coverage
 coverage
 
