@@ -44,9 +44,16 @@ export class EmailService {
     }
   }
 
-  async send(to: string, subject: string, text: string): Promise<boolean> {
-    if (!to?.includes('@')) {
-      this.logger.warn(`Skipping email; invalid recipient "${to}"`);
+  async send(
+    to: string | string[],
+    subject: string,
+    text: string,
+  ): Promise<boolean> {
+    const recipients = (Array.isArray(to) ? to : [to]).filter((addr) =>
+      addr.includes('@'),
+    );
+    if (recipients.length === 0) {
+      this.logger.warn('Skipping email; no valid recipients');
       return false;
     }
     if (this.ses) {
@@ -54,7 +61,7 @@ export class EmailService {
         await this.ses.send(
           new SendEmailCommand({
             FromEmailAddress: this.from,
-            Destination: { ToAddresses: [to] },
+            Destination: { ToAddresses: recipients },
             Content: {
               Simple: {
                 Subject: { Data: subject, Charset: 'UTF-8' },
@@ -66,24 +73,30 @@ export class EmailService {
         return true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'unknown';
-        this.logger.error(`SES send failed to ${to}: ${message}`);
+        this.logger.error(
+          `SES send failed to ${recipients.join(', ')}: ${message}`,
+        );
       }
     }
     if (!this.transporter) {
-      this.logger.log(`[DEV EMAIL] To: ${to}\nSubject: ${subject}\n${text}`);
+      this.logger.log(
+        `[DEV EMAIL] To: ${recipients.join(', ')}\nSubject: ${subject}\n${text}`,
+      );
       return true;
     }
     try {
       await this.transporter.sendMail({
         from: this.from,
-        to,
+        to: recipients.join(', '),
         subject,
         text,
       });
       return true;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'unknown';
-      this.logger.error(`Failed to email ${to}: ${message}`);
+      this.logger.error(
+        `Failed to email ${recipients.join(', ')}: ${message}`,
+      );
       return false;
     }
   }

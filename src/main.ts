@@ -11,12 +11,15 @@ async function bootstrap() {
   const defaultOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3100',
     'https://menodao.org',
     'https://www.menodao.org',
     'https://app.menodao.org',
     'https://dev.menodao.org',
     'https://menodao.co.ke',
     'https://www.menodao.co.ke',
+    'https://drpapifoundation.org',
+    'https://www.drpapifoundation.org',
   ];
   const allowedOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())

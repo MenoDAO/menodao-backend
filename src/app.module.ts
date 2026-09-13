@@ -30,6 +30,7 @@ import { CaptchaModule } from './captcha/captcha.module';
 import { CareIntelligenceModule } from './care-intelligence/care-intelligence.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { WebAuthnModule } from './webauthn/webauthn.module';
+import { FoundationSiteModule } from './foundation-site/foundation-site.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { WebAuthnModule } from './webauthn/webauthn.module';
     CareIntelligenceModule,
     AppointmentsModule,
     WebAuthnModule,
+    FoundationSiteModule,
   ],
   controllers: [AppController],
   providers: [AppService],
