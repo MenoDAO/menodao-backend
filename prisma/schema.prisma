@@ -21,6 +21,10 @@ model Member {
   county         String?
   preferredChain    String?  @default("celo")
   preferredLanguage String?  @default("en")
+  // WhatsApp bot link: set on first inbound message when the phone matches
+  // an existing member — no separate bot signup is required for known numbers.
+  whatsappId      String?  @unique
+  whatsappLinkedAt DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -48,6 +52,10 @@ model Member {
   commissionLedger  CommissionLedger[]
   withdrawalRecords WithdrawalRecord[]
   dependants        Dependant[]
+  botMessages       BotMessageLog[]
+  botLeads          BotLead[]
+  botBookingDraft   BotBookingDraft?
+  botLlmLogs        BotLlmCallLog[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -1184,4 +1192,71 @@ model FoundationInquiry {
 
   @@index([kind, createdAt])
   @@index([createdAt])
+}
+
+// ─── WhatsApp bot (ported from menobot) ─────────────────────────────────────
+// Kept separate from Member/Clinic/Appointment. Bot tables hold conversation
+// state only; Clinic + Appointment remain the source of truth.
+
+model BotMessageLog {
+  id        String   @id @default(uuid())
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+  role      String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([memberId])
+  @@index([createdAt])
+}
+
+model BotLead {
+  id        String   @id @default(uuid())
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+  type      String
+  notes     String?  @db.Text
+  status    String   @default("NEW")
+  createdAt DateTime @default(now())
+
+  @@index([memberId])
+}
+
+model BotBookingDraft {
+  id        String   @id @default(uuid())
+  memberId  String   @unique
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  clinicId  String?
+  service   String?
+  date      String?
+  time      String?
+  clientName String?
+  rawDateMentioned String?
+  language  String   @default("en")
+  status    String   @default("COLLECTING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BotLlmCallLog {
+  id             String   @id @default(uuid())
+  memberId       String?
+  member         Member?  @relation(fields: [memberId], references: [id])
+  provider       String
+  model          String
+  operation      String
+  responseFormat String?
+  systemPrompt   String   @db.Text
+  userPrompt     String   @db.Text
+  history        String   @db.Text
+  response       String?  @db.Text
+  status         String
+  error          String?  @db.Text
+  durationMs     Int
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([memberId])
+  @@index([status, createdAt])
+  @@index([operation, createdAt])
 }

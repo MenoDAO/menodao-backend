@@ -24,6 +24,7 @@ import { Web3Module } from './web3/web3.module';
 import { ChampionsModule } from './champions/champions.module';
 import { ReferralModule } from './referrals/referral.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { BotModule } from './bot/bot.module';
 import { RenewalReminderModule } from './renewal-reminders/renewal-reminder.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { CaptchaModule } from './captcha/captcha.module';
@@ -72,6 +73,7 @@ import { FoundationSiteModule } from './foundation-site/foundation-site.module';
     ChampionsModule,
     ReferralModule,
     WhatsAppModule,
+    BotModule,
     RenewalReminderModule,
     CareIntelligenceModule,
     AppointmentsModule,
