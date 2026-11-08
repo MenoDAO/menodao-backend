@@ -4,9 +4,9 @@ name: CI/CD
 # image to ECR (us-west-2) with OIDC, then deploy over SSH to the Lightsail host.
 #
 # Required repository variables (Settings -> Secrets and variables -> Actions):
-#   ECR_REGISTRY       e.g. 123456789551.dkr.ecr.us-west-2.amazonaws.com
-#   AWS_ROLE_ARN_DEV   arn:aws:iam::<account>:role/menodao-ci-dev
-#   AWS_ROLE_ARN_PROD  arn:aws:iam::<account>:role/menodao-ci-prod
+#   ECR_REGISTRY       e.g. 854481201551.dkr.ecr.us-west-2.amazonaws.com
+#   AWS_ROLE_ARN_DEV   arn:aws:iam::854481201551:role/menodao-ci-dev
+#   AWS_ROLE_ARN_PROD  arn:aws:iam::854481201551:role/menodao-ci-prod
 #   DEPLOY_ENABLED     "true" once the host has .env files and the repo cloned
 #
 # Required repository secrets:
