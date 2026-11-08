@@ -71,4 +71,4 @@ CREATE TABLE "BotLlmCallLog" (
 CREATE INDEX "BotLlmCallLog_createdAt_idx" ON "BotLlmCallLog"("createdAt");
 CREATE INDEX "BotLlmCallLog_memberId_idx" ON "BotLlmCallLog"("memberId");
 ALTER TABLE "BotLlmCallLog" ADD CONSTRAINT "BotLlmCallLog_memberId_fkey"
-  FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;

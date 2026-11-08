@@ -84,8 +84,8 @@ export const SLOT_TAKEN = msg(
 // ── Read-back / confirmation ──────────────────────────────────────────────────
 
 export const READ_BACK = msg(
-  '📋 Please confirm your appointment:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n\nIs everything correct? (Yes / No)',
-  '📋 Tafadhali thibitisha miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n\nJe, kila kitu ni sawa? (Ndiyo / Hapana)', // needs native speaker review
+  '📋 Please confirm your appointment:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n\nIs everything correct? (Yes / No)\n\n_By replying Yes you consent to sharing these details with the clinic._',
+  '📋 Tafadhali thibitisha miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n\nJe, kila kitu ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo unakubali maelezo haya kushirikiwa na kliniki._', // needs native speaker review
 );
 
 export const BOOKING_AWAITING_CONFIRMATION = msg(

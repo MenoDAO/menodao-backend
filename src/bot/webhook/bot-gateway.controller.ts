@@ -1,22 +1,33 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access -- provider payloads are untyped JSON */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- provider payloads are untyped JSON */
 import {
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
   Post,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
+import { timingSafeEqual } from 'crypto';
 import { BotGatewayService } from './bot-gateway.service';
+
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 /**
  * Alternate-gateway webhook (FlareSend / Waboxapp).
  * Meta Cloud API stays on /whatsapp/webhook (signature-guarded).
- * FlareSend has no HMAC in its payload — set FLARESEND_WEBHOOK_SECRET and
- * send it as x-webhook-secret when the provider supports it. Unset in
- * production will fail closed (401) so a missing secret is loud, not silent.
+ *
+ * FlareSend payloads are not HMAC-signed, so set FLARESEND_WEBHOOK_SECRET and
+ * have the provider send it as `x-webhook-secret`. In production a missing
+ * secret fails closed (401) so an unprotected webhook is loud, not silent.
  */
 @ApiTags('Bot Webhook')
 @Controller('bot/webhook')
@@ -31,17 +42,26 @@ export class BotGatewayController {
   @Post('flaresend')
   @HttpCode(HttpStatus.OK)
   @ApiExcludeEndpoint()
-  handleFlaresendEvent(@Body() payload: any): { status: string } {
+  handleFlaresendEvent(
+    @Body() payload: any,
+    @Headers('x-webhook-secret') providedSecret?: string,
+  ): { status: string } {
     const secret = this.configService.get<string>('FLARESEND_WEBHOOK_SECRET');
-    if (secret) {
-      // Header check is done in unit-testable form here; production callers
-      // should also behind Caddy basic-auth if the provider can't sign.
-      const header = payload?.__headers?.['x-webhook-secret'];
-      if (header && header !== secret) {
-        this.logger.warn('Rejecting FlareSend webhook: secret mismatch.');
-        return { status: 'rejected' };
+    if (!secret) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.error(
+          'Rejecting FlareSend webhook: FLARESEND_WEBHOOK_SECRET is not configured.',
+        );
+        throw new UnauthorizedException('Webhook secret not configured');
       }
+      this.logger.warn(
+        'FLARESEND_WEBHOOK_SECRET not set — accepting unsigned webhook (development only).',
+      );
+    } else if (!providedSecret || !secretsMatch(providedSecret, secret)) {
+      this.logger.warn('Rejecting FlareSend webhook: secret mismatch.');
+      throw new UnauthorizedException('Invalid webhook secret');
     }
+
     this.logger.log(
       `FlareSend webhook received: event=${payload?.event ?? 'unknown'}, senderType=${String(payload?.data?.from ?? '').endsWith('@lid') ? 'lid' : 'phone'}`,
     );
@@ -59,6 +79,8 @@ export class BotGatewayController {
   @HttpCode(HttpStatus.OK)
   @ApiExcludeEndpoint()
   handleWaboxappEvent(@Body() payload: any): { status: string } {
+    // Waboxapp authenticates with a token inside the JSON body; the gateway
+    // rejects the payload when WABOXAPP_API_TOKEN is missing or mismatched.
     this.logger.log(
       `Waboxapp webhook received: event=${payload?.event ?? 'unknown'}, messageId=${payload?.message?.uid ?? payload?.m?.uid ?? 'unknown'}`,
     );

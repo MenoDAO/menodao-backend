@@ -159,23 +159,23 @@ export class BookingService {
     };
     return {
       timezone:
-        this.configService.get<string>('BOOKING_TIMEZONE') ?? DEFAULT_TZ,
+        this.configService.get<string>('BOT_BOOKING_TIMEZONE') ?? DEFAULT_TZ,
       openDays: parseOpenDays(
-        this.configService.get<string>('BOOKING_OPEN_DAYS'),
+        this.configService.get<string>('BOT_BOOKING_OPEN_DAYS'),
       ),
       openTime:
-        this.configService.get<string>('BOOKING_OPEN_TIME') ??
+        this.configService.get<string>('BOT_BOOKING_OPEN_TIME') ??
         DEFAULT_OPEN_TIME,
       closeTime:
-        this.configService.get<string>('BOOKING_CLOSE_TIME') ??
+        this.configService.get<string>('BOT_BOOKING_CLOSE_TIME') ??
         DEFAULT_CLOSE_TIME,
       slotMinutes: parseInt(
-        this.configService.get<string>('BOOKING_SLOT_MINUTES') ??
+        this.configService.get<string>('BOT_BOOKING_SLOT_MINUTES') ??
           String(DEFAULT_SLOT_MINUTES),
         10,
       ),
       draftTtlMinutes: parseInt(
-        this.configService.get<string>('BOOKING_DRAFT_TTL_MINUTES') ?? '30',
+        this.configService.get<string>('BOT_BOOKING_DRAFT_TTL_MINUTES') ?? '30',
         10,
       ),
     };
@@ -530,22 +530,49 @@ export class BookingService {
 
     try {
       const appointment = await this.prisma.$transaction(async (tx) => {
-        if (draft.clinicId) {
-          const conflict = await tx.appointment.findFirst({
-            where: {
-              clinicId: draft.clinicId,
-              scheduledAt,
-              status: {
-                in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
-              },
+        // clinicId is mandatory on Appointment; the draft state machine
+        // requires it before confirmation, so this is a defensive guard.
+        if (!draft.clinicId) throw new Error('MISSING_CLINIC');
+
+        // Match AppointmentsService capacity semantics: count overlapping
+        // appointments against the clinic's active chairs, not "any booking
+        // blocks the slot" (clinics can run several chairs in parallel).
+        const clinicRow = await tx.clinic.findUnique({
+          where: { id: draft.clinicId },
+          select: { activeDentalChairs: true },
+        });
+        if (!clinicRow) throw new Error('MISSING_CLINIC');
+        const chairs = Math.max(clinicRow.activeDentalChairs || 1, 1);
+        const windowStart = new Date(
+          scheduledAt.getTime() - this.cfg.slotMinutes * 60_000,
+        );
+        const windowEnd = new Date(
+          scheduledAt.getTime() + this.cfg.slotMinutes * 60_000,
+        );
+        const nearby = await tx.appointment.findMany({
+          where: {
+            clinicId: draft.clinicId,
+            scheduledAt: { gte: windowStart, lt: windowEnd },
+            status: {
+              in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
             },
-          });
-          if (conflict) throw new Error('SLOT_CONFLICT');
-        }
+          },
+          select: { scheduledAt: true, durationMinutes: true },
+        });
+        const taken = nearby.filter((row) =>
+          this.overlaps(
+            scheduledAt,
+            this.cfg.slotMinutes,
+            row.scheduledAt,
+            row.durationMinutes,
+          ),
+        ).length;
+        if (taken >= chairs) throw new Error('SLOT_CONFLICT');
+
         const appt = await tx.appointment.create({
           data: {
             memberId: draft.memberId,
-            clinicId: draft.clinicId ?? '',
+            clinicId: draft.clinicId,
             scheduledAt,
             intakeReason: draft.service ?? 'General consultation',
             hasConsent: true,
@@ -622,6 +649,14 @@ export class BookingService {
     const from = DateTime.fromJSDate(fromUtc).setZone(this.cfg.timezone);
     const slots = daySlots(this.cfg);
     const results: DateTime[] = [];
+    let chairs = 1;
+    if (clinicId) {
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id: clinicId },
+        select: { activeDentalChairs: true },
+      });
+      chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
+    }
     for (
       let dayOffset = 0;
       dayOffset < 14 && results.length < count;
@@ -636,21 +671,48 @@ export class BookingService {
         const candidateDt = DateTime.fromJSDate(candidate);
         if (candidateDt <= DateTime.fromJSDate(fromUtc)) continue;
         if (clinicId) {
-          const conflict = await this.prisma.appointment.findFirst({
+          const windowStart = new Date(
+            candidate.getTime() - this.cfg.slotMinutes * 60_000,
+          );
+          const windowEnd = new Date(
+            candidate.getTime() + this.cfg.slotMinutes * 60_000,
+          );
+          const nearby = await this.prisma.appointment.findMany({
             where: {
               clinicId,
-              scheduledAt: candidate,
+              scheduledAt: { gte: windowStart, lt: windowEnd },
               status: {
                 in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
               },
             },
+            select: { scheduledAt: true, durationMinutes: true },
           });
-          if (conflict) continue;
+          const taken = nearby.filter((row) =>
+            this.overlaps(
+              candidate,
+              this.cfg.slotMinutes,
+              row.scheduledAt,
+              row.durationMinutes,
+            ),
+          ).length;
+          if (taken >= chairs) continue;
         }
         results.push(DateTime.fromJSDate(candidate).setZone(this.cfg.timezone));
       }
     }
     return results;
+  }
+
+  /** Same overlap rule as AppointmentsService.assertSlotFree. */
+  private overlaps(
+    startA: Date,
+    durationA: number,
+    startB: Date,
+    durationB: number,
+  ): boolean {
+    const endA = startA.getTime() + durationA * 60_000;
+    const endB = startB.getTime() + durationB * 60_000;
+    return startA.getTime() < endB && startB.getTime() < endA;
   }
 
   async bookFromTranscript(

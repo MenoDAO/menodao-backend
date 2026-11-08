@@ -8,7 +8,7 @@ import { WhatsappClientsModule } from './whatsapp-clients/whatsapp-clients.modul
 import { FlaresendApiClient } from './whatsapp-clients/flaresend-api.client';
 import { WaboxappApiClient } from './whatsapp-clients/waboxapp-api.client';
 import { WHATSAPP_CLIENT } from './whatsapp-clients/whatsapp-provider.interface';
-import { BotIdentityService } from './identity/bot-identity.service';
+import { BotIdentityModule } from './identity/identity.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
 
@@ -22,8 +22,10 @@ const whatsappProviderFactory: Provider = {
     flaresendApiClient: FlaresendApiClient,
     waboxappApiClient: WaboxappApiClient,
   ) => {
+    // BOT_ prefix: this selects the bot gateway's outbound client only.
+    // The backend's own Meta stack (/whatsapp/webhook) is unaffected.
     const provider = (
-      configService.get<string>('WHATSAPP_PROVIDER') ?? 'flaresend'
+      configService.get<string>('BOT_WHATSAPP_PROVIDER') ?? 'flaresend'
     ).toLowerCase();
     logger.log(`Wiring WHATSAPP_CLIENT token to "${provider}" provider.`);
     switch (provider) {
@@ -34,7 +36,7 @@ const whatsappProviderFactory: Provider = {
         // Fall back to Waboxapp client shape so bot gateway still boots;
         // Meta inbound text stays on /whatsapp/webhook in production.
         logger.warn(
-          'WHATSAPP_PROVIDER=meta — bot gateway send uses Waboxapp client; configure Meta via /whatsapp/webhook.',
+          'BOT_WHATSAPP_PROVIDER=meta — bot gateway send uses Waboxapp client; configure Meta via /whatsapp/webhook.',
         );
         return waboxappApiClient;
       case 'flaresend':
@@ -52,9 +54,10 @@ const whatsappProviderFactory: Provider = {
     BookingModule,
     VoicePipelineModule,
     WhatsappClientsModule,
+    BotIdentityModule,
   ],
   controllers: [BotGatewayController],
-  providers: [whatsappProviderFactory, BotIdentityService, BotGatewayService],
-  exports: [BotIdentityService, BotGatewayService],
+  providers: [whatsappProviderFactory, BotGatewayService],
+  exports: [BotIdentityModule, BotGatewayService],
 })
 export class BotModule {}

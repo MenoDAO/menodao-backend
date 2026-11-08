@@ -272,11 +272,13 @@ export class BotGatewayService {
     if (!member) return;
     const recipientPhone = member.phoneNumber;
     const staticReply = this.configService
-      .get<string>('WHATSAPP_STATIC_REPLY')
+      .get<string>('BOT_WHATSAPP_STATIC_REPLY')
       ?.trim();
     let replyText: string;
     if (staticReply) {
-      this.logger.log('Using WHATSAPP_STATIC_REPLY; skipping AI generation.');
+      this.logger.log(
+        'Using BOT_WHATSAPP_STATIC_REPLY; skipping AI generation.',
+      );
       replyText = staticReply;
       await this.prisma.botMessageLog.createMany({
         data: [

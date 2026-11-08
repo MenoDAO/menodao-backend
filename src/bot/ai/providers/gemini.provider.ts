@@ -26,7 +26,7 @@ export class GeminiProvider implements ILlmProvider {
       const apiKey = this.configService.get<string>('GEMINI_API_KEY');
       if (!apiKey) {
         throw new Error(
-          'GEMINI_API_KEY is required when LLM_PROVIDER_NAME=gemini.',
+          'GEMINI_API_KEY is required when BOT_LLM_PROVIDER=gemini.',
         );
       }
       this.client = new GoogleGenAI({ apiKey });

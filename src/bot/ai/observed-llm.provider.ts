@@ -5,6 +5,8 @@ import {
   ILlmProvider,
 } from './interfaces/llm-provider.interface';
 
+const REDACTED = '[redacted: set BOT_LLM_LOG_PROMPTS=true to persist]';
+
 export class ObservedLlmProvider implements ILlmProvider {
   private readonly logger = new Logger(ObservedLlmProvider.name);
 
@@ -13,6 +15,7 @@ export class ObservedLlmProvider implements ILlmProvider {
     private readonly prisma: PrismaService,
     private readonly providerName: string,
     private readonly model: string,
+    private readonly logPrompts: boolean = false,
     private readonly memberId?: string | null,
   ) {}
 
@@ -51,12 +54,16 @@ export class ObservedLlmProvider implements ILlmProvider {
           model: this.model,
           operation: options.operation ?? 'unspecified',
           responseFormat: options.responseFormat ?? null,
-          systemPrompt: options.systemPrompt,
-          userPrompt: options.userPrompt,
-          history: JSON.stringify(options.history ?? []),
-          response: response ?? null,
+          // Prompts and replies carry clinical/PII content; persist metadata
+          // only unless explicitly enabled for debugging.
+          systemPrompt: this.logPrompts ? options.systemPrompt : REDACTED,
+          userPrompt: this.logPrompts ? options.userPrompt : REDACTED,
+          history: this.logPrompts
+            ? JSON.stringify(options.history ?? [])
+            : REDACTED,
+          response: this.logPrompts ? (response ?? null) : REDACTED,
           status: error === undefined ? 'SUCCESS' : 'FAILED',
-          error: error ?? null,
+          error: error === undefined ? null : error.slice(0, 500),
           durationMs,
         },
       });
