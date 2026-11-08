@@ -1,69 +1,48 @@
-name: Deploy Backend
+name: CI/CD
+
+# Build/test on every PR and push. On a push to dev/main, build and push the
+# image to ECR (us-west-2) with OIDC, then deploy over SSH to the Lightsail host.
+#
+# Required repository variables (Settings -> Secrets and variables -> Actions):
+#   ECR_REGISTRY       e.g. 123456789551.dkr.ecr.us-west-2.amazonaws.com
+#   AWS_ROLE_ARN_DEV   arn:aws:iam::<account>:role/menodao-ci-dev
+#   AWS_ROLE_ARN_PROD  arn:aws:iam::<account>:role/menodao-ci-prod
+#   DEPLOY_ENABLED     "true" once the host has .env files and the repo cloned
+#
+# Required repository secrets:
+#   DEPLOY_SSH_KEY     private key for the host user
+#   DEPLOY_HOST        host IP or DNS name
+#   DEPLOY_USER        optional, defaults to ubuntu
 
 on:
   push:
-    branches:
-      - main
-      - dev
-  issue_comment:
-    types: [created]
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: us-west-2
   ECR_REPOSITORY: menodao-backend
-  ECS_CLUSTER_PROD: menodao-prod
-  ECS_CLUSTER_DEV: menodao
-  ECS_SERVICE_PROD: menodao-backend
-  ECS_TASK_DEFINITION_PROD: menodao-backend
-  ECS_SERVICE_DEV: menodao-api-dev
-  ECS_TASK_DEFINITION_DEV: menodao-api-dev
-  CONTAINER_NAME: menodao-backend
 
 jobs:
-  # Check if this is a command from PR comment
-  check-deploy-command:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+  build-test:
+    name: Build and test
     runs-on: ubuntu-latest
-    outputs:
-      should_deploy_dev: ${{ steps.check.outputs.should_deploy_dev }}
-      should_deploy_prod: ${{ steps.check.outputs.should_deploy_prod }}
-      should_provision: ${{ steps.check.outputs.should_provision }}
     steps:
-      - name: Check for command
-        id: check
-        run: |
-          COMMENT="${{ github.event.comment.body }}"
-          if [[ "$COMMENT" == "/deploy dev" ]]; then
-            echo "should_deploy_dev=true" >> $GITHUB_OUTPUT
-            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
-            echo "should_provision=false" >> $GITHUB_OUTPUT
-          elif [[ "$COMMENT" == "/deploy prod" ]]; then
-            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
-            echo "should_deploy_prod=true" >> $GITHUB_OUTPUT
-            echo "should_provision=false" >> $GITHUB_OUTPUT
-          elif [[ "$COMMENT" == "/provision" ]]; then
-            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
-            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
-            echo "should_provision=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_deploy_dev=false" >> $GITHUB_OUTPUT
-            echo "should_deploy_prod=false" >> $GITHUB_OUTPUT
-            echo "should_provision=false" >> $GITHUB_OUTPUT
-          fi
+      - uses: actions/checkout@v4
 
-  # Build and test job
-  build:
-    runs-on: ubuntu-latest
-    if: github.event_name != 'issue_comment'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -72,558 +51,89 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
 
-      - name: Run linting
+      - name: Lint
         run: npm run lint || true
 
-      - name: Run tests
+      - name: Test
         run: npm run test -- --coverage
 
-      - name: Build application
+      - name: Build
         run: npm run build
 
-  # Build and push Docker image
-  docker-build:
-    needs: build
+  build-push:
+    name: Build and push image
+    needs: build-test
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      vars.ECR_REGISTRY != '' &&
+      vars.AWS_ROLE_ARN_DEV != '' &&
+      vars.AWS_ROLE_ARN_PROD != ''
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     outputs:
-      image: ${{ steps.build-image.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+      env: ${{ steps.meta.outputs.env }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Resolve environment and tag
+        id: meta
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "env=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=dev" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN_PROD || vars.AWS_ROLE_ARN_DEV }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
+      - name: Build, tag, and push
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TARGET_ENV: ${{ steps.meta.outputs.env }}
         run: |
-          docker build --no-cache --build-arg GIT_SHA=$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
+          set -euo pipefail
+          IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
+          docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+          if [ "$TARGET_ENV" = "prod" ]; then
+            docker tag "$IMAGE:$TAG" "$IMAGE:prod"
+            docker push "$IMAGE:prod"
           else
-            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:dev-latest
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:dev-latest
+            docker tag "$IMAGE:$TAG" "$IMAGE:dev"
+            docker push "$IMAGE:dev"
           fi
 
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-  # Deploy to dev
-  deploy-dev:
-    needs: docker-build
+  deploy:
+    name: Deploy ${{ needs.build-push.outputs.env }}
+    needs: build-push
+    if: needs.build-push.result == 'success' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
-    environment:
-      name: dev
-      url: https://dev-api.menodao.org
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Sync Turnstile CAPTCHA to AWS
+      - name: Deploy over SSH
         env:
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          TAG: ${{ needs.build-push.outputs.tag }}
+          TARGET_ENV: ${{ needs.build-push.outputs.env }}
         run: |
-          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
-          ./infrastructure/scripts/sync-captcha-to-aws.sh dev task-definition.json
-
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.docker-build.outputs.image }}
-
-      - name: Register task definition and run migration
-        run: |
-          # Register the new task definition revision
-          NEW_TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          echo "Registered task definition: $NEW_TD_ARN"
-
-          # Auto-discover network config from the existing ECS service
-          NET_CONFIG=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --services ${{ env.ECS_SERVICE_DEV }} \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
-            --output json)
-          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
-          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
-          echo "Subnets: $SUBNETS"
-          echo "Security groups: $SGS"
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --task-definition "$NEW_TD_ARN" \
-            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
-            --launch-type FARGATE \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          echo "Migration task started: $TASK_ARN"
-          chmod +x infrastructure/scripts/wait-ecs-migration.sh
-          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
-
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_DEV }}
-          cluster: ${{ env.ECS_CLUSTER_DEV }}
-          wait-for-service-stability: true
-
-      - name: Verify ECS is running the new image
-        run: |
-          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
-          ./infrastructure/scripts/verify-ecs-deployment.sh \
-            "${{ env.ECS_CLUSTER_DEV }}" \
-            "${{ env.ECS_SERVICE_DEV }}" \
-            "${{ github.sha }}"
-
-      - name: Comment deployment status
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              await github.rest.repos.createCommitComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                commit_sha: context.sha,
-                body: '🚀 Backend deployed to dev: https://dev-api.menodao.org'
-              });
-            } catch (error) {
-              console.log('Could not create commit comment:', error.message);
-            }
-
-  # Provision ECS cluster via PR comment
-  provision-cluster:
-    needs: check-deploy-command
-    runs-on: ubuntu-latest
-    if: needs.check-deploy-command.outputs.should_provision == 'true'
-    steps:
-      - name: Get PR branch
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            return pr.data.head.ref;
-          result-encoding: string
-
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.result }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Run provision script
-        run: |
-          chmod +x infrastructure/scripts/provision-cluster.sh
-          ./infrastructure/scripts/provision-cluster.sh
-
-      - name: Comment on PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '✅ ECS clusters provisioned!\n\n🏗️ Clusters: `menodao-dev` and `menodao-production`\n\nThis provisioning was triggered by `/provision` command.'
-            })
-
-  # Deploy to dev via PR comment
-  deploy-dev-pr:
-    needs: check-deploy-command
-    runs-on: ubuntu-latest
-    if: needs.check-deploy-command.outputs.should_deploy_dev == 'true'
-    environment:
-      name: dev
-      url: https://dev-api.menodao.org
-    steps:
-      - name: Get PR branch
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            return pr.data.head.ref;
-          result-encoding: string
-
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.result }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: pr-${{ github.event.issue.number }}-${{ github.run_number }}
-        run: |
-          docker build --no-cache --build-arg GIT_SHA=$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_DEV }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Sync Turnstile CAPTCHA to AWS
-        env:
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
-          ./infrastructure/scripts/sync-captcha-to-aws.sh dev task-definition.json
-
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Register task definition and run migration
-        run: |
-          NEW_TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          echo "Registered task definition: $NEW_TD_ARN"
-
-          NET_CONFIG=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --services ${{ env.ECS_SERVICE_DEV }} \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
-            --output json)
-          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
-          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER_DEV }} \
-            --task-definition "$NEW_TD_ARN" \
-            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
-            --launch-type FARGATE \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          echo "Migration task started: $TASK_ARN"
-          chmod +x infrastructure/scripts/wait-ecs-migration.sh
-          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_DEV }}" "$TASK_ARN"
-
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_DEV }}
-          cluster: ${{ env.ECS_CLUSTER_DEV }}
-          wait-for-service-stability: true
-
-      - name: Verify ECS is running the new image
-        run: |
-          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
-          ./infrastructure/scripts/verify-ecs-deployment.sh \
-            "${{ env.ECS_CLUSTER_DEV }}" \
-            "${{ env.ECS_SERVICE_DEV }}" \
-            "${{ github.sha }}"
-
-      - name: Comment on PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '✅ Backend deployed to dev!\n\n🔗 API: https://dev-api.menodao.org\n\nThis deployment was triggered by `/deploy dev` command.'
-            })
-
-  # Deploy to production via PR comment
-  deploy-prod-pr:
-    needs: check-deploy-command
-    runs-on: ubuntu-latest
-    if: needs.check-deploy-command.outputs.should_deploy_prod == 'true'
-    environment:
-      name: production
-      url: https://api.menodao.org
-    steps:
-      - name: Get PR branch
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            return pr.data.head.ref;
-          result-encoding: string
-
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.result }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build --no-cache --build-arg GIT_SHA=$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:prod-latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Sync Turnstile CAPTCHA to AWS
-        env:
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
-          ./infrastructure/scripts/sync-captcha-to-aws.sh prod task-definition.json
-
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Register task definition and run migration
-        run: |
-          NEW_TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          echo "Registered task definition: $NEW_TD_ARN"
-
-          NET_CONFIG=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --services ${{ env.ECS_SERVICE_PROD }} \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
-            --output json)
-          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
-          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --task-definition "$NEW_TD_ARN" \
-            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
-            --launch-type FARGATE \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          echo "Migration task started: $TASK_ARN"
-          chmod +x infrastructure/scripts/wait-ecs-migration.sh
-          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
-
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_PROD }}
-          cluster: ${{ env.ECS_CLUSTER_PROD }}
-          wait-for-service-stability: true
-
-      - name: Verify ECS is running the new image
-        run: |
-          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
-          ./infrastructure/scripts/verify-ecs-deployment.sh \
-            "${{ env.ECS_CLUSTER_PROD }}" \
-            "${{ env.ECS_SERVICE_PROD }}" \
-            "${{ github.sha }}"
-
-      - name: Comment on PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '🎉 Backend deployed to production!\n\n🔗 API: https://api.menodao.org\n\nThis deployment was triggered by `/deploy prod` command.'
-            })
-
-  # Deploy to production
-  deploy-production:
-    needs: docker-build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment:
-      name: production
-      url: https://api.menodao.org
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_PROD }} \
-            --query taskDefinition > task-definition.json
-
-      - name: Sync Turnstile CAPTCHA to AWS
-        env:
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          chmod +x infrastructure/scripts/sync-captcha-to-aws.sh
-          ./infrastructure/scripts/sync-captcha-to-aws.sh prod task-definition.json
-
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.docker-build.outputs.image }}
-
-      - name: Register task definition and run migration
-        run: |
-          NEW_TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          echo "Registered task definition: $NEW_TD_ARN"
-
-          NET_CONFIG=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --services ${{ env.ECS_SERVICE_PROD }} \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
-            --output json)
-          SUBNETS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['subnets']))")
-          SGS=$(echo "$NET_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d['securityGroups']))")
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster ${{ env.ECS_CLUSTER_PROD }} \
-            --task-definition "$NEW_TD_ARN" \
-            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["npx","prisma","migrate","deploy"]}]}' \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=ENABLED}" \
-            --launch-type FARGATE \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          echo "Migration task started: $TASK_ARN"
-          chmod +x infrastructure/scripts/wait-ecs-migration.sh
-          ./infrastructure/scripts/wait-ecs-migration.sh "${{ env.ECS_CLUSTER_PROD }}" "$TASK_ARN"
-
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_PROD }}
-          cluster: ${{ env.ECS_CLUSTER_PROD }}
-          wait-for-service-stability: true
-
-      - name: Verify ECS is running the new image
-        run: |
-          chmod +x infrastructure/scripts/verify-ecs-deployment.sh
-          ./infrastructure/scripts/verify-ecs-deployment.sh \
-            "${{ env.ECS_CLUSTER_PROD }}" \
-            "${{ env.ECS_SERVICE_PROD }}" \
-            "${{ github.sha }}"
-
-      - name: Backfill referral codes for existing members
-        run: |
-          npm ci
-          DATABASE_URL="${{ secrets.PROD_DATABASE_URL }}" npx ts-node --project tsconfig.json scripts/backfill-referral-codes.ts || true
-
-      - name: Comment deployment status
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              await github.rest.repos.createCommitComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                commit_sha: context.sha,
-                body: '🎉 Backend deployed to production: https://api.menodao.org'
-              });
-            } catch (error) {
-              console.log('Could not create commit comment:', error.message);
-            }
+          set -euo pipefail
+          : "${SSH_KEY:?DEPLOY_SSH_KEY secret is required}"
+          : "${DEPLOY_HOST:?DEPLOY_HOST secret is required}"
+          USER="${DEPLOY_USER:-ubuntu}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key "$USER@$DEPLOY_HOST" \
+            "cd /opt/menodao/infra && ./scripts/deploy.sh $TARGET_ENV $TAG"
