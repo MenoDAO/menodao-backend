@@ -168,6 +168,11 @@ export class UsersController {
       await tx.contribution.deleteMany({ where: { memberId: id } });
       await tx.nFT.deleteMany({ where: { memberId: id } });
       await tx.subscription.deleteMany({ where: { memberId: id } });
+      // WhatsApp bot history (RESTRICT FKs) must be cleared before the member
+      await tx.botMessageLog.deleteMany({ where: { memberId: id } });
+      await tx.botLead.deleteMany({ where: { memberId: id } });
+      await tx.botBookingDraft.deleteMany({ where: { memberId: id } });
+      await tx.botLlmCallLog.deleteMany({ where: { memberId: id } });
 
       // Finally delete the member
       await tx.member.delete({ where: { id } });
