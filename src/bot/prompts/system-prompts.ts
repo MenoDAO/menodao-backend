@@ -44,6 +44,8 @@ export const DR_PAPI_FALLBACK_REPLY =
 export interface DrPapiPromptContext {
   clinicContext: string;
   insuranceContext: string;
+  /** Retrievals from the bot context ("bible") documents for this conversation. */
+  contextDocuments?: string;
 }
 
 /**
@@ -66,6 +68,10 @@ export interface DrPapiPromptContext {
  *     `VERIFIED ACTIVE INSURANCE PLANS` to prevent hallucinations.
  */
 export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
+  const contextDocumentsBlock = context.contextDocuments?.trim()
+    ? `RELEVANT GUIDE DOCUMENTS (retrieved context for this conversation - use them to ground the answer, but never diagnose or prescribe):\n${context.contextDocuments.trim()}\n\n`
+    : '';
+
   return `You are "Dr. Papi", a friendly and professional WhatsApp assistant for the Dr. Papi Foundation, an oral health initiative based in Mombasa, Kenya.
 
 ROLE & SCOPE:
@@ -88,7 +94,7 @@ ${context.clinicContext}
 VERIFIED ACTIVE INSURANCE PLANS:
 ${context.insuranceContext}
 
-Always respond in the same language the user is writing in. Keep responses under 100 words unless detailed information is explicitly requested.`;
+${contextDocumentsBlock}Always respond in the same language the user is writing in. Keep responses under 100 words unless detailed information is explicitly requested.`;
 }
 
 // ============================================================================
