@@ -48,12 +48,22 @@ export class StaffService implements OnModuleInit {
       });
 
       if (staffCount === 0) {
+        const defaultPassword =
+          this.configService.get<string>('STAFF_DEFAULT_PASSWORD');
+
+        // Never fall back to a known password: an empty install is safer than
+        // an install with a published default credential.
+        if (!defaultPassword) {
+          this.logger.warn(
+            'No staff users exist and STAFF_DEFAULT_PASSWORD is not set. ' +
+              'Skipping bootstrap. Approve a clinic to provision staff accounts.',
+          );
+          return;
+        }
+
         const defaultUsername =
           this.configService.get<string>('STAFF_DEFAULT_USERNAME') ||
           'staff001';
-        const defaultPassword =
-          this.configService.get<string>('STAFF_DEFAULT_PASSWORD') ||
-          'staff2026!';
         const defaultName =
           this.configService.get<string>('STAFF_DEFAULT_NAME') ||
           'Clinic Staff';
@@ -210,6 +220,71 @@ export class StaffService implements OnModuleInit {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  /**
+   * Build a one-time link that lets a new staff member choose their own
+   * password. The token is a short-lived JWT bound to the current password
+   * hash, so it stops working as soon as the password is set (or rotated).
+   */
+  createSetupLink(staff: {
+    id: string;
+    passwordHash: string;
+  }): string {
+    const token = this.jwtService.sign(
+      {
+        sub: staff.id,
+        purpose: 'staff-setup',
+        ph: staff.passwordHash.slice(0, 12),
+      },
+      { expiresIn: '7d' },
+    );
+    const base = (
+      process.env.APP_BASE_URL || 'https://app.menodao.org'
+    ).replace(/\/+$/, '');
+    return `${base}/staff/setup?token=${encodeURIComponent(token)}`;
+  }
+
+  async setupPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string; username: string }> {
+    let payload: { sub?: string; purpose?: string; ph?: string };
+    try {
+      payload = this.jwtService.verify(token);
+    } catch {
+      throw new UnauthorizedException(
+        'This setup link is invalid or has expired.',
+      );
+    }
+
+    if (payload.purpose !== 'staff-setup' || !payload.sub) {
+      throw new UnauthorizedException('This setup link is invalid.');
+    }
+
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!staff || !staff.isActive) {
+      throw new UnauthorizedException('This setup link is no longer valid.');
+    }
+    if (payload.ph !== staff.passwordHash.slice(0, 12)) {
+      throw new UnauthorizedException(
+        'This setup link has already been used.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.staffUser.update({
+      where: { id: staff.id },
+      data: { passwordHash },
+    });
+
+    this.logger.log(`Staff ${staff.username} completed password setup`);
+    return {
+      message: 'Password set. You can sign in now.',
+      username: staff.username,
+    };
   }
 
   /**

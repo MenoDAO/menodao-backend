@@ -25,3 +25,15 @@ export class ChangePasswordDto {
   @MinLength(6)
   newPassword: string;
 }
+
+export class SetupPasswordDto {
+  @ApiProperty({ description: 'One-time token from the setup link' })
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(8)
+  newPassword: string;
+}
