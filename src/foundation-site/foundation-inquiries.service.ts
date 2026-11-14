@@ -8,7 +8,7 @@ import { FoundationInquiryKind, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../appointments/email.service';
 
-const NOTIFY = ['menodao.org@gmail.com'];
+const NOTIFY = ['support@menodao.org'];
 
 const FORMS: Record<
   string,
