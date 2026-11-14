@@ -12,7 +12,9 @@ import { UpdateClinicDto } from './dto/update-clinic.dto';
 import { AdminCreateClinicDto } from './dto/admin-create-clinic.dto';
 import { ClinicStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'node:crypto';
 import { haversineKm } from '../common/utils/haversine';
+import { StaffService } from '../staff/staff.service';
 
 export interface ClinicMapRecord {
   id: string;
@@ -39,6 +41,7 @@ export class ClinicsService {
     private prisma: PrismaService,
     private smsService: SmsService,
     private configService: ConfigService,
+    private staffService: StaffService,
   ) {
     const isProduction = this.configService.get('NODE_ENV') === 'production';
     this.frontendUrl = isProduction
@@ -161,7 +164,7 @@ export class ClinicsService {
     const staffAccounts: {
       name: string;
       username: string;
-      password: string;
+      setupUrl: string | null;
     }[] = [];
 
     // 1. Owner / Lead Dentist
@@ -182,9 +185,12 @@ export class ClinicsService {
       staffAccounts.push(managerAccount);
     }
 
-    // Send SMS with credentials
+    // Send each staff member a one-time setup link. Passwords are never sent
+    // over SMS: they are chosen by the staff member behind the link.
     for (const account of staffAccounts) {
-      const message = `Welcome to MenoDAO! ${clinic.name} has been approved as a Clinical Hub. Your staff login: Username: ${account.username} Password: ${account.password} Login at: ${this.frontendUrl}/staff/login`;
+      const message = account.setupUrl
+        ? `MenoDAO: ${clinic.name} is now a Clinical Hub. Staff account ${account.username} is ready. Set your password: ${account.setupUrl}`
+        : `MenoDAO: ${clinic.name} is now a Clinical Hub. Your existing staff account ${account.username} has been linked. Sign in at ${this.frontendUrl}/staff/login`;
       try {
         await this.smsService.sendSms(
           account.username.replace(/[^0-9]/g, '').length > 8
@@ -194,7 +200,7 @@ export class ClinicsService {
         );
       } catch (error) {
         this.logger.error(
-          `Failed to send credentials SMS for ${account.name}`,
+          `Failed to send setup SMS for ${account.name}`,
           error,
         );
       }
@@ -206,10 +212,11 @@ export class ClinicsService {
 
     return {
       success: true,
-      message: `Clinic approved. ${staffAccounts.length} staff credential(s) generated and sent via SMS.`,
+      message: `Clinic approved. ${staffAccounts.length} staff setup link(s) sent via SMS.`,
       staffAccounts: staffAccounts.map((a) => ({
         name: a.name,
         username: a.username,
+        setupUrl: a.setupUrl,
       })),
     };
   }
@@ -449,17 +456,12 @@ export class ClinicsService {
     fullName: string,
     phone: string,
     clinicId: string,
-  ): Promise<{ name: string; username: string; password: string }> {
+  ): Promise<{ name: string; username: string; setupUrl: string | null }> {
     // Generate a clean username from the phone
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     const username = cleanPhone.startsWith('0')
       ? cleanPhone
       : `0${cleanPhone.slice(-9)}`;
-
-    // Generate a random 6-char password
-    const password = Math.random().toString(36).slice(-6) + '!A1';
-
-    const passwordHash = await bcrypt.hash(password, 10);
 
     // Check if staff user already exists
     const existing = await this.prisma.staffUser.findUnique({
@@ -467,7 +469,7 @@ export class ClinicsService {
     });
 
     if (existing) {
-      // Link existing staff to clinic
+      // Link existing staff to clinic. Their password is left alone.
       await this.prisma.staffUser.update({
         where: { username },
         data: { clinicId, isActive: true },
@@ -475,10 +477,15 @@ export class ClinicsService {
       this.logger.log(
         `Existing staff ${username} linked to clinic ${clinicId}`,
       );
-      return { name: fullName, username, password: '(existing — unchanged)' };
+      return { name: fullName, username, setupUrl: null };
     }
 
-    await this.prisma.staffUser.create({
+    // Placeholder credential, random and never disclosed. The staff member
+    // chooses their own password through the one-time setup link.
+    const placeholder = randomBytes(32).toString('hex');
+    const passwordHash = await bcrypt.hash(placeholder, 10);
+
+    const staff = await this.prisma.staffUser.create({
       data: {
         username,
         passwordHash,
@@ -489,6 +496,10 @@ export class ClinicsService {
       },
     });
 
-    return { name: fullName, username, password };
+    return {
+      name: fullName,
+      username,
+      setupUrl: this.staffService.createSetupLink(staff),
+    };
   }
 }
