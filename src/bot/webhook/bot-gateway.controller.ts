@@ -2,10 +2,10 @@
 import {
   Body,
   Controller,
-  Headers,
   HttpCode,
   HttpStatus,
   Logger,
+  Param,
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -25,9 +25,16 @@ function secretsMatch(provided: string, expected: string): boolean {
  * Alternate-gateway webhook (FlareSend / Waboxapp).
  * Meta Cloud API stays on /whatsapp/webhook (signature-guarded).
  *
- * FlareSend payloads are not HMAC-signed, so set FLARESEND_WEBHOOK_SECRET and
- * have the provider send it as `x-webhook-secret`. In production a missing
- * secret fails closed (401) so an unprotected webhook is loud, not silent.
+ * FlareSend does not sign its webhooks and sends no secret header: the only
+ * thing you configure per instance is the endpoint URL. So the URL carries the
+ * credential:
+ *
+ *   POST /bot/webhook/flaresend/:token
+ *
+ * The token is compared in constant time against
+ * FLARESEND_WEBHOOK_PATH_TOKEN. When FLARESEND_INSTANCE_ID is set, events for
+ * any other instance are rejected too. A missing token fails closed, so an
+ * unprotected endpoint is loud rather than silent.
  */
 @ApiTags('Bot Webhook')
 @Controller('bot/webhook')
@@ -39,27 +46,38 @@ export class BotGatewayController {
     private readonly gateway: BotGatewayService,
   ) {}
 
-  @Post('flaresend')
+  @Post('flaresend/:token')
   @HttpCode(HttpStatus.OK)
   @ApiExcludeEndpoint()
   handleFlaresendEvent(
+    @Param('token') token: string,
     @Body() payload: any,
-    @Headers('x-webhook-secret') providedSecret?: string,
   ): { status: string } {
-    const secret = this.configService.get<string>('FLARESEND_WEBHOOK_SECRET');
-    if (!secret) {
-      if (process.env.NODE_ENV === 'production') {
-        this.logger.error(
-          'Rejecting FlareSend webhook: FLARESEND_WEBHOOK_SECRET is not configured.',
-        );
-        throw new UnauthorizedException('Webhook secret not configured');
-      }
-      this.logger.warn(
-        'FLARESEND_WEBHOOK_SECRET not set — accepting unsigned webhook (development only).',
+    const expected = this.configService.get<string>(
+      'FLARESEND_WEBHOOK_PATH_TOKEN',
+    );
+    if (!expected) {
+      this.logger.error(
+        'Rejecting FlareSend webhook: FLARESEND_WEBHOOK_PATH_TOKEN is not configured.',
       );
-    } else if (!providedSecret || !secretsMatch(providedSecret, secret)) {
-      this.logger.warn('Rejecting FlareSend webhook: secret mismatch.');
-      throw new UnauthorizedException('Invalid webhook secret');
+      throw new UnauthorizedException('Webhook token not configured');
+    }
+    if (!token || !secretsMatch(token, expected)) {
+      this.logger.warn('Rejecting FlareSend webhook: token mismatch.');
+      throw new UnauthorizedException('Invalid webhook token');
+    }
+
+    const expectedInstance =
+      this.configService.get<string>('FLARESEND_INSTANCE_ID');
+    if (
+      expectedInstance &&
+      payload?.instanceId &&
+      payload.instanceId !== expectedInstance
+    ) {
+      this.logger.warn(
+        `Rejecting FlareSend webhook: unexpected instance ${payload.instanceId}.`,
+      );
+      throw new UnauthorizedException('Unknown instance');
     }
 
     this.logger.log(

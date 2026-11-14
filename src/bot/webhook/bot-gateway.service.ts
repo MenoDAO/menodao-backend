@@ -16,6 +16,8 @@ import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
 
 const WABOXAPP_INBOUND_DEDUPE_TTL_MS = 30_000;
 const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
+const MAX_TRACKED_FLARESEND_INBOUND_MESSAGES = 1_000;
+const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
 
 /**
  * BotGatewayService — port of menobot WhatsappService dispatch, backed by
@@ -28,6 +30,7 @@ const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
 export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
   private readonly recentWaboxappInboundMessages = new Map<string, number>();
+  private readonly recentFlaresendInboundMessages = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -163,29 +166,67 @@ export class BotGatewayService {
     if (!whatsappId) return;
     const contactName = data.pushName || data.name || undefined;
     const messageText = this.extractFlaresendMessageText(data as any);
-    if (data.message?.audioMessage) {
-      const member = await this.identity.resolveMember({
-        phoneDigitsFallback: this.isLid(whatsappId) ? undefined : whatsappId,
-        whatsappId,
-      });
-      const recipientPhone =
-        member?.phoneNumber ??
-        (this.isLid(whatsappId) ? undefined : whatsappId);
-      if (!recipientPhone) return;
-      await this.flaresendClient.sendTextMessage(
-        recipientPhone,
-        'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!',
-      );
+    const isAudio = Boolean(data.message?.audioMessage);
+    if (!isAudio && !messageText) return;
+
+    // FlareSend retries a delivery when it does not see a fast 2xx, and the
+    // controller acknowledges before processing finishes. Drop repeats so a
+    // retry cannot produce a second bot reply.
+    const dedupeKey = data.id
+      ? `id:${data.id}`
+      : createHash('sha256')
+          .update(`${whatsappId}\0${messageText ?? 'audio'}`)
+          .digest('hex');
+    const now = Date.now();
+    for (const [key, expiresAt] of this.recentFlaresendInboundMessages) {
+      if (expiresAt <= now) this.recentFlaresendInboundMessages.delete(key);
+    }
+    if ((this.recentFlaresendInboundMessages.get(dedupeKey) ?? 0) > now) {
+      this.logger.debug(`Skipping duplicate FlareSend message ${dedupeKey}`);
       return;
     }
-    if (!messageText) return;
-    await this.handleUserTextMessage({
-      senderId: whatsappId,
-      fallbackPhone: this.isLid(whatsappId) ? undefined : whatsappId,
-      messageId: data.id,
-      messageText,
-      contactName,
-    });
+    while (
+      this.recentFlaresendInboundMessages.size >=
+      MAX_TRACKED_FLARESEND_INBOUND_MESSAGES
+    ) {
+      const oldestKey = this.recentFlaresendInboundMessages.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.recentFlaresendInboundMessages.delete(oldestKey);
+    }
+    this.recentFlaresendInboundMessages.set(
+      dedupeKey,
+      now + FLARESEND_INBOUND_DEDUPE_TTL_MS,
+    );
+
+    try {
+      if (isAudio) {
+        const member = await this.identity.resolveMember({
+          phoneDigitsFallback: this.isLid(whatsappId) ? undefined : whatsappId,
+          whatsappId,
+        });
+        const recipientPhone =
+          member?.phoneNumber ??
+          (this.isLid(whatsappId) ? undefined : whatsappId);
+        if (!recipientPhone) return;
+        await this.flaresendClient.sendTextMessage(
+          recipientPhone,
+          'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!',
+        );
+        return;
+      }
+      if (!messageText) return;
+      await this.handleUserTextMessage({
+        senderId: whatsappId,
+        fallbackPhone: this.isLid(whatsappId) ? undefined : whatsappId,
+        messageId: data.id,
+        messageText,
+        contactName,
+      });
+    } catch (error) {
+      // Let the next retry try again rather than swallowing the message.
+      this.recentFlaresendInboundMessages.delete(dedupeKey);
+      throw error;
+    }
   }
 
   private async processMetaWebhook(
