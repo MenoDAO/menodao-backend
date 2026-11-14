@@ -43,7 +43,7 @@ const llmProviderFactory: Provider = {
         model =
           configService.get<string>('BOT_GEMINI_MODEL') ??
           configService.get<string>('GEMINI_MODEL') ??
-          'gemini-2.0-flash';
+          'gemini-3.5-flash';
         break;
       default:
         logger.warn(
@@ -54,7 +54,7 @@ const llmProviderFactory: Provider = {
         model =
           configService.get<string>('BOT_GEMINI_MODEL') ??
           configService.get<string>('GEMINI_MODEL') ??
-          'gemini-2.0-flash';
+          'gemini-3.5-flash';
     }
     // Full prompts contain clinical/PII text — only persist them when
     // explicitly enabled (local debugging), never by default in production.
