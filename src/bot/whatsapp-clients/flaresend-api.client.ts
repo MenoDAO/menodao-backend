@@ -157,7 +157,9 @@ export class FlaresendApiClient implements IWhatsappClient {
     recipient: string,
     body: string,
   ): Promise<AxiosResponse<FlaresendSendResponse>> {
-    const token = await this.getBearerToken();
+    // /send-message requires an instance-scoped key. The dashboard's 64-char
+    // key is exactly that, so prefer it and only fall back to a session JWT.
+    const token = this.apiKey || (await this.getBearerToken());
     return this.http.post<FlaresendSendResponse>(
       '/send-message',
       {
