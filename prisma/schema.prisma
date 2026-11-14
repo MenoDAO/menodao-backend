@@ -55,6 +55,7 @@ model Member {
   botMessages       BotMessageLog[]
   botLeads          BotLead[]
   botBookingDraft   BotBookingDraft?
+  botOnboardingSessions BotOnboardingSession[]
   botLlmLogs        BotLlmCallLog[]
 
   @@index([referralCode])
@@ -1234,6 +1235,18 @@ model BotBookingDraft {
   rawDateMentioned String?
   language  String   @default("en")
   status    String   @default("COLLECTING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BotOnboardingSession {
+  id        String   @id @default(uuid())
+  memberId String   @unique
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  step      String   @default("WELCOME")
+  language  String   @default("en")
+  payload   String   @default("{}") @db.Text
+  status    String   @default("IN_PROGRESS")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

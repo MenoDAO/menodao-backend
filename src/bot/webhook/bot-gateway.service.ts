@@ -10,6 +10,7 @@ import { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
 import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
+import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -37,6 +38,7 @@ export class BotGatewayService {
     private readonly configService: ConfigService,
     private readonly voicePipelineService: VoicePipelineService,
     private readonly identity: BotIdentityService,
+    private readonly onboardingService: BotOnboardingService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -311,6 +313,26 @@ export class BotGatewayService {
       contactName,
     });
     if (!member) return;
+
+    // New / unverified WhatsApp numbers start in the onboarding state machine;
+    // known (verified) members proceed straight to the AI reply path.
+    if (!member.isVerified) {
+      await this.onboardingService.start(member.id, 'en');
+      const welcomeReply =
+        'Kariba! Welcome to MenoDAO. 🦷 You are now chatting with the MenoDAO care bot. ' +
+        'To get started reply with a number: 1 = Book an appointment, 2 = Health info / intake, 3 = I need help.';
+      await this.whatsappClient.sendTextMessage(
+        member.phoneNumber,
+        welcomeReply,
+      );
+      await this.onboardingService.setStep(member.id, 'INTEREST', {
+        source: 'welcome',
+        language: 'en',
+        welcomeSentAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     const recipientPhone = member.phoneNumber;
     const staticReply = this.configService
       .get<string>('BOT_WHATSAPP_STATIC_REPLY')
