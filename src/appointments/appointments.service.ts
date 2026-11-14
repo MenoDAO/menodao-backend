@@ -23,6 +23,7 @@ import {
   RescheduleAppointmentDto,
 } from './dto/appointment.dto';
 import {
+  eatDateStr,
   formatEat,
   generateDaySlots,
   inDayBeforeWindow,
@@ -545,7 +546,13 @@ export class AppointmentsService {
         await this.email.send(
           updated.clinic.email,
           `MenoDAO no-show: ${memberName}`,
-          `${memberName} did not attend the appointment at ${updated.clinic.name} on ${when}. Automatically marked no-show after the two-hour grace.`,
+          [
+            `${memberName} did not attend the appointment at ${updated.clinic.name} on ${when}.`,
+            'Automatically marked no-show after the two-hour grace period.',
+            '',
+            'Sign in to review the appointment:',
+            this.staffAppointmentsUrl(updated.scheduledAt),
+          ].join('\n'),
         );
       }
     }
@@ -632,6 +639,21 @@ export class AppointmentsService {
     };
   }
 
+  /**
+   * Staff-facing deep link for an appointment day.
+   *
+   * Clinic notification emails deliberately carry no treatment details: the
+   * recipient has to sign in to the staff area, where the API scopes
+   * appointments to the staff member's clinic.
+   */
+  private staffAppointmentsUrl(scheduledAt: Date): string {
+    const base = (process.env.APP_BASE_URL || 'https://app.menodao.org').replace(
+      /\/+$/,
+      '',
+    );
+    return `${base}/staff/appointments?date=${eatDateStr(scheduledAt)}`;
+  }
+
   private async notifyBooking(
     appointment: Awaited<ReturnType<AppointmentsService['requireOpen']>>,
     kind: 'created' | 'rescheduled',
@@ -659,19 +681,10 @@ export class AppointmentsService {
           `${memberName} ${verb} an appointment.`,
           `When: ${when}`,
           `Clinic: ${appointment.clinic.name}`,
-          `Reason: ${appointment.intakeReason}`,
-          appointment.painLevel != null ? `Pain: ${appointment.painLevel}/10` : '',
-          appointment.allergies ? `Allergies: ${appointment.allergies}` : '',
-          appointment.currentMedications
-            ? `Medications: ${appointment.currentMedications}`
-            : '',
-          appointment.medicalConditions
-            ? `Conditions: ${appointment.medicalConditions}`
-            : '',
-          `Phone: ${appointment.member.phoneNumber}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
+          '',
+          'Treatment details are not included in email. Sign in to the staff area to review the pre-visit intake:',
+          this.staffAppointmentsUrl(appointment.scheduledAt),
+        ].join('\n'),
       );
     }
   }
@@ -701,7 +714,14 @@ export class AppointmentsService {
       await this.email.send(
         appointment.clinic.email,
         `MenoDAO appointment cancelled: ${memberName}`,
-        `${memberName} / clinic cancellation for ${when}. Reason: ${appointment.cancelReason || 'not given'}`,
+        [
+          by === 'clinic'
+            ? `The clinic cancelled the appointment for ${memberName} at ${appointment.clinic.name} on ${when}.`
+            : `${memberName} cancelled the appointment at ${appointment.clinic.name} on ${when}.`,
+          '',
+          'Sign in to review the appointment:',
+          this.staffAppointmentsUrl(appointment.scheduledAt),
+        ].join('\n'),
       );
     }
   }
