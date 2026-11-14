@@ -7,9 +7,10 @@ import {
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { SmsModule } from '../sms/sms.module';
+import { StaffModule } from '../staff/staff.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, SmsModule],
+  imports: [PrismaModule, AuthModule, SmsModule, StaffModule],
   controllers: [ClinicsController, AdminClinicsController],
   providers: [ClinicsService],
   exports: [ClinicsService],

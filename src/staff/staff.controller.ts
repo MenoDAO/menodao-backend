@@ -13,7 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { StaffService } from './staff.service';
 import { StaffAuthGuard } from './guards/staff-auth.guard';
-import { StaffLoginDto, ChangePasswordDto } from './dto/staff-login.dto';
+import { StaffLoginDto, ChangePasswordDto, SetupPasswordDto } from './dto/staff-login.dto';
 import { CaptchaGuard } from '../captcha/captcha.guard';
 import { EnrollStaffDto } from './dto/enroll-staff.dto';
 import { StaffRole } from '@prisma/client';
@@ -203,8 +203,14 @@ export class StaffController {
     // Get staff details to check clinic association
     const staff = await this.staffService.getProfile(req.staff.id);
 
-    // If staff belongs to a clinic, only show members who have visited that clinic
-    // Otherwise show all members (for non-clinic staff)
+    // Clinic staff only see members who visited their clinic. An account with
+    // no clinic has no member scope, so it must not fall through to "all".
+    if (!staff?.clinicId && req.staff.role !== StaffRole.ADMIN) {
+      throw new ForbiddenException(
+        'This staff account is not linked to a clinic.',
+      );
+    }
+
     return this.staffService.getMembers({
       branch,
       clinicId: staff?.clinicId || undefined,
@@ -236,8 +242,14 @@ export class StaffController {
   @Post('bulk-sms')
   @UseGuards(StaffAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Send bulk SMS to members' })
-  async sendBulkSms(@Body() dto: { phoneNumbers: string[]; message: string }) {
+  @ApiOperation({ summary: 'Send bulk SMS to members (Admin only)' })
+  async sendBulkSms(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: { phoneNumbers: string[]; message: string },
+  ) {
+    if (req.staff.role !== StaffRole.ADMIN) {
+      throw new ForbiddenException('Only admin staff can send bulk SMS');
+    }
     return await this.staffService.sendBulkSms(dto.phoneNumbers, dto.message);
   }
 
@@ -255,6 +267,14 @@ export class StaffController {
       dto.currentPassword,
       dto.newPassword,
     );
+  }
+
+  @Post('setup-password')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Set a password from a one-time setup link' })
+  @ApiBody({ type: SetupPasswordDto })
+  async setupPassword(@Body() dto: SetupPasswordDto) {
+    return this.staffService.setupPassword(dto.token, dto.newPassword);
   }
 
   @Get('clinics')

@@ -334,7 +334,7 @@ export class AppointmentsService {
     const when = formatEat(updated.scheduledAt);
     await this.sms.sendSms(
       updated.member.phoneNumber,
-      `MenoDAO: update on your appointment at ${updated.clinic.name} (${when}): ${note}`,
+      `MenoDAO: there is an update on your appointment at ${updated.clinic.name} (${when}). Open ${this.appUrl('/dashboard/appointments')} to view it.`,
     );
     return updated;
   }
@@ -639,6 +639,15 @@ export class AppointmentsService {
     };
   }
 
+  /** Absolute link into the app. */
+  private appUrl(path: string): string {
+    const base = (process.env.APP_BASE_URL || 'https://app.menodao.org').replace(
+      /\/+$/,
+      '',
+    );
+    return `${base}${path}`;
+  }
+
   /**
    * Staff-facing deep link for an appointment day.
    *
@@ -647,11 +656,7 @@ export class AppointmentsService {
    * appointments to the staff member's clinic.
    */
   private staffAppointmentsUrl(scheduledAt: Date): string {
-    const base = (process.env.APP_BASE_URL || 'https://app.menodao.org').replace(
-      /\/+$/,
-      '',
-    );
-    return `${base}/staff/appointments?date=${eatDateStr(scheduledAt)}`;
+    return this.appUrl(`/staff/appointments?date=${eatDateStr(scheduledAt)}`);
   }
 
   private async notifyBooking(
@@ -661,17 +666,13 @@ export class AppointmentsService {
     const when = formatEat(appointment.scheduledAt);
     const memberName = appointment.member.fullName || 'Member';
     const verb = kind === 'created' ? 'booked' : 'rescheduled';
-    const reasonLine =
-      kind === 'rescheduled' && appointment.rescheduleReason
-        ? ` Reason: ${appointment.rescheduleReason}`
-        : '';
     await this.sms.sendSms(
       appointment.member.phoneNumber,
-      `MenoDAO: appointment ${verb} at ${appointment.clinic.name} on ${when}. Bring your phone for check-in.${reasonLine}`,
+      `MenoDAO: appointment ${verb} at ${appointment.clinic.name} on ${when}. Bring your phone for check-in.`,
     );
     await this.sms.sendSms(
       appointment.clinic.ownerPhone,
-      `MenoDAO: ${memberName} ${verb} an appointment on ${when}. Reason: ${appointment.intakeReason}`,
+      `MenoDAO: ${memberName} ${verb} an appointment on ${when}. Open ${this.staffAppointmentsUrl(appointment.scheduledAt)} to review.`,
     );
     if (appointment.clinic.email) {
       await this.email.send(
@@ -698,7 +699,7 @@ export class AppointmentsService {
     if (by === 'clinic') {
       await this.sms.sendSms(
         appointment.member.phoneNumber,
-        `MenoDAO: your appointment at ${appointment.clinic.name} on ${when} was cancelled by the clinic. ${appointment.cancelReason || ''} Open the app to rebook.`,
+        `MenoDAO: your appointment at ${appointment.clinic.name} on ${when} was cancelled by the clinic. Open ${this.appUrl('/dashboard/appointments')} to rebook.`,
       );
     } else {
       await this.sms.sendSms(
@@ -707,7 +708,7 @@ export class AppointmentsService {
       );
       await this.sms.sendSms(
         appointment.clinic.ownerPhone,
-        `MenoDAO: ${memberName} cancelled ${when}. Reason: ${appointment.cancelReason || 'not given'}`,
+        `MenoDAO: ${memberName} cancelled ${when}. Open ${this.staffAppointmentsUrl(appointment.scheduledAt)} to review.`,
       );
     }
     if (appointment.clinic.email) {
