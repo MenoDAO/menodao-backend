@@ -5,6 +5,7 @@ import type {
   ILlmProvider,
 } from './interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from './interfaces/llm-provider.interface';
+import { BotContextService } from '../context/bot-context.service';
 import {
   DR_PAPI_DISCLAIMER,
   DR_PAPI_FALLBACK_REPLY,
@@ -29,6 +30,7 @@ export class BotAiService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly contextService: BotContextService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
   ) {}
 
@@ -37,12 +39,16 @@ export class BotAiService {
     history: ChatHistoryMessage[],
     operation = 'whatsapp_reply',
   ): Promise<AiReply> {
-    const systemPrompt = await this.buildSystemPrompt();
+    const systemPrompt = await this.buildSystemPrompt(userMessage);
+    const retrievedContext = await this.retrieveContext(userMessage);
+    const contextBlock = this.renderContextBlock(retrievedContext);
     let rawReply: string;
     try {
       rawReply = await this.llmProvider.generateCompletion({
         systemPrompt,
-        userPrompt: userMessage,
+        userPrompt: contextBlock
+          ? `${contextBlock}\n\nUser question: ${userMessage}`
+          : userMessage,
         history,
         operation,
       });
@@ -59,8 +65,50 @@ export class BotAiService {
     return { message, detectedLeadIntent };
   }
 
+  /** Retrieval: ground the bot reply in the most relevant context docs. */
+  private async retrieveContext(userMessage: string): Promise<
+    Array<{
+      documentId: string;
+      title: string | null;
+      content: string;
+      score: number;
+    }>
+  > {
+    try {
+      const results = await this.contextService.retrieve(userMessage);
+      if (results.length > 0) {
+        this.logger.log(
+          `Retrieved ${results.length} context doc(s) for bot reply: ${results.map((r) => r.title).join(', ')}`,
+        );
+      }
+      return results;
+    } catch (error) {
+      this.logger.warn(
+        `Bot context retrieval failed, proceeding without context: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  }
+
+  private renderContextBlock(
+    retrieved: Array<{
+      documentId: string;
+      title: string | null;
+      content: string;
+      score: number;
+    }>,
+  ): string {
+    if (retrieved.length === 0) return '';
+    const block = retrieved
+      .map((doc) => `### ${doc.title ?? 'Relevant Guide'}\n${doc.content}`)
+      .join('\n\n');
+    return block;
+  }
+
   /** Grounding: backend Clinic (APPROVED) + active Procedure catalogue. */
-  public async buildSystemPrompt(): Promise<string> {
+  public async buildSystemPrompt(userMessage?: string): Promise<string> {
     const [clinics, procedures] = await Promise.all([
       this.prisma.clinic.findMany({
         where: { status: 'APPROVED' },
@@ -98,9 +146,18 @@ export class BotAiService {
           .join('\n')
       : 'Coverage per membership tier (Bronze / Silver / Gold). See https://menodao.org for details.';
 
+    const retrievedContext = userMessage
+      ? await this.retrieveContext(userMessage)
+      : [];
+    const contextDocuments = retrievedContext
+      .map((doc) => `### ${doc.title ?? 'Relevant Guide'}\n${doc.content}`)
+      .join('\n\n')
+      .trim();
+
     return buildDrPapiSystemPrompt({
       clinicContext,
       insuranceContext,
+      contextDocuments: contextDocuments || undefined,
     });
   }
 
