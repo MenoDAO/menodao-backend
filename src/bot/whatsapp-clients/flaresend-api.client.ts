@@ -156,10 +156,10 @@ export class FlaresendApiClient implements IWhatsappClient {
   private async postSendMessage(
     recipient: string,
     body: string,
+    token: string,
   ): Promise<AxiosResponse<FlaresendSendResponse>> {
     // /send-message requires an instance-scoped key. The dashboard's 64-char
     // key is exactly that, so prefer it and only fall back to a session JWT.
-    const token = this.apiKey || (await this.getBearerToken());
     return this.http.post<FlaresendSendResponse>(
       '/send-message',
       {
@@ -173,6 +173,11 @@ export class FlaresendApiClient implements IWhatsappClient {
         },
       },
     );
+  }
+
+  private async resolveSendToken(): Promise<string> {
+    if (this.apiKey) return this.apiKey;
+    return this.getBearerToken();
   }
 
   /**
@@ -190,16 +195,28 @@ export class FlaresendApiClient implements IWhatsappClient {
     try {
       let response: AxiosResponse<FlaresendSendResponse>;
       try {
-        response = await this.postSendMessage(recipient, body);
+        response = await this.postSendMessage(
+          recipient,
+          body,
+          await this.resolveSendToken(),
+        );
       } catch (error) {
-        // The session JWT lasts an hour. If it expired between refreshes,
-        // log in again and retry once before failing the send.
-        if (axios.isAxiosError(error) && error.response?.status === 401) {
+        // The configured key was rejected as a bearer token. Retry once with a
+        // freshly minted session JWT so a rotated/expired key cannot wedge
+        // every outbound message.
+        if (
+          axios.isAxiosError(error) &&
+          error.response?.status === 401 &&
+          this.apiKey
+        ) {
           this.logger.warn(
-            'FlareSend rejected the bearer token; refreshing and retrying once.',
+            'FlareSend rejected the configured API key; retrying with a session token.',
           );
-          await this.getBearerToken(true);
-          response = await this.postSendMessage(recipient, body);
+          response = await this.postSendMessage(
+            recipient,
+            body,
+            await this.getBearerToken(true),
+          );
         } else {
           throw error;
         }
@@ -232,16 +249,36 @@ export class FlaresendApiClient implements IWhatsappClient {
         `FlareSend sent a text message to ${this.maskRecipient(recipient)}.`,
       );
     } catch (error) {
-      const details = axios.isAxiosError(error)
-        ? `HTTP ${error.response?.status ?? 'no response'}`
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error';
+      const details = this.describeSendFailure(error);
       this.logger.error(
         `Failed to send FlareSend WhatsApp message to ${this.maskRecipient(recipient)}: ${details}`,
       );
       throw error;
     }
+  }
+
+  /** Turns FlareSend error responses into an actionable operator message. */
+  private describeSendFailure(error: unknown): string {
+    if (!axios.isAxiosError(error)) {
+      return error instanceof Error ? error.message : 'Unknown error';
+    }
+    const status = error.response?.status;
+    const apiMessage =
+      (error.response?.data as { message?: string } | undefined)?.message ?? '';
+    if (status === 425) {
+      return `instance not connected to WhatsApp yet (${
+        apiMessage || 'scan the QR code or link the number'
+      })`;
+    }
+    if (status === 400 && /instance-scoped/i.test(apiMessage)) {
+      return 'FLARESEND_API_KEY must be an instance-scoped key (FlareSend dashboard → Your WhatsApp Instances)';
+    }
+    if (status === 401) {
+      return `bearer token rejected (${apiMessage || 'check FLARESEND_API_KEY'})`;
+    }
+    return `HTTP ${status ?? 'no response'}${
+      apiMessage ? `: ${apiMessage}` : ''
+    }`;
   }
 
   /**
