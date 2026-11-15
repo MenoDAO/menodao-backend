@@ -5,7 +5,12 @@ import { PrismaService } from '../prisma/prisma.service';
 export interface AuditLogEntry {
   adminId: string;
   action: string;
-  targetType: 'PAYMENT' | 'MEMBER' | 'SUBSCRIPTION' | 'DISBURSAL';
+  targetType:
+    | 'PAYMENT'
+    | 'MEMBER'
+    | 'SUBSCRIPTION'
+    | 'DISBURSAL'
+    | 'BOT_CONTEXT';
   targetId: string;
   reason: string;
   metadata?: any;

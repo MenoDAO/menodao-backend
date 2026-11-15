@@ -12,6 +12,8 @@ import { RolesGuard } from './guards/roles.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ReferralModule } from '../referrals/referral.module';
+import { BotContextModule } from '../bot/context/bot-context.module';
+import { AdminBotContextController } from './bot-context.controller';
 
 @Global()
 @Module({
@@ -20,12 +22,14 @@ import { ReferralModule } from '../referrals/referral.module';
     AnalyticsModule,
     forwardRef(() => SubscriptionsModule),
     forwardRef(() => ReferralModule),
+    BotContextModule,
   ],
   controllers: [
     AdminController,
     StatsController,
     UsersController,
     PaymentsController,
+    AdminBotContextController,
   ],
   providers: [
     AdminService,
