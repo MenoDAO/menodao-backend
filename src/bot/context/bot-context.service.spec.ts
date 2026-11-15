@@ -68,11 +68,11 @@ describe('BotContextService (retrieval + administration)', () => {
   ];
 
   const findMany = jest.fn(
-    ({ where }: { where: { kind: string; active?: boolean } }) =>
+    ({ where }: { where: { kind?: string; active?: boolean } }) =>
       Promise.resolve(
         documents.filter(
           (doc) =>
-            doc.kind === where.kind &&
+            (where.kind === undefined || doc.kind === where.kind) &&
             (where.active === undefined || doc.active === where.active),
         ),
       ),
@@ -163,6 +163,12 @@ describe('BotContextService (retrieval + administration)', () => {
     it('only retrieves documents of the requested kind', async () => {
       const results = await svc.retrieve('escalation guide content', 'ETHICS');
       expect(results.map((r) => r.documentId)).toEqual(['doc-other-kind']);
+    });
+
+    it('searches every kind by default', async () => {
+      const results = await svc.retrieve('escalation guide content');
+      expect(results.map((r) => r.documentId)).toContain('doc-other-kind');
+      expect(results.map((r) => r.kind)).toContain('ETHICS');
     });
 
     it('caps results at the requested top-K', async () => {

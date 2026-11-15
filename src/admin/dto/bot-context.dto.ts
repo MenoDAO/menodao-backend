@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -175,5 +176,6 @@ export class PreviewBotContextDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(10)
   topK?: number;
 }

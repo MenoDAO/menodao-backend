@@ -171,10 +171,11 @@ export class AdminBotContextController {
   }
 
   @Post('preview')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
       'Preview what the bot would retrieve and inject for a given question ' +
-      '(tuning aid)',
+      '(tuning aid). Omit "kind" to search every kind.',
   })
   async preview(@Body() dto: PreviewBotContextDto) {
     return this.contextService.preview(dto.query, dto.kind, dto.topK);

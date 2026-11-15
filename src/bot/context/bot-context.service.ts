@@ -220,20 +220,30 @@ export class BotContextService {
   // Retrieval (bot read path)
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Retrieves the documents most relevant to a question.
+   *
+   * Search spans every kind by default: a question about ethics should reach
+   * the ETHICS guide even though its kind is not BIBLE. BM25 statistics
+   * (document frequency, average length) are computed over the whole active
+   * corpus, so a term that is rare everywhere is rare regardless of kind.
+   */
   async retrieve(
     query: string,
-    kind: string = BOT_CONTEXT_DEFAULT_KIND,
+    kinds: string | readonly string[] = BOT_CONTEXT_KINDS,
     topK: number = BOT_CONTEXT_TOP_K,
   ): Promise<RetrievedBotContext[]> {
     const startedAt = Date.now();
-    const { documents, df, avgdl } = await this.loadDocuments(kind);
+    const wanted: string[] = typeof kinds === 'string' ? [kinds] : [...kinds];
+    const { documents, df, avgdl } = await this.loadDocuments();
+    const candidates = documents.filter((doc) => wanted.includes(doc.kind));
     const queryTokens = this.tokenize(query);
 
     // BM25: rare terms carry more weight, and document length is normalised so
     // a two-line note cannot outrank the substantial guide section that
     // actually answers the question.
-    const totalDocs = documents.length;
-    const scored = documents
+    const totalDocs = candidates.length;
+    const scored = candidates
       .map((doc) => {
         let score = 0;
         for (const token of queryTokens.keys()) {
@@ -254,7 +264,7 @@ export class BotContextService {
       .slice(0, topK);
 
     this.logger.log(
-      `Retrieval for kind=${kind}: scanned ${totalDocs} doc(s) in ${
+      `Retrieval over kinds=[${wanted.join(',')}]: scanned ${totalDocs} doc(s) in ${
         Date.now() - startedAt
       }ms, matched ${scored.length}`,
     );
@@ -276,18 +286,19 @@ export class BotContextService {
    */
   async preview(
     query: string,
-    kind: string = BOT_CONTEXT_DEFAULT_KIND,
+    kind?: string,
     topK: number = BOT_CONTEXT_TOP_K,
   ): Promise<BotContextPreview> {
     const startedAt = Date.now();
-    const retrieved = await this.retrieve(query, kind, topK);
-    const { documents } = await this.loadDocuments(kind);
+    const kinds: string[] = kind ? [kind] : [...BOT_CONTEXT_KINDS];
+    const retrieved = await this.retrieve(query, kinds, topK);
+    const { documents } = await this.loadDocuments();
     const promptBlock = this.renderPromptBlock(retrieved);
 
     return {
       query,
-      kind,
-      scanned: documents.length,
+      kind: kind ?? 'ALL',
+      scanned: documents.filter((doc) => kinds.includes(doc.kind)).length,
       elapsedMs: Date.now() - startedAt,
       matched: retrieved.map((doc) => ({
         documentId: doc.documentId,
@@ -586,16 +597,16 @@ export class BotContextService {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Reads the active documents for a kind, caching them (with term
-   * frequencies and document frequencies pre-computed) for a short TTL. The
-   * cache is dropped whenever a document is written through this service.
+   * Reads every active document once, caching them (with term frequencies and
+   * document frequencies pre-computed) for a short TTL. The cache is dropped
+   * whenever a document is written through this service.
    */
-  private async loadDocuments(kind: string): Promise<{
+  private async loadDocuments(): Promise<{
     documents: CachedDocument[];
     df: Map<string, number>;
     avgdl: number;
   }> {
-    const cached = this.cache.get(kind);
+    const cached = this.cache.get('ALL');
     const now = Date.now();
     if (cached && now - cached.loadedAt < BOT_CONTEXT_CACHE_TTL_MS) {
       return {
@@ -606,7 +617,7 @@ export class BotContextService {
     }
 
     const rows = await this.prisma.botContextDocument.findMany({
-      where: { kind, active: true },
+      where: { active: true },
       select: {
         id: true,
         kind: true,
@@ -639,7 +650,7 @@ export class BotContextService {
     }
     const avgdl = documents.length > 0 ? total / documents.length : 1;
 
-    this.cache.set(kind, { loadedAt: now, documents, df, avgdl });
+    this.cache.set('ALL', { loadedAt: now, documents, df, avgdl });
     return { documents, df, avgdl };
   }
 
