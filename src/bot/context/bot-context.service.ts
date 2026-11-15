@@ -4,6 +4,106 @@ import { PrismaService } from '../../prisma/prisma.service';
 export const BOT_CONTEXT_DEFAULT_KIND = 'BIBLE';
 export const BOT_CONTEXT_TOP_K = 3;
 
+/**
+ * High-frequency English/Swahili words that produce false-positive matches.
+ * Kept small on purpose — over-filtering hurts recall on short queries.
+ */
+const BOT_CONTEXT_STOPWORDS = new Set<string>([
+  'the',
+  'and',
+  'for',
+  'with',
+  'you',
+  'are',
+  'was',
+  'were',
+  'has',
+  'have',
+  'had',
+  'can',
+  'could',
+  'should',
+  'would',
+  'will',
+  'this',
+  'that',
+  'these',
+  'those',
+  'but',
+  'not',
+  'its',
+  'our',
+  'your',
+  'how',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'does',
+  'did',
+  'are',
+  'been',
+  'being',
+  'there',
+  'their',
+  'them',
+  'they',
+  'from',
+  'into',
+  'about',
+  'please',
+  'thanks',
+  'want',
+  'need',
+  'help',
+  'also',
+  'any',
+  'some',
+  'like',
+  'very',
+  'just',
+  'much',
+  'many',
+  'kwa',
+  'na',
+  'ya',
+  'ni',
+  'kama',
+  'lakini',
+  'au',
+  'wa',
+  'za',
+  'zaidi',
+  'ili',
+  'basi',
+  'pia',
+  'hii',
+  'hiyo',
+  'hizi',
+  'hizo',
+  'yake',
+  'wake',
+  'wangu',
+  'wako',
+  'wetu',
+  'wenu',
+  'yeye',
+  'sisi',
+  'ninyi',
+  'wao',
+  'sana',
+  'kwamba',
+  'hivyo',
+  'hilo',
+  'kwenye',
+  'ndani',
+  'nje',
+  'mimi',
+  'wewe',
+]);
+
 export interface BotContextDocumentRecord {
   id: string;
   kind: string;
@@ -115,7 +215,8 @@ export class BotContextService {
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
       .map((token) => token.trim())
-      .filter((token) => token.length > 2);
+      .filter((token) => token.length > 2)
+      .filter((token) => !BOT_CONTEXT_STOPWORDS.has(token));
     for (const token of normalized) tokens.add(token);
     return tokens;
   }
