@@ -45,6 +45,7 @@ export class BotIdentityService {
     id: string;
     phoneNumber: string;
     whatsappId: string | null;
+    isVerified: boolean;
   } | null> {
     const fallbackE164 = params.phoneDigitsFallback
       ? this.normalizeToE164(params.phoneDigitsFallback)
@@ -54,15 +55,25 @@ export class BotIdentityService {
     if (wid && !this.isLid(wid)) {
       const byWid = await this.prisma.member.findUnique({
         where: { whatsappId: wid },
-        select: { id: true, phoneNumber: true, whatsappId: true },
+        select: {
+          id: true,
+          phoneNumber: true,
+          whatsappId: true,
+          isVerified: true,
+        },
       });
-      if (byWid) return byWid;
+      if (byWid) return { ...byWid, isVerified: byWid.isVerified };
     }
 
     if (fallbackE164) {
       const byPhone = await this.prisma.member.findUnique({
         where: { phoneNumber: fallbackE164 },
-        select: { id: true, phoneNumber: true, whatsappId: true },
+        select: {
+          id: true,
+          phoneNumber: true,
+          whatsappId: true,
+          isVerified: true,
+        },
       });
       if (byPhone) {
         // Link existing member to this whatsappId on first message — no re-signup.
@@ -78,7 +89,11 @@ export class BotIdentityService {
             },
           });
         }
-        return { ...byPhone, whatsappId: byPhone.whatsappId ?? wid ?? null };
+        return {
+          ...byPhone,
+          whatsappId: byPhone.whatsappId ?? wid ?? null,
+          isVerified: byPhone.isVerified,
+        };
       }
       // Unknown number → create unverified stub so leads/drafts have a FK.
       // Full OTP verification still happens via the backend auth flow.
@@ -91,12 +106,17 @@ export class BotIdentityService {
             whatsappLinkedAt: wid ? new Date() : null,
             isVerified: false,
           },
-          select: { id: true, phoneNumber: true, whatsappId: true },
+          select: {
+            id: true,
+            phoneNumber: true,
+            whatsappId: true,
+            isVerified: true,
+          },
         });
         this.logger.log(
           `Created bot-stub Member for ${this.mask(fallbackE164)} (unverified, pending OTP)`,
         );
-        return created;
+        return { ...created, isVerified: created.isVerified };
       } catch (error) {
         // Race: two webhooks created concurrently — re-read by phone.
         this.logger.warn(
@@ -106,7 +126,12 @@ export class BotIdentityService {
         );
         return this.prisma.member.findUnique({
           where: { phoneNumber: fallbackE164 },
-          select: { id: true, phoneNumber: true, whatsappId: true },
+          select: {
+            id: true,
+            phoneNumber: true,
+            whatsappId: true,
+            isVerified: true,
+          },
         });
       }
     }

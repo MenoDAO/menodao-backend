@@ -10,6 +10,7 @@ import { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
 import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
+import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -18,6 +19,25 @@ const WABOXAPP_INBOUND_DEDUPE_TTL_MS = 30_000;
 const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
 const MAX_TRACKED_FLARESEND_INBOUND_MESSAGES = 1_000;
 const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
+
+const ONBOARDING_WELCOME_MENU =
+  'Kariba! 👋 Welcome to MenoDAO. Dr. Papi is here to help with your oral health.\n\n' +
+  'Reply with a number to choose:\n' +
+  '1️⃣ Book an appointment\n' +
+  '2️⃣ Health information / symptoms\n' +
+  '3️⃣ Help with my MenoDAO account';
+
+const ONBOARDING_MENU_PROMPT =
+  'Please reply with 1, 2 or 3 to continue:\n' +
+  '1️⃣ Book an appointment\n' +
+  '2️⃣ Health information / symptoms\n' +
+  '3️⃣ Help with my MenoDAO account';
+
+interface OnboardingMenuChoice {
+  key: 'BOOKING' | 'HEALTH' | 'HELP';
+  /** Canonical phrasing used when the member only replies with the menu number. */
+  phrase: string;
+}
 
 /**
  * BotGatewayService — port of menobot WhatsappService dispatch, backed by
@@ -37,6 +57,7 @@ export class BotGatewayService {
     private readonly configService: ConfigService,
     private readonly voicePipelineService: VoicePipelineService,
     private readonly identity: BotIdentityService,
+    private readonly onboardingService: BotOnboardingService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -311,33 +332,160 @@ export class BotGatewayService {
       contactName,
     });
     if (!member) return;
-    const recipientPhone = member.phoneNumber;
+
+    // New / unverified WhatsApp numbers start in the onboarding state machine;
+    // known (verified) members proceed straight to the AI reply path.
+    if (!member.isVerified) {
+      const session = await this.onboardingService.getSession(member.id);
+      if (!session || session.status === 'IN_PROGRESS') {
+        await this.handleOnboardingTurn({
+          memberId: member.id,
+          recipientPhone: member.phoneNumber,
+          messageText,
+          senderId,
+        });
+        return;
+      }
+    }
+
+    const replyText = await this.generateReplyText({
+      memberId: member.id,
+      recipientPhone: member.phoneNumber,
+      messageText,
+      senderId,
+    });
+    await this.sendTextSafely(member.phoneNumber, replyText);
+  }
+
+  /**
+   * Onboarding state machine — drives a new member from the welcome menu to a
+   * resolved intent. The member's own words are handed to the AI pipeline once
+   * a menu option is recognised, so the rest of the bot behaves normally.
+   */
+  private async handleOnboardingTurn(params: {
+    memberId: string;
+    recipientPhone: string;
+    messageText: string;
+    senderId: string;
+  }): Promise<void> {
+    const { memberId, recipientPhone, messageText, senderId } = params;
+    const session = await this.onboardingService.start(memberId, 'en');
+
+    if (session.step === 'WELCOME') {
+      await this.onboardingService.setStep(memberId, 'INTEREST', {
+        source: 'welcome',
+        language: 'en',
+        welcomeSentAt: new Date().toISOString(),
+      });
+      await this.sendTextSafely(recipientPhone, ONBOARDING_WELCOME_MENU);
+      return;
+    }
+
+    const choice = this.resolveMenuChoice(messageText);
+    if (!choice) {
+      await this.sendTextSafely(recipientPhone, ONBOARDING_MENU_PROMPT);
+      return;
+    }
+
+    await this.onboardingService.setStep(memberId, 'MENU', {
+      choice: choice.key,
+      selectedAt: new Date().toISOString(),
+    });
+
+    // A bare menu number carries no intent — use the canonical phrasing.
+    const aiInput = /^[123]$/.test(messageText.trim())
+      ? choice.phrase
+      : messageText;
+
+    const replyText = await this.generateReplyText({
+      memberId,
+      recipientPhone,
+      messageText: aiInput,
+      senderId,
+    });
+    await this.sendTextSafely(recipientPhone, replyText);
+    await this.onboardingService.complete(memberId);
+  }
+
+  private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {
+    const text = (messageText ?? '').trim().toLowerCase();
+    if (!text) return null;
+    if (
+      /^(1|book|booking|appointment|miadi|ninapenda kupanga|book\s+appointment)/.test(
+        text,
+      )
+    ) {
+      return {
+        key: 'BOOKING',
+        phrase: 'I want to book an appointment at a MenoDAO clinic.',
+      };
+    }
+    if (
+      /^(2|health|info|information|symptom|symptoms|pain|toothache|afya|maumivu)/.test(
+        text,
+      )
+    ) {
+      return {
+        key: 'HEALTH',
+        phrase: 'I have a question about my dental health.',
+      };
+    }
+    if (/^(3|help|support|account|memb|msaada)/.test(text)) {
+      return {
+        key: 'HELP',
+        phrase: 'I need help with my MenoDAO account.',
+      };
+    }
+    return null;
+  }
+
+  /** Shared reply generation: static override (if configured) or the AI pipeline. */
+  private async generateReplyText(params: {
+    memberId: string;
+    recipientPhone: string;
+    messageText: string;
+    senderId: string;
+  }): Promise<string> {
+    const { memberId, recipientPhone, messageText, senderId } = params;
     const staticReply = this.configService
       .get<string>('BOT_WHATSAPP_STATIC_REPLY')
       ?.trim();
-    let replyText: string;
     if (staticReply) {
       this.logger.log(
         'Using BOT_WHATSAPP_STATIC_REPLY; skipping AI generation.',
       );
-      replyText = staticReply;
       await this.prisma.botMessageLog.createMany({
         data: [
-          { memberId: member.id, role: 'user', content: messageText },
-          { memberId: member.id, role: 'assistant', content: replyText },
+          { memberId, role: 'user', content: messageText },
+          { memberId, role: 'assistant', content: staticReply },
         ],
       });
-    } else {
-      const result = await this.voicePipelineService.processTextPipeline(
-        messageText,
-        recipientPhone,
-        undefined,
-        undefined,
-        senderId,
-      );
-      replyText = result.patientMessage;
+      return staticReply;
     }
-    await this.whatsappClient.sendTextMessage(recipientPhone, replyText);
+    const result = await this.voicePipelineService.processTextPipeline(
+      messageText,
+      recipientPhone,
+      undefined,
+      undefined,
+      senderId,
+    );
+    return result.patientMessage;
+  }
+
+  /** Outbound send that never breaks the conversation state machine. */
+  private async sendTextSafely(
+    recipientPhone: string,
+    replyText: string,
+  ): Promise<void> {
+    try {
+      await this.whatsappClient.sendTextMessage(recipientPhone, replyText);
+    } catch (error) {
+      this.logger.error(
+        `Failed to send reply to ${recipientPhone}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private extractFlaresendMessageText(data: any): string | null {

@@ -9,6 +9,10 @@ import { FlaresendApiClient } from './whatsapp-clients/flaresend-api.client';
 import { WaboxappApiClient } from './whatsapp-clients/waboxapp-api.client';
 import { WHATSAPP_CLIENT } from './whatsapp-clients/whatsapp-provider.interface';
 import { BotIdentityModule } from './identity/identity.module';
+import { BotOnboardingModule } from './onboarding/bot-onboarding.module';
+import { BotOnboardingService } from './onboarding/bot-onboarding.service';
+import { BotContextModule } from './context/bot-context.module';
+import { BotContextService } from './context/bot-context.service';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
 
@@ -55,9 +59,21 @@ const whatsappProviderFactory: Provider = {
     VoicePipelineModule,
     WhatsappClientsModule,
     BotIdentityModule,
+    BotOnboardingModule,
+    BotContextModule,
   ],
   controllers: [BotGatewayController],
-  providers: [whatsappProviderFactory, BotGatewayService],
-  exports: [BotIdentityModule, BotGatewayService],
+  providers: [
+    whatsappProviderFactory,
+    BotGatewayService,
+    BotOnboardingService,
+    BotContextService,
+  ],
+  exports: [
+    BotIdentityModule,
+    BotOnboardingModule,
+    BotContextModule,
+    BotGatewayService,
+  ],
 })
 export class BotModule {}
