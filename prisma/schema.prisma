@@ -1257,8 +1257,18 @@ model BotContextDocument {
   title     String?
   content   String   @db.Text
   active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Where the document came from: MANUAL (written in the admin dashboard) or
+  // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id.
+  source      String    @default("MANUAL")
+  externalId  String?
+  externalUrl String?
+  lastSyncedAt DateTime?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([kind, active])
+  @@index([source, externalId])
 }
 
 model BotLlmCallLog {
