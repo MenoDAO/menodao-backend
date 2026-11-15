@@ -6,6 +6,7 @@ import type {
 } from './interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from './interfaces/llm-provider.interface';
 import { BotContextService } from '../context/bot-context.service';
+import type { RetrievedBotContext } from '../context/bot-context.service';
 import {
   DR_PAPI_DISCLAIMER,
   DR_PAPI_FALLBACK_REPLY,
@@ -39,9 +40,15 @@ export class BotAiService {
     history: ChatHistoryMessage[],
     operation = 'whatsapp_reply',
   ): Promise<AiReply> {
-    const systemPrompt = await this.buildSystemPrompt(userMessage);
+    // One retrieval per reply: the same documents feed both the system prompt
+    // grounding and the user prompt context.
     const retrievedContext = await this.retrieveContext(userMessage);
-    const contextBlock = this.renderContextBlock(retrievedContext);
+    const systemPrompt = await this.buildSystemPrompt(
+      userMessage,
+      retrievedContext,
+    );
+    const contextBlock =
+      this.contextService.renderPromptBlock(retrievedContext);
     let rawReply: string;
     try {
       rawReply = await this.llmProvider.generateCompletion({
@@ -66,14 +73,9 @@ export class BotAiService {
   }
 
   /** Retrieval: ground the bot reply in the most relevant context docs. */
-  private async retrieveContext(userMessage: string): Promise<
-    Array<{
-      documentId: string;
-      title: string | null;
-      content: string;
-      score: number;
-    }>
-  > {
+  private async retrieveContext(
+    userMessage: string,
+  ): Promise<RetrievedBotContext[]> {
     try {
       const results = await this.contextService.retrieve(userMessage);
       if (results.length > 0) {
@@ -92,23 +94,15 @@ export class BotAiService {
     }
   }
 
-  private renderContextBlock(
-    retrieved: Array<{
-      documentId: string;
-      title: string | null;
-      content: string;
-      score: number;
-    }>,
-  ): string {
-    if (retrieved.length === 0) return '';
-    const block = retrieved
-      .map((doc) => `### ${doc.title ?? 'Relevant Guide'}\n${doc.content}`)
-      .join('\n\n');
-    return block;
+  private renderContextBlock(retrieved: RetrievedBotContext[]): string {
+    return this.contextService.renderPromptBlock(retrieved);
   }
 
   /** Grounding: backend Clinic (APPROVED) + active Procedure catalogue. */
-  public async buildSystemPrompt(userMessage?: string): Promise<string> {
+  public async buildSystemPrompt(
+    userMessage?: string,
+    retrieved?: RetrievedBotContext[],
+  ): Promise<string> {
     const [clinics, procedures] = await Promise.all([
       this.prisma.clinic.findMany({
         where: { status: 'APPROVED' },
@@ -146,13 +140,13 @@ export class BotAiService {
           .join('\n')
       : 'Coverage per membership tier (Bronze / Silver / Gold). See https://menodao.org for details.';
 
-    const retrievedContext = userMessage
-      ? await this.retrieveContext(userMessage)
-      : [];
-    const contextDocuments = retrievedContext
-      .map((doc) => `### ${doc.title ?? 'Relevant Guide'}\n${doc.content}`)
-      .join('\n\n')
-      .trim();
+    const contextDocuments = retrieved
+      ? this.contextService.renderPromptBlock(retrieved).trim()
+      : userMessage
+        ? this.contextService
+            .renderPromptBlock(await this.retrieveContext(userMessage))
+            .trim()
+        : '';
 
     return buildDrPapiSystemPrompt({
       clinicContext,
