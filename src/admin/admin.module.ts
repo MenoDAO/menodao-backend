@@ -14,6 +14,12 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ReferralModule } from '../referrals/referral.module';
 import { BotContextModule } from '../bot/context/bot-context.module';
 import { AdminBotContextController } from './bot-context.controller';
+import { BotInstancesModule } from '../bot/instances/bot-instances.module';
+import { BotChatModule } from '../bot/chat/bot-chat.module';
+import { WhatsappClientsModule } from '../bot/whatsapp-clients/whatsapp-clients.module';
+import { AdminWhatsappController } from './whatsapp/whatsapp-instance.controller';
+import { AdminWhatsappService } from './whatsapp/whatsapp-instance.service';
+import { AdminBotChatController } from './whatsapp/bot-chat.controller';
 
 @Global()
 @Module({
@@ -23,6 +29,9 @@ import { AdminBotContextController } from './bot-context.controller';
     forwardRef(() => SubscriptionsModule),
     forwardRef(() => ReferralModule),
     BotContextModule,
+    BotInstancesModule,
+    BotChatModule,
+    WhatsappClientsModule,
   ],
   controllers: [
     AdminController,
@@ -30,6 +39,8 @@ import { AdminBotContextController } from './bot-context.controller';
     UsersController,
     PaymentsController,
     AdminBotContextController,
+    AdminWhatsappController,
+    AdminBotChatController,
   ],
   providers: [
     AdminService,
@@ -37,6 +48,7 @@ import { AdminBotContextController } from './bot-context.controller';
     StatsService,
     AdminAuthGuard,
     RolesGuard,
+    AdminWhatsappService,
   ],
   exports: [AdminService, AuditLogService, AdminAuthGuard],
 })

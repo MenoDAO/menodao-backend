@@ -13,6 +13,7 @@ import { BotOnboardingModule } from './onboarding/bot-onboarding.module';
 import { BotOnboardingService } from './onboarding/bot-onboarding.service';
 import { BotContextModule } from './context/bot-context.module';
 import { BotContextService } from './context/bot-context.service';
+import { BotChatModule } from './chat/bot-chat.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
 
@@ -61,6 +62,7 @@ const whatsappProviderFactory: Provider = {
     BotIdentityModule,
     BotOnboardingModule,
     BotContextModule,
+    BotChatModule,
   ],
   controllers: [BotGatewayController],
   providers: [
