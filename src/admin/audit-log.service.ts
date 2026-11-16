@@ -10,7 +10,9 @@ export interface AuditLogEntry {
     | 'MEMBER'
     | 'SUBSCRIPTION'
     | 'DISBURSAL'
-    | 'BOT_CONTEXT';
+    | 'BOT_CONTEXT'
+    | 'WHATSAPP_INSTANCE'
+    | 'BOT_CHAT';
   targetId: string;
   reason: string;
   metadata?: any;

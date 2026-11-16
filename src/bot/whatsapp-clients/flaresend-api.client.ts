@@ -1,8 +1,9 @@
-/* eslint-disable @typescript-eslint/require-await -- provider payloads are untyped JSON */
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- provider payloads are untyped JSON */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { IWhatsappClient } from './whatsapp-provider.interface';
+import { BotInstanceStore } from '../instances/bot-instance.store';
 
 interface FlaresendSendResponse {
   success?: boolean;
@@ -17,6 +18,36 @@ interface FlaresendLoginResponse {
   /** Older docs call the same value access_token. */
   access_token?: string;
   expires_in?: number;
+  subscription?: FlaresendSubscription;
+}
+
+export interface FlaresendSubscriptionPlan {
+  id?: number;
+  name?: string;
+  maxInstances?: number;
+  maxApiCalls?: number;
+}
+
+export interface FlaresendSubscription {
+  id?: number;
+  status?: string;
+  startsAt?: string;
+  endsAt?: string;
+  plan?: FlaresendSubscriptionPlan;
+}
+
+export interface FlaresendInstanceSummary {
+  id: string;
+  status?: string;
+  phone_number?: string | null;
+  phoneNumber?: string | null;
+  whatsapp_user_id?: string | null;
+  user_jid?: string | null;
+  name?: string | null;
+  connected_at?: string | null;
+  disconnected_at?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
 }
 
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
@@ -35,8 +66,12 @@ export class FlaresendApiClient implements IWhatsappClient {
   private bearerToken: string | null = null;
   private bearerExpiresAt = 0;
   private loginInFlight: Promise<string> | null = null;
+  private subscription: FlaresendSubscription | null = null;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly instanceStore: BotInstanceStore,
+  ) {
     this.baseUrl =
       this.configService.get<string>('FLARESEND_BASE_URL') ??
       'https://api.flaresend.com';
@@ -149,8 +184,147 @@ export class FlaresendApiClient implements IWhatsappClient {
 
     this.bearerToken = token;
     this.bearerExpiresAt = Date.now() + ttlMs;
+    if (response.data?.subscription) {
+      this.subscription = response.data.subscription;
+    }
     this.logger.log('FlareSend session token refreshed.');
     return token;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Account-level instance management (session JWT, not the instance key)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private async accountHeaders(): Promise<Record<string, string>> {
+    return { Authorization: `Bearer ${await this.getBearerToken()}` };
+  }
+
+  /** Plan limits ride along on the login response. */
+  async getSubscription(): Promise<FlaresendSubscription | null> {
+    try {
+      await this.getBearerToken();
+    } catch (error) {
+      this.logger.warn(
+        `Cannot read the FlareSend subscription: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+    return this.subscription;
+  }
+
+  async listInstances(): Promise<FlaresendInstanceSummary[]> {
+    const response = await this.http.get<{
+      instances?: FlaresendInstanceSummary[];
+    }>('/instances', { headers: await this.accountHeaders() });
+    return response.data?.instances ?? [];
+  }
+
+  async getInstance(id: string): Promise<Record<string, unknown>> {
+    const response = await this.http.get(`/instances/${id}`, {
+      headers: await this.accountHeaders(),
+    });
+    return response.data;
+  }
+
+  async getInstanceStatus(id: string): Promise<{
+    status?: string;
+    phoneNumber?: string | null;
+  }> {
+    const response = await this.http.get<{
+      status?: string;
+      phoneNumber?: string | null;
+    }>(`/instances/${id}/status`, { headers: await this.accountHeaders() });
+    return response.data ?? {};
+  }
+
+  /** Creates an instance. The instance-scoped key is only returned here. */
+  async createInstance(name?: string): Promise<{
+    instanceId: string;
+    apiKey: string | null;
+    raw: Record<string, unknown>;
+  }> {
+    const response = await this.http.post<Record<string, any>>(
+      '/instances',
+      name ? { name } : {},
+      { headers: await this.accountHeaders() },
+    );
+    const data = response.data ?? {};
+    const instanceId =
+      data.instance?.id ?? data.id ?? data.instanceId ?? data.instance_id;
+    const apiKey =
+      data.apiKey ??
+      data.api_key ??
+      data.instance?.apiKey ??
+      data.instance?.api_key ??
+      data.key ??
+      null;
+    if (!instanceId) {
+      throw new Error(
+        'FlareSend did not return an instance id when creating the instance.',
+      );
+    }
+    return {
+      instanceId: String(instanceId),
+      apiKey: apiKey ? String(apiKey) : null,
+      raw: data,
+    };
+  }
+
+  async reconnectInstance(id: string): Promise<Record<string, unknown>> {
+    const response = await this.http.post(
+      `/instances/${id}/reconnect`,
+      {},
+      { headers: await this.accountHeaders() },
+    );
+    return response.data ?? {};
+  }
+
+  /** Drops the WhatsApp session but keeps the instance and its key. */
+  async resetInstanceSession(id: string): Promise<Record<string, unknown>> {
+    const response = await this.http.post(
+      `/instances/${id}/reset-session`,
+      {},
+      { headers: await this.accountHeaders() },
+    );
+    return response.data ?? {};
+  }
+
+  async deleteInstance(id: string): Promise<void> {
+    await this.http.delete(`/instances/${id}`, {
+      headers: await this.accountHeaders(),
+    });
+  }
+
+  async requestPairingCode(
+    id: string,
+    phoneNumber: string,
+  ): Promise<{ code: string | null; raw: Record<string, unknown> }> {
+    const response = await this.http.post<Record<string, any>>(
+      `/instances/${id}/pairing-code`,
+      { phone_number: phoneNumber },
+      { headers: await this.accountHeaders() },
+    );
+    const data = response.data ?? {};
+    const code =
+      data.pairingCode ?? data.pairing_code ?? data.code ?? data.pairingCode;
+    return { code: code ? String(code) : null, raw: data };
+  }
+
+  /** Raw QR payload. Render it with any QR encoder; the payload rotates. */
+  async getInstanceQr(id: string): Promise<{
+    status?: string;
+    qr: string | null;
+  }> {
+    const response = await this.http.get<{ status?: string; qr?: string }>(
+      `/instances/${id}/qr`,
+      { headers: await this.accountHeaders() },
+    );
+    return {
+      status: response.data?.status,
+      qr: response.data?.qr ?? null,
+    };
   }
 
   private async postSendMessage(
@@ -176,6 +350,10 @@ export class FlaresendApiClient implements IWhatsappClient {
   }
 
   private async resolveSendToken(): Promise<string> {
+    // The instance activated in the dashboard wins; the environment key is the
+    // fallback so a fresh deploy keeps sending before anyone activates one.
+    const credentials = await this.instanceStore.getSendCredentials();
+    if (credentials?.apiKey) return credentials.apiKey;
     if (this.apiKey) return this.apiKey;
     return this.getBearerToken();
   }
@@ -204,13 +382,9 @@ export class FlaresendApiClient implements IWhatsappClient {
         // The configured key was rejected as a bearer token. Retry once with a
         // freshly minted session JWT so a rotated/expired key cannot wedge
         // every outbound message.
-        if (
-          axios.isAxiosError(error) &&
-          error.response?.status === 401 &&
-          this.apiKey
-        ) {
+        if (axios.isAxiosError(error) && error.response?.status === 401) {
           this.logger.warn(
-            'FlareSend rejected the configured API key; retrying with a session token.',
+            'FlareSend rejected the instance key; retrying with a session token.',
           );
           response = await this.postSendMessage(
             recipient,

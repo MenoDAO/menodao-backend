@@ -11,6 +11,7 @@ import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
+import { BotChatService } from '../chat/bot-chat.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -39,6 +40,13 @@ interface OnboardingMenuChoice {
   phrase: string;
 }
 
+/** Everything needed to attach an outbound message to its conversation. */
+interface ChatContext {
+  memberId: string;
+  contactId: string;
+  instanceProviderId?: string;
+}
+
 /**
  * BotGatewayService — port of menobot WhatsappService dispatch, backed by
  * Member (not a separate bot User). Alternate gateways (FlareSend / Waboxapp)
@@ -58,6 +66,7 @@ export class BotGatewayService {
     private readonly voicePipelineService: VoicePipelineService,
     private readonly identity: BotIdentityService,
     private readonly onboardingService: BotOnboardingService,
+    private readonly chatService: BotChatService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -229,9 +238,27 @@ export class BotGatewayService {
           member?.phoneNumber ??
           (this.isLid(whatsappId) ? undefined : whatsappId);
         if (!recipientPhone) return;
-        await this.flaresendClient.sendTextMessage(
+        if (member) {
+          await this.chatService.recordInbound({
+            contactId: whatsappId,
+            contactName,
+            memberId: member.id,
+            content: '[voice note]',
+            contentType: 'AUDIO',
+            providerMessageId: data.id ?? null,
+            instanceProviderId: payload.instanceId ?? null,
+          });
+        }
+        await this.sendTextSafely(
           recipientPhone,
           'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!',
+          member
+            ? {
+                memberId: member.id,
+                contactId: whatsappId,
+                instanceProviderId: payload.instanceId,
+              }
+            : undefined,
         );
         return;
       }
@@ -242,6 +269,7 @@ export class BotGatewayService {
         messageId: data.id,
         messageText,
         contactName,
+        instanceProviderId: payload.instanceId,
       });
     } catch (error) {
       // Let the next retry try again rather than swallowing the message.
@@ -288,13 +316,13 @@ export class BotGatewayService {
         );
         const replyText =
           result.patientMessage || 'Ujumbe wako wa sauti umepokelewa. Asante!';
-        await this.whatsappClient.sendTextMessage(normalizedPhone, replyText);
+        await this.sendTextSafely(normalizedPhone, replyText);
         return;
       } catch (error) {
         this.logger.error(
           `Meta audio handling failed for ${normalizedPhone}: ${error}`,
         );
-        await this.whatsappClient.sendTextMessage(
+        await this.sendTextSafely(
           normalizedPhone,
           'Samahani, hatukuweza kusikiliza ujumbe wako wa sauti vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno.',
         );
@@ -318,9 +346,16 @@ export class BotGatewayService {
     messageId: string;
     messageText: string;
     contactName?: string;
+    instanceProviderId?: string;
   }): Promise<void> {
-    const { senderId, fallbackPhone, messageId, messageText, contactName } =
-      params;
+    const {
+      senderId,
+      fallbackPhone,
+      messageId,
+      messageText,
+      contactName,
+      instanceProviderId,
+    } = params;
     try {
       await this.whatsappClient.markMessageAsRead(messageId);
     } catch {
@@ -333,6 +368,23 @@ export class BotGatewayService {
     });
     if (!member) return;
 
+    const chatContext: ChatContext = {
+      memberId: member.id,
+      contactId: senderId,
+      instanceProviderId,
+    };
+
+    // Persist the member's side of the conversation before we reply, so a
+    // failure further down still leaves an auditable transcript.
+    await this.chatService.recordInbound({
+      contactId: senderId,
+      contactName,
+      memberId: member.id,
+      content: messageText,
+      providerMessageId: messageId || null,
+      instanceProviderId,
+    });
+
     // New / unverified WhatsApp numbers start in the onboarding state machine;
     // known (verified) members proceed straight to the AI reply path.
     if (!member.isVerified) {
@@ -343,6 +395,7 @@ export class BotGatewayService {
           recipientPhone: member.phoneNumber,
           messageText,
           senderId,
+          chatContext,
         });
         return;
       }
@@ -354,7 +407,7 @@ export class BotGatewayService {
       messageText,
       senderId,
     });
-    await this.sendTextSafely(member.phoneNumber, replyText);
+    await this.sendTextSafely(member.phoneNumber, replyText, chatContext);
   }
 
   /**
@@ -367,8 +420,9 @@ export class BotGatewayService {
     recipientPhone: string;
     messageText: string;
     senderId: string;
+    chatContext: ChatContext;
   }): Promise<void> {
-    const { memberId, recipientPhone, messageText, senderId } = params;
+    const { memberId, recipientPhone, messageText, chatContext } = params;
     const session = await this.onboardingService.start(memberId, 'en');
 
     if (session.step === 'WELCOME') {
@@ -377,13 +431,21 @@ export class BotGatewayService {
         language: 'en',
         welcomeSentAt: new Date().toISOString(),
       });
-      await this.sendTextSafely(recipientPhone, ONBOARDING_WELCOME_MENU);
+      await this.sendTextSafely(
+        recipientPhone,
+        ONBOARDING_WELCOME_MENU,
+        chatContext,
+      );
       return;
     }
 
     const choice = this.resolveMenuChoice(messageText);
     if (!choice) {
-      await this.sendTextSafely(recipientPhone, ONBOARDING_MENU_PROMPT);
+      await this.sendTextSafely(
+        recipientPhone,
+        ONBOARDING_MENU_PROMPT,
+        chatContext,
+      );
       return;
     }
 
@@ -401,9 +463,9 @@ export class BotGatewayService {
       memberId,
       recipientPhone,
       messageText: aiInput,
-      senderId,
+      senderId: params.senderId,
     });
-    await this.sendTextSafely(recipientPhone, replyText);
+    await this.sendTextSafely(recipientPhone, replyText, chatContext);
     await this.onboardingService.complete(memberId);
   }
 
@@ -476,10 +538,28 @@ export class BotGatewayService {
   private async sendTextSafely(
     recipientPhone: string,
     replyText: string,
+    chatContext?: ChatContext,
   ): Promise<void> {
     try {
       await this.whatsappClient.sendTextMessage(recipientPhone, replyText);
+      if (chatContext) {
+        await this.chatService.recordOutbound({
+          contactId: chatContext.contactId,
+          memberId: chatContext.memberId,
+          content: replyText,
+          instanceProviderId: chatContext.instanceProviderId,
+        });
+      }
     } catch (error) {
+      if (chatContext) {
+        await this.chatService.recordOutbound({
+          contactId: chatContext.contactId,
+          memberId: chatContext.memberId,
+          content: replyText,
+          instanceProviderId: chatContext.instanceProviderId,
+          deliveryStatus: 'FAILED',
+        });
+      }
       this.logger.error(
         `Failed to send reply to ${recipientPhone}: ${
           error instanceof Error ? error.message : String(error)

@@ -57,6 +57,7 @@ model Member {
   botBookingDraft   BotBookingDraft?
   botOnboardingSessions BotOnboardingSession[]
   botLlmLogs        BotLlmCallLog[]
+  botChatThreads    BotChatThread[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -1209,6 +1210,91 @@ model BotMessageLog {
 
   @@index([memberId])
   @@index([createdAt])
+}
+
+/// A WhatsApp instance the bot can send from. Mirrors a FlareSend instance and
+/// keeps its instance-scoped key encrypted at rest, so an operator can add,
+/// switch or relink instances from the dashboard without a redeploy or an SSH
+/// session.
+model BotWhatsappInstance {
+  id              String    @id @default(uuid())
+  provider        String    @default("flaresend")
+  /// Provider-side identity (FlareSend instance id).
+  providerId      String
+  label           String?
+  phoneNumber     String?
+  /// CONNECTED | AWAITING_SCAN | INITIALIZING | DISCONNECTED | UNKNOWN
+  status          String    @default("UNKNOWN")
+  /// AES-256-GCM ciphertext (v1.iv.tag.ciphertext). Never the plain key.
+  apiKeyCipher    String?   @db.Text
+  webhookUrl      String?
+  /// Exactly one instance per environment sends bot messages.
+  isActive        Boolean   @default(false)
+  lastCheckedAt   DateTime?
+  lastConnectedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  threads BotChatThread[]
+
+  @@unique([provider, providerId])
+  @@index([isActive])
+}
+
+/// One conversation with one WhatsApp contact on one instance.
+///
+/// This is the compliance-facing record: it carries the retention deadline, the
+/// consent basis and the erasure marker, so "how long do we keep this and why"
+/// is answerable per conversation rather than per database.
+model BotChatThread {
+  id             String   @id @default(uuid())
+  instanceId     String?
+  instance       BotWhatsappInstance? @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+  memberId       String?
+  member         Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  /// Normalised WhatsApp identity: international digits, or "<id>@lid".
+  contactId      String
+  contactName    String?
+  /// OPEN | CLOSED | ARCHIVED
+  status         String   @default("OPEN")
+  /// Why we may hold this conversation, e.g. SERVICE_DELIVERY or CONSENT_V1.
+  consentBasis   String?
+  startedAt      DateTime @default(now())
+  lastMessageAt  DateTime @default(now())
+  messageCount   Int      @default(0)
+  /// The thread and its messages are purged after this instant.
+  retentionUntil DateTime
+  erasedAt       DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  messages BotChatMessage[]
+
+  @@index([instanceId, lastMessageAt])
+  @@index([memberId])
+  @@index([contactId])
+  @@index([retentionUntil])
+}
+
+model BotChatMessage {
+  id                String   @id @default(uuid())
+  threadId          String
+  thread            BotChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// Provider message id, used to spot a retried webhook delivery.
+  providerMessageId String?
+  /// INBOUND | OUTBOUND
+  direction         String
+  content           String   @db.Text
+  /// TEXT | AUDIO | IMAGE | VIDEO | OTHER
+  contentType       String   @default("TEXT")
+  /// RECEIVED | SENT | FAILED
+  deliveryStatus    String   @default("RECEIVED")
+  sentAt            DateTime @default(now())
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([threadId, sentAt])
+  @@index([providerMessageId])
 }
 
 model BotLead {
