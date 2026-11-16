@@ -232,6 +232,24 @@ export class BotInstanceStore {
       where: { isActive: true },
     });
 
+    const envKey = this.configService.get<string>('FLARESEND_API_KEY');
+    const envInstanceId =
+      this.configService.get<string>('FLARESEND_INSTANCE_ID') ?? '';
+
+    // The instance pinned by the environment stays authoritative: the SSM
+    // pipeline is the documented rotation path, so a stale database copy must
+    // never shadow a freshly rotated environment key. Instances added from the
+    // dashboard (a different providerId) use their stored key instead.
+    if (active && envKey && active.providerId === envInstanceId) {
+      const credentials: SendCredentials = {
+        providerId: active.providerId,
+        apiKey: envKey,
+        source: 'env',
+      };
+      this.cached = { at: Date.now(), credentials };
+      return credentials;
+    }
+
     if (active?.apiKeyCipher) {
       try {
         const credentials: SendCredentials = {
@@ -250,10 +268,9 @@ export class BotInstanceStore {
       }
     }
 
-    const envKey = this.configService.get<string>('FLARESEND_API_KEY');
     if (!envKey) return null;
     const credentials: SendCredentials = {
-      providerId: this.configService.get<string>('FLARESEND_INSTANCE_ID') ?? '',
+      providerId: envInstanceId,
       apiKey: envKey,
       source: 'env',
     };
