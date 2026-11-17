@@ -1,11 +1,15 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
+  GatewayTimeoutException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
 import { FlaresendApiClient } from '../../bot/whatsapp-clients/flaresend-api.client';
 import { BotInstanceStore } from '../../bot/instances/bot-instance.store';
 import type { BotInstanceView } from '../../bot/instances/bot-instance.store';
@@ -82,7 +86,9 @@ export class AdminWhatsappService {
 
   /** Imports whatever the provider knows about into the local table. */
   async sync(): Promise<WhatsappInstanceOverview> {
-    const remote = await this.client.listInstances();
+    const remote = await this.callProvider('importing instances', () =>
+      this.client.listInstances(),
+    );
     for (const instance of remote) {
       await this.store.upsertFromProvider({
         providerId: instance.id,
@@ -136,7 +142,9 @@ export class AdminWhatsappService {
       );
     }
 
-    const created = await this.client.createInstance(input.label);
+    const created = await this.callProvider('creating an instance', () =>
+      this.client.createInstance(input.label),
+    );
     const row = await this.store.upsertFromProvider({
       providerId: created.instanceId,
       status: 'INITIALIZING',
@@ -164,7 +172,9 @@ export class AdminWhatsappService {
 
   async refreshStatus(id: string): Promise<BotInstanceView> {
     const row = await this.store.get(id);
-    const status = await this.client.getInstanceStatus(row.providerId);
+    const status = await this.callProvider('reading the instance status', () =>
+      this.client.getInstanceStatus(row.providerId),
+    );
     const updated = await this.store.updateStatus(
       row.id,
       this.mapStatus(status.status),
@@ -175,7 +185,9 @@ export class AdminWhatsappService {
 
   async reconnect(id: string): Promise<BotInstanceView> {
     const row = await this.store.get(id);
-    await this.client.reconnectInstance(row.providerId);
+    await this.callProvider('reconnecting the instance', () =>
+      this.client.reconnectInstance(row.providerId),
+    );
     const updated = await this.store.updateStatus(row.id, 'INITIALIZING');
     return this.store.toView(updated);
   }
@@ -203,7 +215,9 @@ export class AdminWhatsappService {
     }
 
     await this.client.resetInstanceSession(row.providerId);
-    await this.client.reconnectInstance(row.providerId);
+    await this.callProvider('reconnecting the instance', () =>
+      this.client.reconnectInstance(row.providerId),
+    );
     const pairing = await this.client.requestPairingCode(
       row.providerId,
       digits,
@@ -236,16 +250,17 @@ export class AdminWhatsappService {
         'A phone number is required: pass phoneNumber or set it on the instance.',
       );
     }
-    const pairing = await this.client.requestPairingCode(
-      row.providerId,
-      digits,
+    const pairing = await this.callProvider('requesting a pairing code', () =>
+      this.client.requestPairingCode(row.providerId, digits),
     );
     return { pairingCode: pairing.code, status: row.status };
   }
 
   async qr(id: string): Promise<{ qr: string | null; status: string | null }> {
     const row = await this.store.get(id);
-    const result = await this.client.getInstanceQr(row.providerId);
+    const result = await this.callProvider('reading the instance QR', () =>
+      this.client.getInstanceQr(row.providerId),
+    );
     return { qr: result.qr, status: result.status ?? null };
   }
 
@@ -314,6 +329,69 @@ export class AdminWhatsappService {
       this.configService.get<string>('API_BASE_URL')?.replace(/\/+$/, '') ??
       'https://api.menodao.org';
     return `${base}/bot/webhook/flaresend/${token}`;
+  }
+
+  /**
+   * Turns provider failures into an answer the dashboard can act on.
+   *
+   * A raw AxiosError becomes "unexpected error occurred"; operators need to
+   * know whether FlareSend refused the session, the instance is gone, or the
+   * provider is down. Our own HttpExceptions pass through untouched.
+   */
+  private async callProvider<T>(
+    action: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+
+      const timedOut =
+        axios.isAxiosError(error) &&
+        (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT');
+      const status = axios.isAxiosError(error)
+        ? error.response?.status
+        : undefined;
+      const payload = axios.isAxiosError(error)
+        ? (error.response?.data as
+            | { error?: string; message?: string }
+            | undefined)
+        : undefined;
+      const detail =
+        payload?.error ??
+        payload?.message ??
+        (error instanceof Error ? error.message : String(error));
+
+      this.logger.warn(
+        `FlareSend failed while ${action}: HTTP ${status ?? 'n/a'} — ${detail}`,
+      );
+
+      if (timedOut) {
+        throw new GatewayTimeoutException(
+          `FlareSend did not answer while ${action}. The WhatsApp session may ` +
+            'still be starting; wait a few seconds and try again.',
+        );
+      }
+      if (status === 404) {
+        throw new NotFoundException(
+          `FlareSend does not know this instance any more (${detail}). ` +
+            'Sync from FlareSend to refresh the list, then link the number again.',
+        );
+      }
+      if (status === 401 || status === 403) {
+        throw new BadGatewayException(
+          `FlareSend refused ${action} (HTTP ${status}). The account session ` +
+            'could not be refreshed; check FLARESEND_EMAIL / FLARESEND_PASSWORD ' +
+            'and the plan status in the FlareSend dashboard.',
+        );
+      }
+      throw new BadGatewayException(
+        status
+          ? `FlareSend refused ${action} (HTTP ${status}): ${detail}`
+          : `FlareSend did not answer while ${action}: ${detail}`,
+      );
+    }
   }
 
   private mapStatus(status?: string): string {

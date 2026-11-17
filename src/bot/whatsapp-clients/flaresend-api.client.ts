@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- provider payloads are untyped JSON */
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { IWhatsappClient } from './whatsapp-provider.interface';
@@ -52,6 +56,13 @@ export interface FlaresendInstanceSummary {
 
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const DEFAULT_TOKEN_TTL_SECONDS = 3_600;
+/**
+ * WhatsApp session operations wait on the phone/provider bridge, which is much
+ * slower than an ordinary REST call (and slower still right after a reset).
+ * The generic 15s timeout turned a slow-but-healthy pairing into a 504.
+ */
+const SESSION_TIMEOUT_MS = 30_000;
+const PAIRING_TIMEOUT_MS = 45_000;
 
 @Injectable()
 export class FlaresendApiClient implements IWhatsappClient {
@@ -199,6 +210,47 @@ export class FlaresendApiClient implements IWhatsappClient {
     return { Authorization: `Bearer ${await this.getBearerToken()}` };
   }
 
+  private isUnauthorized(error: unknown): boolean {
+    return axios.isAxiosError(error) && error.response?.status === 401;
+  }
+
+  /**
+   * Runs an account-level call with the session JWT.
+   *
+   * FlareSend can invalidate a session while its `exp` is still in the future
+   * (plan rollover, password change, session limits), so a cached token that
+   * looks fresh may already be dead. On a 401 we log in again once and retry
+   * instead of surfacing an opaque 500 to the dashboard.
+   */
+  private async accountRequest<T>(
+    run: (headers: Record<string, string>) => Promise<T>,
+    action: string,
+  ): Promise<T> {
+    try {
+      return await run(await this.accountHeaders());
+    } catch (error) {
+      if (!this.isUnauthorized(error)) throw error;
+
+      this.logger.warn(
+        `FlareSend rejected the session during ${action}; retrying with a fresh login.`,
+      );
+      this.bearerToken = null;
+      this.bearerExpiresAt = 0;
+
+      try {
+        const token = await this.getBearerToken(true);
+        return await run({ Authorization: `Bearer ${token}` });
+      } catch (retryError) {
+        if (!this.isUnauthorized(retryError)) throw retryError;
+        throw new ServiceUnavailableException(
+          'FlareSend rejected the account session twice while ' +
+            `${action}. Check FLARESEND_EMAIL / FLARESEND_PASSWORD and that ` +
+            'the subscription is still active in the FlareSend dashboard.',
+        );
+      }
+    }
+  }
+
   /** Plan limits ride along on the login response. */
   async getSubscription(): Promise<FlaresendSubscription | null> {
     try {
@@ -215,16 +267,24 @@ export class FlaresendApiClient implements IWhatsappClient {
   }
 
   async listInstances(): Promise<FlaresendInstanceSummary[]> {
-    const response = await this.http.get<{
-      instances?: FlaresendInstanceSummary[];
-    }>('/instances', { headers: await this.accountHeaders() });
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.get<{ instances?: FlaresendInstanceSummary[] }>(
+          '/instances',
+          {
+            headers,
+          },
+        ),
+      'listing instances',
+    );
     return response.data?.instances ?? [];
   }
 
   async getInstance(id: string): Promise<Record<string, unknown>> {
-    const response = await this.http.get(`/instances/${id}`, {
-      headers: await this.accountHeaders(),
-    });
+    const response = await this.accountRequest(
+      (headers) => this.http.get(`/instances/${id}`, { headers }),
+      'reading an instance',
+    );
     return response.data;
   }
 
@@ -232,10 +292,14 @@ export class FlaresendApiClient implements IWhatsappClient {
     status?: string;
     phoneNumber?: string | null;
   }> {
-    const response = await this.http.get<{
-      status?: string;
-      phoneNumber?: string | null;
-    }>(`/instances/${id}/status`, { headers: await this.accountHeaders() });
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.get<{ status?: string; phoneNumber?: string | null }>(
+          `/instances/${id}/status`,
+          { headers },
+        ),
+      'reading the instance status',
+    );
     return response.data ?? {};
   }
 
@@ -245,10 +309,14 @@ export class FlaresendApiClient implements IWhatsappClient {
     apiKey: string | null;
     raw: Record<string, unknown>;
   }> {
-    const response = await this.http.post<Record<string, any>>(
-      '/instances',
-      name ? { name } : {},
-      { headers: await this.accountHeaders() },
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.post<Record<string, any>>(
+          '/instances',
+          name ? { name } : {},
+          { headers },
+        ),
+      'creating an instance',
     );
     const data = response.data ?? {};
     const instanceId =
@@ -273,38 +341,51 @@ export class FlaresendApiClient implements IWhatsappClient {
   }
 
   async reconnectInstance(id: string): Promise<Record<string, unknown>> {
-    const response = await this.http.post(
-      `/instances/${id}/reconnect`,
-      {},
-      { headers: await this.accountHeaders() },
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.post(
+          `/instances/${id}/reconnect`,
+          {},
+          { headers, timeout: SESSION_TIMEOUT_MS },
+        ),
+      'reconnecting the instance',
     );
     return response.data ?? {};
   }
 
   /** Drops the WhatsApp session but keeps the instance and its key. */
   async resetInstanceSession(id: string): Promise<Record<string, unknown>> {
-    const response = await this.http.post(
-      `/instances/${id}/reset-session`,
-      {},
-      { headers: await this.accountHeaders() },
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.post(
+          `/instances/${id}/reset-session`,
+          {},
+          { headers, timeout: SESSION_TIMEOUT_MS },
+        ),
+      'resetting the instance session',
     );
     return response.data ?? {};
   }
 
   async deleteInstance(id: string): Promise<void> {
-    await this.http.delete(`/instances/${id}`, {
-      headers: await this.accountHeaders(),
-    });
+    await this.accountRequest(
+      (headers) => this.http.delete(`/instances/${id}`, { headers }),
+      'deleting the instance',
+    );
   }
 
   async requestPairingCode(
     id: string,
     phoneNumber: string,
   ): Promise<{ code: string | null; raw: Record<string, unknown> }> {
-    const response = await this.http.post<Record<string, any>>(
-      `/instances/${id}/pairing-code`,
-      { phone_number: phoneNumber },
-      { headers: await this.accountHeaders() },
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.post<Record<string, any>>(
+          `/instances/${id}/pairing-code`,
+          { phone_number: phoneNumber },
+          { headers, timeout: PAIRING_TIMEOUT_MS },
+        ),
+      'requesting a pairing code',
     );
     const data = response.data ?? {};
     const code =
@@ -317,9 +398,12 @@ export class FlaresendApiClient implements IWhatsappClient {
     status?: string;
     qr: string | null;
   }> {
-    const response = await this.http.get<{ status?: string; qr?: string }>(
-      `/instances/${id}/qr`,
-      { headers: await this.accountHeaders() },
+    const response = await this.accountRequest(
+      (headers) =>
+        this.http.get<{ status?: string; qr?: string }>(`/instances/${id}/qr`, {
+          headers,
+        }),
+      'reading the instance QR',
     );
     return {
       status: response.data?.status,
