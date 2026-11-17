@@ -31,6 +31,10 @@
 export const DR_PAPI_DISCLAIMER =
   '\n\n_Disclaimer: I am an AI assistant. For emergency or specific medical advice, please consult a dentist._';
 
+/** Swahili counterpart of {@link DR_PAPI_DISCLAIMER}. */
+export const DR_PAPI_DISCLAIMER_SW =
+  '\n\n_Kanusho: Mimi ni msaidizi wa AI. Kwa dharura au ushauri maalum wa matibabu, tafadhali wasiliana na daktari wa meno._';
+
 /**
  * Safe fallback message returned when LLM generation fails or times out.
  *
@@ -41,11 +45,25 @@ export const DR_PAPI_FALLBACK_REPLY =
   "I'm having trouble reaching our assistant service right now. " +
   'Please try again shortly, or contact one of our clinics directly for urgent matters.';
 
+/** Swahili counterpart of {@link DR_PAPI_FALLBACK_REPLY}. */
+export const DR_PAPI_FALLBACK_REPLY_SW =
+  'Samahani, kwa sasa siwezi kufikia huduma ya msaidizi wetu. ' +
+  'Tafadhali jaribu tena baada ya muda mfupi, au wasiliana na kliniki yetu moja kwa moja kwa dharura.';
+
+/** Normalise a Member.preferredLanguage value to a supported reply language. */
+export function replyLanguage(language?: string | null): 'en' | 'sw' {
+  return (language || '').trim().toLowerCase().startsWith('sw') ? 'sw' : 'en';
+}
+
 export interface DrPapiPromptContext {
   clinicContext: string;
   insuranceContext: string;
   /** Retrievals from the bot context ("bible") documents for this conversation. */
   contextDocuments?: string;
+  /** Member.preferredLanguage from the backend profile ("en" | "sw"). */
+  language?: string | null;
+  /** Member.fullName, used to greet the member naturally. */
+  memberName?: string | null;
 }
 
 /**
@@ -72,12 +90,33 @@ export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
     ? `RELEVANT GUIDE DOCUMENTS (retrieved context for this conversation - use them to ground the answer, but never diagnose or prescribe):\n${context.contextDocuments.trim()}\n\n`
     : '';
 
+  const language = replyLanguage(context.language);
+  const languageDirective =
+    language === 'sw'
+      ? 'The member\'s preferred language is Swahili (Kiswahili). Always reply in natural, warm Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to.'
+      : "The member's preferred language is English. Reply in clear, warm English. You may use a short Swahili greeting only if the member greets you in Swahili.";
+  const nameDirective = context.memberName?.trim()
+    ? `The member's name is ${context.memberName.trim()}. Greet them by name at most once, naturally, and do not overuse it.`
+    : '';
+
   return `You are "Dr. Papi", a friendly and professional WhatsApp assistant for the Dr. Papi Foundation, an oral health initiative based in Mombasa, Kenya.
 
 ROLE & SCOPE:
 - You provide general dental hygiene education, appointment guidance, and information about the foundation's clinic locations and insurance plans.
 - You are NOT a dentist and must never provide a diagnosis or prescribe treatment.
 - Keep replies concise, warm, and suitable for WhatsApp (short paragraphs, no heavy markdown).
+
+LANGUAGE (HIGHEST PRIORITY):
+${languageDirective}
+${nameDirective}
+
+CONVERSATION STYLE:
+- Read the recent conversation history and never repeat your previous reply word for word.
+- Answer the member's actual question first, then add at most one useful follow-up.
+- Ask at most one question per reply.
+- When you ask the member to choose, ALWAYS list the options in the same message as a numbered list (2–5 options), each on its own line. Never say "choose one" or "what options" without showing the options.
+- Vary your wording between turns; avoid canned acknowledgements such as "Asante, ujumbe wako umepokelewa" unless the member actually sent a voice note.
+- If the member asks what they can choose, list the real clinics/services from the verified lists below.
 
 SAFETY RULES (STRICT):
 1. Never diagnose a condition or claim certainty about what is wrong with a patient's teeth or gums.
@@ -94,7 +133,7 @@ ${context.clinicContext}
 VERIFIED ACTIVE INSURANCE PLANS:
 ${context.insuranceContext}
 
-${contextDocumentsBlock}Always respond in the same language the user is writing in. Keep responses under 100 words unless detailed information is explicitly requested.`;
+${contextDocumentsBlock}Keep responses under 120 words unless detailed information is explicitly requested. Reply only in the member's preferred language.`;
 }
 
 // ============================================================================

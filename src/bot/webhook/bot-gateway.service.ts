@@ -203,6 +203,7 @@ export class BotGatewayService {
     if (data.from.endsWith('@g.us')) return;
     const whatsappId = this.normalizeWhatsappIdentity(data.from);
     if (!whatsappId) return;
+    const phoneHint = this.extractPhoneHint(data);
     const contactName = data.pushName || data.name || undefined;
     const messageText = this.extractFlaresendMessageText(data as any);
     const isAudio = Boolean(data.message?.audioMessage);
@@ -240,7 +241,9 @@ export class BotGatewayService {
     try {
       if (isAudio) {
         const member = await this.identity.resolveMember({
-          phoneDigitsFallback: this.isLid(whatsappId) ? undefined : whatsappId,
+          phoneDigitsFallback: this.isLid(whatsappId)
+            ? (phoneHint ?? undefined)
+            : whatsappId,
           whatsappId,
         });
         const recipientPhone =
@@ -274,7 +277,7 @@ export class BotGatewayService {
       if (!messageText) return;
       await this.handleUserTextMessage({
         senderId: whatsappId,
-        fallbackPhone: this.isLid(whatsappId) ? undefined : whatsappId,
+        fallbackPhone: this.isLid(whatsappId) ? phoneHint : whatsappId,
         messageId: data.id,
         messageText,
         contactName,
@@ -405,6 +408,7 @@ export class BotGatewayService {
           messageText,
           senderId,
           chatContext,
+          preferredLanguage: member.preferredLanguage ?? 'en',
         });
         return;
       }
@@ -430,14 +434,19 @@ export class BotGatewayService {
     messageText: string;
     senderId: string;
     chatContext: ChatContext;
+    preferredLanguage?: string;
   }): Promise<void> {
     const { memberId, recipientPhone, messageText, chatContext } = params;
-    const session = await this.onboardingService.start(memberId, 'en');
+    const preferredLanguage = params.preferredLanguage ?? 'en';
+    const session = await this.onboardingService.start(
+      memberId,
+      preferredLanguage,
+    );
 
     if (session.step === 'WELCOME') {
       await this.onboardingService.setStep(memberId, 'INTEREST', {
         source: 'welcome',
-        language: 'en',
+        language: preferredLanguage,
         welcomeSentAt: new Date().toISOString(),
       });
       await this.sendTextSafely(
@@ -624,5 +633,31 @@ export class BotGatewayService {
         return message.interactive.list_reply.title.trim();
     }
     return null;
+  }
+
+  /**
+   * Extract a concrete phone number (or phone JID) from a WhatsApp webhook
+   * payload. Used as a fallback identity hint when the sender identifier is a
+   * WhatsApp "lid" (@lid) rather than a real phone number.
+   */
+  private extractPhoneHint(data: any): string | undefined {
+    const candidates: unknown[] = [
+      data?.senderPn,
+      data?.sender_pn,
+      data?.senderKeyHash,
+      data?.participant,
+      data?.author,
+      data?.key?.participant,
+      data?.key?.senderPn,
+      data?.from,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string' || !candidate.trim()) continue;
+      const normalized = this.normalizePhoneNumber(candidate);
+      if (!normalized) continue;
+      if (candidate.includes('@lid')) continue; // LIDs are not phone numbers.
+      return normalized;
+    }
+    return undefined;
   }
 }
