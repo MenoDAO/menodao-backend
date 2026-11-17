@@ -43,11 +43,13 @@ import {
   BookingLang,
   t,
   ASK_SERVICE,
+  ASK_SERVICE_CHOICE,
   ASK_DATE_TIME,
   ASK_NAME,
   ASK_CLINIC,
   CLINIC_NOT_FOUND,
   SERVICE_NOT_OFFERED,
+  BOOKING_UNAVAILABLE,
   SLOT_PAST,
   SLOT_CLOSED_DAY,
   SLOT_OUTSIDE_HOURS,
@@ -219,13 +221,15 @@ export class BookingService {
     userMessage: string,
     senderPhone: string,
     userId: string,
+    preferredLanguage?: 'en' | 'sw',
+    memberName?: string | null,
   ): Promise<{ reply: string; triageFlag: boolean }> {
     const draft = await this.prisma.botBookingDraft.upsert({
       where: { memberId: userId },
       update: {},
-      create: { memberId: userId, language: 'en' },
+      create: { memberId: userId, language: preferredLanguage ?? 'en' },
     });
-    const lang = (draft.language ?? 'en') as BookingLang;
+    const lang = (draft.language ?? preferredLanguage ?? 'en') as BookingLang;
 
     if (
       draft.status === 'AWAITING_CONFIRMATION' &&
@@ -484,11 +488,20 @@ export class BookingService {
 
     const missing = this.collectMissingFields(updatedDraft);
     if (missing.length > 0) {
-      const questions = missing
-        .slice(0, 2)
-        .map((f) => this.askForField(f, effectiveLang))
-        .join('\n');
-      return { reply: questions, triageFlag: false };
+      if (missing.includes('clinic') && clinics.length === 0) {
+        return {
+          reply: t(BOOKING_UNAVAILABLE, effectiveLang),
+          triageFlag: false,
+        };
+      }
+      const field = missing[0];
+      const reply = this.askForField(
+        field,
+        effectiveLang,
+        updatedDraft,
+        clinics,
+      );
+      return { reply, triageFlag: false };
     }
 
     await this.prisma.botBookingDraft.update({
@@ -505,7 +518,7 @@ export class BookingService {
         date: this.formatDate(updatedDraft.date!, effectiveLang),
         time: this.format24hTime(updatedDraft.time!),
         clinic: resolvedClinicName,
-        name: updatedDraft.clientName!,
+        name: updatedDraft.clientName ?? memberName ?? 'there',
       }),
       triageFlag: false,
     };
@@ -779,18 +792,53 @@ export class BookingService {
     return missing;
   }
 
-  private askForField(field: string, lang: BookingLang): string {
+  private askForField(
+    field: string,
+    lang: BookingLang,
+    draft: {
+      service: string | null;
+      clinicId: string | null;
+      date: string | null;
+      time: string | null;
+      clientName: string | null;
+    },
+    clinics: BotClinic[],
+  ): string {
     switch (field) {
       case 'service':
-        return t(ASK_SERVICE, lang);
+        if (clinics.length === 0) return t(ASK_SERVICE, lang);
+        if (draft.clinicId) {
+          const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+          const services =
+            clinic && clinic.services.length > 0
+              ? clinic.services
+              : Array.from(new Set(clinics.flatMap((c) => c.services)));
+          if (services.length > 0) {
+            return t(ASK_SERVICE_CHOICE, lang, {
+              serviceList: services.map((s, i) => `${i + 1}. ${s}`).join('\n'),
+            });
+          }
+        }
+        return t(ASK_SERVICE_CHOICE, lang, {
+          serviceList:
+            clinics
+              .flatMap((c) => c.services)
+              .filter((s, i, arr) => arr.indexOf(s) === i)
+              .map((s, i) => `${i + 1}. ${s}`)
+              .join('\n') ||
+            'Cleaning\nCheck-up\nFilling\nExtraction\nWhitening\nX-Ray',
+        });
       case 'clinic':
-        return t(ASK_CLINIC, lang, { clinicList: '' }).split('\n')[0];
+        if (clinics.length === 0) return t(BOOKING_UNAVAILABLE, lang);
+        return t(ASK_CLINIC, lang, {
+          clinicList: clinics.map((c, i) => `${i + 1}. ${c.name}`).join('\n'),
+        });
       case 'datetime':
         return t(ASK_DATE_TIME, lang);
       case 'name':
         return t(ASK_NAME, lang);
       default:
-        return '';
+        return t(ASK_SERVICE, lang);
     }
   }
 
