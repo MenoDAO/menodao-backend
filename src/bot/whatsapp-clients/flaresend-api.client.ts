@@ -63,6 +63,8 @@ const DEFAULT_TOKEN_TTL_SECONDS = 3_600;
  */
 const SESSION_TIMEOUT_MS = 30_000;
 const PAIRING_TIMEOUT_MS = 45_000;
+/** Status polling runs on a timer; do not let one hung check stall the page. */
+const STATUS_TIMEOUT_MS = 6_000;
 
 @Injectable()
 export class FlaresendApiClient implements IWhatsappClient {
@@ -296,7 +298,7 @@ export class FlaresendApiClient implements IWhatsappClient {
       (headers) =>
         this.http.get<{ status?: string; phoneNumber?: string | null }>(
           `/instances/${id}/status`,
-          { headers },
+          { headers, timeout: STATUS_TIMEOUT_MS },
         ),
       'reading the instance status',
     );
