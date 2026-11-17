@@ -67,8 +67,9 @@ export class BotGatewayController {
       throw new UnauthorizedException('Invalid webhook token');
     }
 
-    const expectedInstance =
-      this.configService.get<string>('FLARESEND_INSTANCE_ID');
+    const expectedInstance = this.configService.get<string>(
+      'FLARESEND_INSTANCE_ID',
+    );
     if (
       expectedInstance &&
       payload?.instanceId &&
@@ -88,6 +89,7 @@ export class BotGatewayController {
         `Unhandled error while processing webhook payload: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        error instanceof Error ? error.stack : undefined,
       );
     });
     return { status: 'received' };
@@ -107,6 +109,7 @@ export class BotGatewayController {
         `Unhandled error while processing webhook payload: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        error instanceof Error ? error.stack : undefined,
       );
     });
     return { status: 'received' };
