@@ -1,9 +1,9 @@
 import {
   BadGatewayException,
   ConflictException,
+  GatewayTimeoutException,
   NotFoundException,
 } from '@nestjs/common';
-import axios from 'axios';
 import type { ConfigService } from '@nestjs/config';
 import type { FlaresendApiClient } from '../../bot/whatsapp-clients/flaresend-api.client';
 import type { BotInstanceStore } from '../../bot/instances/bot-instance.store';
@@ -218,5 +218,21 @@ describe('AdminWhatsappService', () => {
       Error,
     );
     expect(client.requestPairingCode).not.toHaveBeenCalled();
+  });
+
+  it('turns a provider timeout into a retry-later message', async () => {
+    const { service, client, store } = build();
+    store.get.mockResolvedValue({ id: 'row-1', providerId: 'prov-1' });
+    const timeout = new Error('timeout of 45000ms exceeded') as Error & {
+      isAxiosError: boolean;
+      code: string;
+    };
+    timeout.isAxiosError = true;
+    timeout.code = 'ECONNABORTED';
+    client.requestPairingCode.mockRejectedValue(timeout);
+
+    await expect(
+      service.pairingCode('row-1', '254765440035'),
+    ).rejects.toBeInstanceOf(GatewayTimeoutException);
   });
 });

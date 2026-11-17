@@ -56,6 +56,13 @@ export interface FlaresendInstanceSummary {
 
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const DEFAULT_TOKEN_TTL_SECONDS = 3_600;
+/**
+ * WhatsApp session operations wait on the phone/provider bridge, which is much
+ * slower than an ordinary REST call (and slower still right after a reset).
+ * The generic 15s timeout turned a slow-but-healthy pairing into a 504.
+ */
+const SESSION_TIMEOUT_MS = 30_000;
+const PAIRING_TIMEOUT_MS = 45_000;
 
 @Injectable()
 export class FlaresendApiClient implements IWhatsappClient {
@@ -336,7 +343,11 @@ export class FlaresendApiClient implements IWhatsappClient {
   async reconnectInstance(id: string): Promise<Record<string, unknown>> {
     const response = await this.accountRequest(
       (headers) =>
-        this.http.post(`/instances/${id}/reconnect`, {}, { headers }),
+        this.http.post(
+          `/instances/${id}/reconnect`,
+          {},
+          { headers, timeout: SESSION_TIMEOUT_MS },
+        ),
       'reconnecting the instance',
     );
     return response.data ?? {};
@@ -346,7 +357,11 @@ export class FlaresendApiClient implements IWhatsappClient {
   async resetInstanceSession(id: string): Promise<Record<string, unknown>> {
     const response = await this.accountRequest(
       (headers) =>
-        this.http.post(`/instances/${id}/reset-session`, {}, { headers }),
+        this.http.post(
+          `/instances/${id}/reset-session`,
+          {},
+          { headers, timeout: SESSION_TIMEOUT_MS },
+        ),
       'resetting the instance session',
     );
     return response.data ?? {};
@@ -368,7 +383,7 @@ export class FlaresendApiClient implements IWhatsappClient {
         this.http.post<Record<string, any>>(
           `/instances/${id}/pairing-code`,
           { phone_number: phoneNumber },
-          { headers },
+          { headers, timeout: PAIRING_TIMEOUT_MS },
         ),
       'requesting a pairing code',
     );
