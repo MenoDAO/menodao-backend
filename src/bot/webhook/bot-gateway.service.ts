@@ -21,6 +21,15 @@ const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
 const MAX_TRACKED_FLARESEND_INBOUND_MESSAGES = 1_000;
 const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * Sent when the AI pipeline fails outright (provider outage, quota, timeout).
+ * Silence looks like the bot is broken; a holding line at least tells the
+ * member to try again. Deliberately carries no health or account details.
+ */
+const DEFAULT_FALLBACK_REPLY =
+  'Samahani, kuna hitilafu ya muda kwenye mfumo wetu. Tafadhali jaribu tena baada ya dakika chache. ' +
+  'Sorry, we are having a temporary problem. Please try again in a few minutes.';
+
 const ONBOARDING_WELCOME_MENU =
   'Kariba! 👋 Welcome to MenoDAO. Dr. Papi is here to help with your oral health.\n\n' +
   'Reply with a number to choose:\n' +
@@ -524,14 +533,30 @@ export class BotGatewayService {
       });
       return staticReply;
     }
-    const result = await this.voicePipelineService.processTextPipeline(
-      messageText,
-      recipientPhone,
-      undefined,
-      undefined,
-      senderId,
+    try {
+      const result = await this.voicePipelineService.processTextPipeline(
+        messageText,
+        recipientPhone,
+        undefined,
+        undefined,
+        senderId,
+      );
+      const reply = result.patientMessage?.trim();
+      if (reply) return reply;
+      this.logger.warn(
+        'AI pipeline returned an empty reply; sending the fallback message.',
+      );
+    } catch (error) {
+      this.logger.error(
+        `AI reply generation failed for ${recipientPhone}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    return (
+      this.configService.get<string>('BOT_FALLBACK_REPLY')?.trim() ||
+      DEFAULT_FALLBACK_REPLY
     );
-    return result.patientMessage;
   }
 
   /** Outbound send that never breaks the conversation state machine. */
