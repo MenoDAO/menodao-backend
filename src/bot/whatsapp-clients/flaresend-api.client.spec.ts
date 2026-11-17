@@ -128,4 +128,38 @@ describe('FlaresendApiClient account session', () => {
     });
     expect(loginHttp.post).toHaveBeenCalledTimes(1);
   });
+
+  it('reads the linked number out of the status payload JID', async () => {
+    const { client, http, loginHttp } = build();
+    loginHttp.post.mockResolvedValue({
+      data: { apiKey: 'session-1', expires_in: 3600 },
+    });
+    http.get.mockResolvedValue({
+      data: {
+        status: 'connected',
+        whatsappUserId: '254765440035:6@s.whatsapp.net',
+        isConnected: true,
+      },
+    });
+
+    await expect(client.getInstanceStatus('instance-1')).resolves.toEqual({
+      status: 'connected',
+      phoneNumber: '254765440035',
+    });
+  });
+
+  it('reports no number while the instance is not linked', async () => {
+    const { client, http, loginHttp } = build();
+    loginHttp.post.mockResolvedValue({
+      data: { apiKey: 'session-1', expires_in: 3600 },
+    });
+    http.get.mockResolvedValue({
+      data: { status: 'awaiting_scan', whatsappUserId: null },
+    });
+
+    await expect(client.getInstanceStatus('instance-1')).resolves.toEqual({
+      status: 'awaiting_scan',
+      phoneNumber: null,
+    });
+  });
 });

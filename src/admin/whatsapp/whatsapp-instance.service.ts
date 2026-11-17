@@ -460,9 +460,12 @@ export class AdminWhatsappService {
       (instance.phone_number as string | undefined) ??
       (instance.phoneNumber as string | undefined) ??
       (instance.whatsapp_user_id as string | undefined) ??
+      (instance.whatsappUserId as string | undefined) ??
+      (instance.user_jid as string | undefined) ??
       null;
     if (!raw) return null;
-    const digits = String(raw).replace(/[^\d]/g, '');
-    return digits || null;
+    // JIDs look like "254765440035:6@s.whatsapp.net"; keep the leading number.
+    const match = String(raw).match(/^\+?(\d{6,})/);
+    return match ? match[1] : null;
   }
 }
