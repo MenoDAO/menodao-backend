@@ -1,4 +1,9 @@
-import { ConflictException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import axios from 'axios';
 import type { ConfigService } from '@nestjs/config';
 import type { FlaresendApiClient } from '../../bot/whatsapp-clients/flaresend-api.client';
 import type { BotInstanceStore } from '../../bot/instances/bot-instance.store';
@@ -42,6 +47,18 @@ function build() {
     config,
   );
   return { service, client, store };
+}
+
+function providerError(status: number, data: Record<string, unknown>) {
+  const error = new Error(
+    `Request failed with status code ${status}`,
+  ) as Error & {
+    isAxiosError: boolean;
+    response: { status: number; data: Record<string, unknown> };
+  };
+  error.isAxiosError = true;
+  error.response = { status, data };
+  return error;
 }
 
 describe('AdminWhatsappService', () => {
@@ -167,5 +184,39 @@ describe('AdminWhatsappService', () => {
 
     await service.remove('row-1');
     expect(store.remove).toHaveBeenCalledWith('row-1');
+  });
+
+  it('turns a dead provider session into an actionable error, not a 500', async () => {
+    const { service, client, store } = build();
+    store.get.mockResolvedValue({ id: 'row-1', providerId: 'prov-1' });
+    client.requestPairingCode.mockRejectedValue(
+      providerError(401, { error: 'Unauthorized' }),
+    );
+
+    await expect(
+      service.pairingCode('row-1', '254765440035'),
+    ).rejects.toBeInstanceOf(BadGatewayException);
+  });
+
+  it('explains that the instance disappeared upstream', async () => {
+    const { service, client, store } = build();
+    store.get.mockResolvedValue({ id: 'row-1', providerId: 'prov-1' });
+    client.requestPairingCode.mockRejectedValue(
+      providerError(404, { error: 'Instance not found' }),
+    );
+
+    await expect(
+      service.pairingCode('row-1', '254765440035'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('passes our own validation errors through untouched', async () => {
+    const { service, client, store } = build();
+    store.get.mockResolvedValue({ id: 'row-1', providerId: 'prov-1' });
+
+    await expect(service.pairingCode('row-1', '')).rejects.toBeInstanceOf(
+      Error,
+    );
+    expect(client.requestPairingCode).not.toHaveBeenCalled();
   });
 });
