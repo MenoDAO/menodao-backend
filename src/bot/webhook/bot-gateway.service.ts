@@ -551,6 +551,7 @@ export class BotGatewayService {
         `AI reply generation failed for ${recipientPhone}: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        error instanceof Error ? error.stack : undefined,
       );
     }
     return (
