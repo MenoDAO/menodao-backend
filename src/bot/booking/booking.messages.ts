@@ -25,6 +25,11 @@ export const ASK_SERVICE = msg(
   "🦷 Unataka huduma gani ya meno? (mfano: Kusafisha, Ukaguzi, Kuziba, Kung'oa, Kupamba, X-Ray)", // needs native speaker review
 );
 
+export const ASK_SERVICE_CHOICE = msg(
+  '🦷 Which dental service would you like? Please choose one:\n{serviceList}\n\nReply with the number or the exact service name.',
+  '🦷 Ni huduma gani unayetaka? Tafadhali chagua:\n{serviceList}\n\nJibu kwa namba au jina la huduma.', // needs native speaker review
+);
+
 export const ASK_DATE_TIME = msg(
   '📅 What date and time would you prefer? (e.g. "tomorrow at 10 AM" or "Monday the 26th at 2 PM")',
   '📅 Unapenda siku na wakati gani? (mfano: "kesho saa nne asubuhi" au "Jumatatu tarehe 26 saa nane mchana")', // needs native speaker review
@@ -52,6 +57,11 @@ export const CLINIC_NOT_FOUND = msg(
 export const SERVICE_NOT_OFFERED = msg(
   '🦷 "{service}" doesn\'t match the services offered at {clinic}. Please choose one:\n{serviceList}',
   '🦷 "{service}" haipo katika huduma za {clinic}. Tafadhali chagua:\n{serviceList}', // needs native speaker review
+);
+
+export const BOOKING_UNAVAILABLE = msg(
+  "📅 Online booking isn't open yet. Please call one of our clinics directly to schedule your appointment.\n\nOur approved clinics: Palm Beach Hospital, Mikindani Hospital",
+  '📅 Mpango wa miadi mtandaoni haujafunguliwa bado. Tafadhali piga simu kwa kliniki yetu iliyoapishwa ili kupanga miadi yako.\n\nKliniki zetu zilizoidhinishwa: Palm Beach Hospital, Mikindani Hospital', // needs native speaker review
 );
 
 // ── Slot validation errors ────────────────────────────────────────────────────

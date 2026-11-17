@@ -9,8 +9,11 @@ import { BotContextService } from '../context/bot-context.service';
 import type { RetrievedBotContext } from '../context/bot-context.service';
 import {
   DR_PAPI_DISCLAIMER,
+  DR_PAPI_DISCLAIMER_SW,
   DR_PAPI_FALLBACK_REPLY,
+  DR_PAPI_FALLBACK_REPLY_SW,
   buildDrPapiSystemPrompt,
+  replyLanguage,
 } from '../prompts';
 
 export type LeadIntent = 'INSURANCE_INTEREST' | 'CLINIC_APPOINTMENT' | null;
@@ -18,6 +21,13 @@ export type LeadIntent = 'INSURANCE_INTEREST' | 'CLINIC_APPOINTMENT' | null;
 export interface AiReply {
   message: string;
   detectedLeadIntent: LeadIntent;
+}
+
+export interface AiReplyOptions {
+  /** Member.preferredLanguage from the backend profile ("en" | "sw"). */
+  language?: string | null;
+  /** Member.fullName, used to greet the member naturally. */
+  memberName?: string | null;
 }
 
 /**
@@ -39,13 +49,16 @@ export class BotAiService {
     userMessage: string,
     history: ChatHistoryMessage[],
     operation = 'whatsapp_reply',
+    options: AiReplyOptions = {},
   ): Promise<AiReply> {
+    const language = replyLanguage(options.language);
     // One retrieval per reply: the same documents feed both the system prompt
     // grounding and the user prompt context.
     const retrievedContext = await this.retrieveContext(userMessage);
     const systemPrompt = await this.buildSystemPrompt(
       userMessage,
       retrievedContext,
+      options,
     );
     const contextBlock =
       this.contextService.renderPromptBlock(retrievedContext);
@@ -65,9 +78,10 @@ export class BotAiService {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      rawReply = DR_PAPI_FALLBACK_REPLY;
+      rawReply =
+        language === 'sw' ? DR_PAPI_FALLBACK_REPLY_SW : DR_PAPI_FALLBACK_REPLY;
     }
-    const message = this.appendDisclaimerIfMissing(rawReply);
+    const message = this.appendDisclaimerIfMissing(rawReply, language);
     const detectedLeadIntent = this.detectLeadIntent(userMessage, rawReply);
     return { message, detectedLeadIntent };
   }
@@ -102,6 +116,7 @@ export class BotAiService {
   public async buildSystemPrompt(
     userMessage?: string,
     retrieved?: RetrievedBotContext[],
+    options: AiReplyOptions = {},
   ): Promise<string> {
     const [clinics, procedures] = await Promise.all([
       this.prisma.clinic.findMany({
@@ -152,12 +167,22 @@ export class BotAiService {
       clinicContext,
       insuranceContext,
       contextDocuments: contextDocuments || undefined,
+      language: options.language,
+      memberName: options.memberName,
     });
   }
 
-  private appendDisclaimerIfMissing(reply: string): string {
-    if (reply.includes('Disclaimer: I am an AI assistant')) return reply;
-    return `${reply}${DR_PAPI_DISCLAIMER}`;
+  private appendDisclaimerIfMissing(
+    reply: string,
+    language: 'en' | 'sw' = 'en',
+  ): string {
+    if (
+      reply.includes('Disclaimer: I am an AI assistant') ||
+      reply.includes('Kanusho: Mimi ni msaidizi wa AI')
+    ) {
+      return reply;
+    }
+    return `${reply}${language === 'sw' ? DR_PAPI_DISCLAIMER_SW : DR_PAPI_DISCLAIMER}`;
   }
 
   private detectLeadIntent(userMessage: string, reply: string): LeadIntent {
