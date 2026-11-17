@@ -235,4 +235,80 @@ describe('AdminWhatsappService', () => {
       service.pairingCode('row-1', '254765440035'),
     ).rejects.toBeInstanceOf(GatewayTimeoutException);
   });
+
+  it('reads live provider status in the overview so a finished pairing shows up', async () => {
+    const { service, client, store } = build();
+    store.list.mockResolvedValue([
+      {
+        id: 'row-1',
+        providerId: 'prov-1',
+        status: 'INITIALIZING',
+        isActive: true,
+        lastCheckedAt: new Date(Date.now() - 60_000),
+      },
+    ]);
+    client.getSubscription.mockResolvedValue({
+      plan: { name: 'Basic', maxInstances: 1 },
+    });
+    client.getInstanceStatus.mockResolvedValue({
+      status: 'connected',
+      phoneNumber: '254765440035',
+    });
+    store.updateStatus.mockResolvedValue({
+      id: 'row-1',
+      providerId: 'prov-1',
+      status: 'CONNECTED',
+      isActive: true,
+      phoneNumber: '254765440035',
+      lastCheckedAt: new Date(),
+    });
+
+    const overview = await service.overview();
+
+    expect(client.getInstanceStatus).toHaveBeenCalledWith('prov-1');
+    expect(store.updateStatus).toHaveBeenCalledWith(
+      'row-1',
+      'CONNECTED',
+      '254765440035',
+    );
+    expect(overview.instances[0].status).toBe('CONNECTED');
+  });
+
+  it('does not call the provider for a status checked seconds ago', async () => {
+    const { service, client, store } = build();
+    store.list.mockResolvedValue([
+      {
+        id: 'row-1',
+        providerId: 'prov-1',
+        status: 'CONNECTED',
+        isActive: true,
+        lastCheckedAt: new Date(),
+      },
+    ]);
+    client.getSubscription.mockResolvedValue({ plan: { name: 'Basic' } });
+
+    await service.overview();
+
+    expect(client.getInstanceStatus).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored status when the live check fails', async () => {
+    const { service, client, store } = build();
+    store.list.mockResolvedValue([
+      {
+        id: 'row-1',
+        providerId: 'prov-1',
+        status: 'AWAITING_SCAN',
+        isActive: true,
+        lastCheckedAt: new Date(Date.now() - 60_000),
+      },
+    ]);
+    client.getSubscription.mockResolvedValue({ plan: { name: 'Basic' } });
+    client.getInstanceStatus.mockRejectedValue(new Error('ETIMEDOUT'));
+
+    const overview = await service.overview();
+
+    expect(store.updateStatus).not.toHaveBeenCalled();
+    expect(overview.instances[0].status).toBe('AWAITING_SCAN');
+  });
 });
