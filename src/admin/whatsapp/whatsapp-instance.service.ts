@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  GatewayTimeoutException,
   HttpException,
   Injectable,
   Logger,
@@ -346,6 +347,9 @@ export class AdminWhatsappService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
 
+      const timedOut =
+        axios.isAxiosError(error) &&
+        (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT');
       const status = axios.isAxiosError(error)
         ? error.response?.status
         : undefined;
@@ -363,6 +367,12 @@ export class AdminWhatsappService {
         `FlareSend failed while ${action}: HTTP ${status ?? 'n/a'} — ${detail}`,
       );
 
+      if (timedOut) {
+        throw new GatewayTimeoutException(
+          `FlareSend did not answer while ${action}. The WhatsApp session may ` +
+            'still be starting; wait a few seconds and try again.',
+        );
+      }
       if (status === 404) {
         throw new NotFoundException(
           `FlareSend does not know this instance any more (${detail}). ` +
