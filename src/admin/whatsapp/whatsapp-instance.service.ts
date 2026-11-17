@@ -13,6 +13,15 @@ import axios from 'axios';
 import { FlaresendApiClient } from '../../bot/whatsapp-clients/flaresend-api.client';
 import { BotInstanceStore } from '../../bot/instances/bot-instance.store';
 import type { BotInstanceView } from '../../bot/instances/bot-instance.store';
+import type { BotWhatsappInstance } from '@prisma/client';
+
+/**
+ * How long a stored status is trusted before the dashboard asks the provider
+ * again. The page polls every 5s while a link is in progress, so the status a
+ * human is staring at has to come from FlareSend, not from the last admin
+ * action that happened to write a row.
+ */
+const STATUS_FRESH_MS = 4_000;
 
 const PROVIDER_STATUS_MAP: Record<string, string> = {
   connected: 'CONNECTED',
@@ -59,10 +68,11 @@ export class AdminWhatsappService {
   ) {}
 
   async overview(): Promise<WhatsappInstanceOverview> {
-    const [rows, subscription] = await Promise.all([
+    const [stored, subscription] = await Promise.all([
       this.store.list(),
       this.client.getSubscription(),
     ]);
+    const rows = await this.refreshStaleRows(stored);
     const maxInstances = subscription?.plan?.maxInstances ?? null;
     return {
       instances: rows.map((row) => this.store.toView(row)),
@@ -338,6 +348,52 @@ export class AdminWhatsappService {
    * know whether FlareSend refused the session, the instance is gone, or the
    * provider is down. Our own HttpExceptions pass through untouched.
    */
+  /**
+   * Best-effort live status for rows whose stored value is a few seconds old.
+   *
+   * Pairing finishes on the phone, not through an API call we make, so without
+   * this the badge stays on "Starting up" until someone presses Sync. Failures
+   * leave the stored value alone rather than blanking the dashboard.
+   */
+  private async refreshStaleRows(
+    rows: BotWhatsappInstance[],
+  ): Promise<BotWhatsappInstance[]> {
+    const now = Date.now();
+    const stale = rows.filter((row) => {
+      const checkedAt = row.lastCheckedAt
+        ? new Date(row.lastCheckedAt).getTime()
+        : 0;
+      return now - checkedAt > STATUS_FRESH_MS;
+    });
+    if (stale.length === 0) return rows;
+
+    const refreshed = new Map<string, BotWhatsappInstance>();
+    await Promise.all(
+      stale.map(async (row) => {
+        try {
+          const live = await this.client.getInstanceStatus(row.providerId);
+          if (!live.status) return;
+          refreshed.set(
+            row.id,
+            await this.store.updateStatus(
+              row.id,
+              this.mapStatus(live.status),
+              live.phoneNumber ?? undefined,
+            ),
+          );
+        } catch (error) {
+          this.logger.debug(
+            `Live status unavailable for ${row.providerId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }),
+    );
+
+    return rows.map((row) => refreshed.get(row.id) ?? row);
+  }
+
   private async callProvider<T>(
     action: string,
     run: () => Promise<T>,
@@ -404,9 +460,12 @@ export class AdminWhatsappService {
       (instance.phone_number as string | undefined) ??
       (instance.phoneNumber as string | undefined) ??
       (instance.whatsapp_user_id as string | undefined) ??
+      (instance.whatsappUserId as string | undefined) ??
+      (instance.user_jid as string | undefined) ??
       null;
     if (!raw) return null;
-    const digits = String(raw).replace(/[^\d]/g, '');
-    return digits || null;
+    // JIDs look like "254765440035:6@s.whatsapp.net"; keep the leading number.
+    const match = String(raw).match(/^\+?(\d{6,})/);
+    return match ? match[1] : null;
   }
 }

@@ -63,6 +63,8 @@ const DEFAULT_TOKEN_TTL_SECONDS = 3_600;
  */
 const SESSION_TIMEOUT_MS = 30_000;
 const PAIRING_TIMEOUT_MS = 45_000;
+/** Status polling runs on a timer; do not let one hung check stall the page. */
+const STATUS_TIMEOUT_MS = 6_000;
 
 @Injectable()
 export class FlaresendApiClient implements IWhatsappClient {
@@ -294,13 +296,36 @@ export class FlaresendApiClient implements IWhatsappClient {
   }> {
     const response = await this.accountRequest(
       (headers) =>
-        this.http.get<{ status?: string; phoneNumber?: string | null }>(
-          `/instances/${id}/status`,
-          { headers },
-        ),
+        this.http.get<Record<string, any>>(`/instances/${id}/status`, {
+          headers,
+          timeout: STATUS_TIMEOUT_MS,
+        }),
       'reading the instance status',
     );
-    return response.data ?? {};
+    const data = response.data ?? {};
+    return {
+      status: typeof data.status === 'string' ? data.status : undefined,
+      phoneNumber: this.phoneFromStatus(data),
+    };
+  }
+
+  /**
+   * The status payload calls the linked number `whatsappUserId`
+   * ("254765440035:6@s.whatsapp.net"); other shapes use phone_number or a JID.
+   * Only the leading country-code digits are the number.
+   */
+  private phoneFromStatus(data: Record<string, any>): string | null {
+    const raw =
+      data.phoneNumber ??
+      data.phone_number ??
+      data.whatsappUserId ??
+      data.whatsapp_user_id ??
+      data.userJid ??
+      data.user_jid ??
+      null;
+    if (!raw) return null;
+    const match = String(raw).match(/^\+?(\d{6,})/);
+    return match ? match[1] : null;
   }
 
   /** Creates an instance. The instance-scoped key is only returned here. */
