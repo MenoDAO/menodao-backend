@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { BotAiModule } from '../ai/ai.module';
+import { SmsModule } from '../../sms/sms.module';
 import { BookingService } from './booking.service';
 
 @Module({
-  imports: [BotAiModule],
+  imports: [BotAiModule, SmsModule],
   providers: [BookingService],
   exports: [BookingService],
 })

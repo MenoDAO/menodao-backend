@@ -26,11 +26,26 @@ export class AppointmentReminderJob {
     try {
       const count = await this.appointments.markDueNoShows();
       if (count > 0) {
-        this.logger.log(`Processed ${count} overdue appointment(s) for no-show`);
+        this.logger.log(
+          `Processed ${count} overdue appointment(s) for no-show`,
+        );
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'unknown';
       this.logger.error(`No-show sweep failed: ${message}`);
+    }
+  }
+
+  @Cron('0 7 * * *')
+  async morningStaffRunDown() {
+    try {
+      const sent = await this.appointments.sendMorningStaffRunDown();
+      if (sent > 0) {
+        this.logger.log(`Sent morning staff run-down (${sent} clinic/c(s))`);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'unknown';
+      this.logger.error(`Morning staff run-down failed: ${message}`);
     }
   }
 }

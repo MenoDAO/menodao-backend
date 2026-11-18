@@ -23,11 +23,13 @@ import {
   RescheduleAppointmentDto,
 } from './dto/appointment.dto';
 import {
+  eatDateStart,
   eatDateStr,
   formatEat,
   generateDaySlots,
   inDayBeforeWindow,
   inHourBeforeWindow,
+  isAfter10am,
   isBookableTime,
   isNoShowDue,
   isOnClinicGrid,
@@ -81,18 +83,21 @@ export class AppointmentsService {
     const candidates = generateDaySlots(date, clinic.operatesOnWeekends);
     const dayStart = candidates[0];
     const dayEnd = candidates.length
-      ? new Date(candidates[candidates.length - 1].getTime() + SLOT_MINUTES * 60_000)
+      ? new Date(
+          candidates[candidates.length - 1].getTime() + SLOT_MINUTES * 60_000,
+        )
       : null;
-    const existing = dayStart && dayEnd
-      ? await this.prisma.appointment.findMany({
-          where: {
-            clinicId,
-            status: { in: OPEN },
-            scheduledAt: { gte: dayStart, lt: dayEnd },
-          },
-          select: { scheduledAt: true, durationMinutes: true },
-        })
-      : [];
+    const existing =
+      dayStart && dayEnd
+        ? await this.prisma.appointment.findMany({
+            where: {
+              clinicId,
+              status: { in: OPEN },
+              scheduledAt: { gte: dayStart, lt: dayEnd },
+            },
+            select: { scheduledAt: true, durationMinutes: true },
+          })
+        : [];
     const chairs = Math.max(clinic.activeDentalChairs || 1, 1);
     const now = new Date();
     const slots = candidates.map((start) => {
@@ -138,7 +143,11 @@ export class AppointmentsService {
 
     const clinic = await this.getClinicForBooking(dto.clinicId);
     this.assertOnGrid(scheduledAt, clinic.operatesOnWeekends);
-    await this.assertSlotFree(clinic.id, scheduledAt, clinic.activeDentalChairs || 1);
+    await this.assertSlotFree(
+      clinic.id,
+      scheduledAt,
+      clinic.activeDentalChairs || 1,
+    );
 
     const existingOpen = await this.prisma.appointment.findFirst({
       where: {
@@ -203,7 +212,10 @@ export class AppointmentsService {
   async getMine(memberId: string, id: string) {
     const appointment = await this.prisma.appointment.findFirst({
       where: { id, memberId },
-      include: { ...this.detailInclude(), events: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        ...this.detailInclude(),
+        events: { orderBy: { createdAt: 'asc' } },
+      },
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
     return appointment;
@@ -237,30 +249,34 @@ export class AppointmentsService {
   ) {
     const appointment = await this.requireOpen(id);
     if (appointment.memberId !== memberId) {
-      throw new ForbiddenException('You can only reschedule your own appointment');
+      throw new ForbiddenException(
+        'You can only reschedule your own appointment',
+      );
     }
-    return this.reschedule(
-      appointment,
-      dto,
-      AppointmentActor.MEMBER,
-      memberId,
-    );
+    return this.reschedule(appointment, dto, AppointmentActor.MEMBER, memberId);
   }
 
-  async listForStaff(staffId: string, clinicIdFromToken?: string, date?: string) {
+  async listForStaff(
+    staffId: string,
+    clinicIdFromToken?: string,
+    date?: string,
+  ) {
     const staff = await this.prisma.staffUser.findUnique({
       where: { id: staffId },
       select: { clinicId: true, role: true },
     });
     const clinicId = clinicIdFromToken || staff?.clinicId;
     if (!clinicId) {
-      throw new ForbiddenException('This staff account is not linked to a clinic.');
+      throw new ForbiddenException(
+        'This staff account is not linked to a clinic.',
+      );
     }
-    const day = date && /^\d{4}-\d{2}-\d{2}$/.test(date)
-      ? date
-      : new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(
-          new Date(),
-        );
+    const day =
+      date && /^\d{4}-\d{2}-\d{2}$/.test(date)
+        ? date
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Africa/Nairobi',
+          }).format(new Date());
     const start = new Date(`${day}T00:00:00+03:00`);
     const end = new Date(`${day}T23:59:59+03:00`);
     return this.prisma.appointment.findMany({
@@ -359,7 +375,10 @@ export class AppointmentsService {
     if (expected?.clinicId && appointment.clinicId !== expected.clinicId) {
       throw new BadRequestException('This appointment is not at this clinic.');
     }
-    if (!OPEN.includes(appointment.status) && appointment.status !== AppointmentStatus.ATTENDED) {
+    if (
+      !OPEN.includes(appointment.status) &&
+      appointment.status !== AppointmentStatus.ATTENDED
+    ) {
       return;
     }
     await this.prisma.appointment.update({
@@ -406,14 +425,67 @@ export class AppointmentsService {
     });
     let sent = 0;
     for (const appt of upcoming) {
-      if (!appt.dayBeforeReminderSentAt && inDayBeforeWindow(appt.scheduledAt, now)) {
+      if (
+        !appt.dayBeforeReminderSentAt &&
+        inDayBeforeWindow(appt.scheduledAt, now)
+      ) {
         await this.sendReminder(appt, AppointmentReminderKind.DAY_BEFORE);
         sent += 1;
       }
-      if (!appt.hourBeforeReminderSentAt && inHourBeforeWindow(appt.scheduledAt, now)) {
+      if (
+        !appt.hourBeforeReminderSentAt &&
+        inHourBeforeWindow(appt.scheduledAt, now) &&
+        isAfter10am(appt.scheduledAt)
+      ) {
         await this.sendReminder(appt, AppointmentReminderKind.HOUR_BEFORE);
         sent += 1;
       }
+    }
+    return sent;
+  }
+
+  /**
+   * Morning staff run-down: a short SMS per clinic listing that day's
+   * appointments (time + general info only — no clinical/treatment details).
+   * Runs once a day at 07:00 EAT via AppointmentReminderJob.
+   */
+  async sendMorningStaffRunDown(now = new Date()) {
+    const sent = await this.sendMorningStaffRunDownForClinics(now);
+    return sent;
+  }
+
+  private async sendMorningStaffRunDownForClinics(now: Date): Promise<number> {
+    const clinics = await this.prisma.clinic.findMany({
+      where: { status: 'APPROVED' },
+      select: { id: true, name: true, ownerPhone: true },
+    });
+    const todayStr = eatDateStr(now);
+    const dayStart = eatDateStart(todayStr);
+    const dayEnd = eatDateStart(eatDateStr(new Date(Date.now() + 86_400_000)));
+    let sent = 0;
+    for (const clinic of clinics) {
+      if (!clinic.ownerPhone) continue;
+      const todays = await this.prisma.appointment.findMany({
+        where: {
+          clinicId: clinic.id,
+          status: { in: OPEN },
+          scheduledAt: { gte: dayStart, lt: dayEnd },
+        },
+        orderBy: { scheduledAt: 'asc' },
+        include: { member: { select: { fullName: true } } },
+      });
+      if (todays.length === 0) continue;
+      const lines = todays
+        .map(
+          (a) =>
+            `• ${formatEat(a.scheduledAt)} — ${a.member?.fullName || 'Member'}${a.status === 'RESCHEDULED' ? ' (rescheduled)' : ''}`,
+        )
+        .join('\n');
+      const ok = await this.sms.sendSms(
+        clinic.ownerPhone,
+        `MenoDAO daily run-down for ${clinic.name} (${todayStr}):\n${lines}\nGeneral information only — open the staff area for full details.`,
+      );
+      if (ok.success) sent += 1;
     }
     return sent;
   }
@@ -428,14 +500,24 @@ export class AppointmentsService {
     });
     for (const appt of stale) {
       if (isNoShowDue(appt.scheduledAt, now)) {
-        await this.applyNoShow(appt, AppointmentActor.SYSTEM, null, 'Automatically marked after two-hour grace.');
+        await this.applyNoShow(
+          appt,
+          AppointmentActor.SYSTEM,
+          null,
+          'Automatically marked after two-hour grace.',
+        );
       }
     }
     return stale.length;
   }
 
   private async reschedule(
-    appointment: { id: string; memberId: string; clinicId: string; scheduledAt: Date },
+    appointment: {
+      id: string;
+      memberId: string;
+      clinicId: string;
+      scheduledAt: Date;
+    },
     dto: RescheduleAppointmentDto,
     actor: AppointmentActor,
     actorId: string,
@@ -566,7 +648,9 @@ export class AppointmentsService {
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (!OPEN.includes(appointment.status)) {
-      throw new BadRequestException('This appointment can no longer be changed.');
+      throw new BadRequestException(
+        'This appointment can no longer be changed.',
+      );
     }
     return appointment;
   }
@@ -577,7 +661,9 @@ export class AppointmentsService {
       select: { clinicId: true, role: true },
     });
     if (!staff?.clinicId || staff.clinicId !== clinicId) {
-      throw new ForbiddenException('This appointment belongs to another clinic.');
+      throw new ForbiddenException(
+        'This appointment belongs to another clinic.',
+      );
     }
   }
 
@@ -641,10 +727,9 @@ export class AppointmentsService {
 
   /** Absolute link into the app. */
   private appUrl(path: string): string {
-    const base = (process.env.APP_BASE_URL || 'https://app.menodao.org').replace(
-      /\/+$/,
-      '',
-    );
+    const base = (
+      process.env.APP_BASE_URL || 'https://app.menodao.org'
+    ).replace(/\/+$/, '');
     return `${base}${path}`;
   }
 
@@ -737,18 +822,20 @@ export class AppointmentsService {
         ? `MenoDAO reminder: you have a dental appointment tomorrow at ${appointment.clinic.name} (${when}).`
         : `MenoDAO reminder: your appointment at ${appointment.clinic.name} is in about an hour (${when}).`;
     const sms = await this.sms.sendSms(appointment.member.phoneNumber, text);
-    await this.prisma.appointmentReminder.create({
-      data: {
-        appointmentId: appointment.id,
-        kind,
-        channel: AppointmentChannel.SMS,
-        recipient: appointment.member.phoneNumber,
-        status: sms.success ? 'SENT' : 'FAILED',
-        errorMessage: sms.error || null,
-      },
-    }).catch((err) => {
-      this.logger.warn(`Reminder log failed: ${err?.message}`);
-    });
+    await this.prisma.appointmentReminder
+      .create({
+        data: {
+          appointmentId: appointment.id,
+          kind,
+          channel: AppointmentChannel.SMS,
+          recipient: appointment.member.phoneNumber,
+          status: sms.success ? 'SENT' : 'FAILED',
+          errorMessage: sms.error || null,
+        },
+      })
+      .catch((err) => {
+        this.logger.warn(`Reminder log failed: ${err?.message}`);
+      });
     const field =
       kind === AppointmentReminderKind.DAY_BEFORE
         ? 'dayBeforeReminderSentAt'

@@ -17,9 +17,9 @@ export function eatDateStart(dateStr: string): Date {
 }
 
 export function eatDateStr(date: Date): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(
-    date,
-  );
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi',
+  }).format(date);
 }
 
 export function isOnClinicGrid(
@@ -65,8 +65,11 @@ export function generateDaySlots(
 
   if (weekday === 'Sun' && !operatesOnWeekends) return [];
   const endHour =
-    weekday === 'Sat' || weekday === 'Sun' ? SATURDAY_END_HOUR : WEEKDAY_END_HOUR;
-  if ((weekday === 'Sat' || weekday === 'Sun') && !operatesOnWeekends) return [];
+    weekday === 'Sat' || weekday === 'Sun'
+      ? SATURDAY_END_HOUR
+      : WEEKDAY_END_HOUR;
+  if ((weekday === 'Sat' || weekday === 'Sun') && !operatesOnWeekends)
+    return [];
 
   const slots: Date[] = [];
   for (let hour = WEEKDAY_START_HOUR; hour < endHour; hour++) {
@@ -79,7 +82,10 @@ export function generateDaySlots(
   return slots;
 }
 
-export function isBookableTime(scheduledAt: Date, now = new Date()): string | null {
+export function isBookableTime(
+  scheduledAt: Date,
+  now = new Date(),
+): string | null {
   if (scheduledAt.getTime() < now.getTime() + MIN_NOTICE_MS) {
     return 'Appointments need at least one hour of notice.';
   }
@@ -90,14 +96,31 @@ export function isBookableTime(scheduledAt: Date, now = new Date()): string | nu
   return null;
 }
 
-export function inDayBeforeWindow(scheduledAt: Date, now = new Date()): boolean {
+export function inDayBeforeWindow(
+  scheduledAt: Date,
+  now = new Date(),
+): boolean {
   const delta = scheduledAt.getTime() - now.getTime();
   return delta >= DAY_BEFORE_MIN_MS && delta <= DAY_BEFORE_MAX_MS;
 }
 
-export function inHourBeforeWindow(scheduledAt: Date, now = new Date()): boolean {
+export function inHourBeforeWindow(
+  scheduledAt: Date,
+  now = new Date(),
+): boolean {
   const delta = scheduledAt.getTime() - now.getTime();
   return delta >= HOUR_BEFORE_MIN_MS && delta <= HOUR_BEFORE_MAX_MS;
+}
+
+/** True when the appointment is scheduled at or after 10:00 EAT (reminders policy). */
+export function isAfter10am(scheduledAt: Date): boolean {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Nairobi',
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(scheduledAt);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  return hour >= 10;
 }
 
 export function isNoShowDue(scheduledAt: Date, now = new Date()): boolean {
