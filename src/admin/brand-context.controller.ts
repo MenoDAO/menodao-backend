@@ -18,17 +18,17 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { BotContextService } from '../bot/context/bot-context.service';
+import { BrandContextService } from '../bot/context/brand-context.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './guards/roles.decorator';
 import { AuditLogService } from './audit-log.service';
 import {
-  CreateBotContextDocumentDto,
-  ImportBotContextDto,
-  PreviewBotContextDto,
-  UpdateBotContextDocumentDto,
-} from './dto/bot-context.dto';
+  CreateBrandContextDocumentDto,
+  ImportBrandContextDto,
+  PreviewBrandContextDto,
+  UpdateBrandContextDocumentDto,
+} from './dto/brand-context.dto';
 import type { Request as ExpressRequest } from 'express';
 
 interface AdminRequest extends ExpressRequest {
@@ -44,12 +44,12 @@ interface AdminRequest extends ExpressRequest {
  * changed bible silently changes what the assistant tells patients.
  */
 @ApiTags('Admin Bot Context')
-@Controller('admin/bot-context')
+@Controller('admin/brand-context')
 @UseGuards(AdminAuthGuard, RolesGuard)
 @ApiBearerAuth()
-export class AdminBotContextController {
+export class AdminBrandContextController {
   constructor(
-    private readonly contextService: BotContextService,
+    private readonly contextService: BrandContextService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -84,7 +84,7 @@ export class AdminBotContextController {
   @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: 'Create a context document' })
   async createDocument(
-    @Body() dto: CreateBotContextDocumentDto,
+    @Body() dto: CreateBrandContextDocumentDto,
     @Request() req: AdminRequest,
   ) {
     const created = await this.contextService.create({
@@ -96,7 +96,7 @@ export class AdminBotContextController {
       externalId: dto.externalId,
       externalUrl: dto.externalUrl,
     });
-    await this.audit(req, 'CREATE_BOT_CONTEXT_DOCUMENT', created.id, {
+    await this.audit(req, 'CREATE_BRAND_CONTEXT_DOCUMENT', created.id, {
       kind: created.kind,
       title: created.title,
     });
@@ -108,7 +108,7 @@ export class AdminBotContextController {
   @ApiOperation({ summary: 'Update a context document' })
   async updateDocument(
     @Param('id') id: string,
-    @Body() dto: UpdateBotContextDocumentDto,
+    @Body() dto: UpdateBrandContextDocumentDto,
     @Request() req: AdminRequest,
   ) {
     const updated = await this.contextService.update(id, {
@@ -121,7 +121,7 @@ export class AdminBotContextController {
       externalUrl: dto.externalUrl,
       lastSyncedAt: dto.lastSyncedAt,
     });
-    await this.audit(req, 'UPDATE_BOT_CONTEXT_DOCUMENT', updated.id, {
+    await this.audit(req, 'UPDATE_BRAND_CONTEXT_DOCUMENT', updated.id, {
       kind: updated.kind,
       version: updated.version,
     });
@@ -134,7 +134,7 @@ export class AdminBotContextController {
   @ApiOperation({ summary: 'Delete a context document' })
   async deleteDocument(@Param('id') id: string, @Request() req: AdminRequest) {
     await this.contextService.remove(id);
-    await this.audit(req, 'DELETE_BOT_CONTEXT_DOCUMENT', id, {});
+    await this.audit(req, 'DELETE_BRAND_CONTEXT_DOCUMENT', id, {});
   }
 
   @Post('import')
@@ -146,7 +146,7 @@ export class AdminBotContextController {
       'separate documents)',
   })
   async importGuide(
-    @Body() dto: ImportBotContextDto,
+    @Body() dto: ImportBrandContextDto,
     @Request() req: AdminRequest,
   ) {
     const result = await this.contextService.importSections({
@@ -160,7 +160,7 @@ export class AdminBotContextController {
     });
     await this.audit(
       req,
-      'IMPORT_BOT_CONTEXT_GUIDE',
+      'IMPORT_BRAND_CONTEXT_GUIDE',
       dto.externalId ?? 'bulk',
       {
         kind: dto.kind,
@@ -177,7 +177,7 @@ export class AdminBotContextController {
       'Preview what the bot would retrieve and inject for a given question ' +
       '(tuning aid). Omit "kind" to search every kind.',
   })
-  async preview(@Body() dto: PreviewBotContextDto) {
+  async preview(@Body() dto: PreviewBrandContextDto) {
     return this.contextService.preview(dto.query, dto.kind, dto.topK);
   }
 
@@ -191,7 +191,7 @@ export class AdminBotContextController {
       await this.auditLogService.logAction({
         adminId: req.admin.id,
         action,
-        targetType: 'BOT_CONTEXT' as never,
+        targetType: 'BRAND_CONTEXT' as never,
         targetId,
         reason: 'Bot context document change',
         metadata,

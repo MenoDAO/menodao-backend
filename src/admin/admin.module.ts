@@ -12,8 +12,8 @@ import { RolesGuard } from './guards/roles.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ReferralModule } from '../referrals/referral.module';
-import { BotContextModule } from '../bot/context/bot-context.module';
-import { AdminBotContextController } from './bot-context.controller';
+import { BrandContextModule } from '../bot/context/brand-context.module';
+import { AdminBrandContextController } from './brand-context.controller';
 import { BotInstancesModule } from '../bot/instances/bot-instances.module';
 import { BotChatModule } from '../bot/chat/bot-chat.module';
 import { WhatsappClientsModule } from '../bot/whatsapp-clients/whatsapp-clients.module';
@@ -28,7 +28,7 @@ import { AdminBotChatController } from './whatsapp/bot-chat.controller';
     AnalyticsModule,
     forwardRef(() => SubscriptionsModule),
     forwardRef(() => ReferralModule),
-    BotContextModule,
+    BrandContextModule,
     BotInstancesModule,
     BotChatModule,
     WhatsappClientsModule,
@@ -38,7 +38,7 @@ import { AdminBotChatController } from './whatsapp/bot-chat.controller';
     StatsController,
     UsersController,
     PaymentsController,
-    AdminBotContextController,
+    AdminBrandContextController,
     AdminWhatsappController,
     AdminBotChatController,
   ],
