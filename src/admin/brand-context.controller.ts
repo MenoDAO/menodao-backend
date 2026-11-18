@@ -27,6 +27,7 @@ import {
   CreateBrandContextDocumentDto,
   ImportBrandContextDto,
   PreviewBrandContextDto,
+  RestoreBrandContextVersionDto,
   UpdateBrandContextDocumentDto,
 } from './dto/brand-context.dto';
 import type { Request as ExpressRequest } from 'express';
@@ -95,6 +96,7 @@ export class AdminBrandContextController {
       source: dto.source,
       externalId: dto.externalId,
       externalUrl: dto.externalUrl,
+      actorAdminId: req.admin.id,
     });
     await this.audit(req, 'CREATE_BRAND_CONTEXT_DOCUMENT', created.id, {
       kind: created.kind,
@@ -120,6 +122,7 @@ export class AdminBrandContextController {
       externalId: dto.externalId,
       externalUrl: dto.externalUrl,
       lastSyncedAt: dto.lastSyncedAt,
+      actorAdminId: req.admin.id,
     });
     await this.audit(req, 'UPDATE_BRAND_CONTEXT_DOCUMENT', updated.id, {
       kind: updated.kind,
@@ -157,6 +160,7 @@ export class AdminBrandContextController {
       source: dto.source,
       externalId: dto.externalId,
       externalUrl: dto.externalUrl,
+      actorAdminId: req.admin.id,
     });
     await this.audit(
       req,
@@ -165,9 +169,43 @@ export class AdminBrandContextController {
       {
         kind: dto.kind,
         created: result.created,
+        updated: result.updated,
+        deactivated: result.deactivated,
       },
     );
     return result;
+  }
+
+  @Get('documents/:id/versions')
+  @ApiOperation({
+    summary: 'List the immutable version history of a context document',
+  })
+  async listVersions(@Param('id') id: string) {
+    return this.contextService.listVersions(id);
+  }
+
+  @Post('documents/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  @Roles('SUPER_ADMIN')
+  @ApiOperation({
+    summary:
+      'Restore a historical version as a new version (history is append-only)',
+  })
+  async restoreVersion(
+    @Param('id') id: string,
+    @Body() dto: RestoreBrandContextVersionDto,
+    @Request() req: AdminRequest,
+  ) {
+    const restored = await this.contextService.restoreVersion(
+      id,
+      dto.version,
+      req.admin.id,
+    );
+    await this.audit(req, 'RESTORE_BRAND_CONTEXT_DOCUMENT_VERSION', id, {
+      restoredVersion: dto.version,
+      newVersion: restored.version,
+    });
+    return restored;
   }
 
   @Post('preview')
