@@ -16,6 +16,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SmsService } from '../../sms/sms.service';
 import { AppointmentActor, AppointmentStatus } from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
@@ -147,6 +148,7 @@ export class BookingService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
+    private readonly smsService: SmsService,
   ) {
     this.cfg = this.loadConfig();
   }
@@ -605,8 +607,18 @@ export class BookingService {
         await tx.botBookingDraft.delete({
           where: { memberId: draft.memberId },
         });
+
         return appt;
       });
+
+      // Notify clinic staff (doctor/physician) about the new booking —
+      // general info only (member name + slot), no clinical details.
+      await this.notifyStaffBooking(
+        draft.clinicId,
+        draft.memberId,
+        draft.service ?? null,
+        scheduledAt,
+      );
 
       return {
         reply: t(BOOKING_CONFIRMED, lang, {
@@ -651,6 +663,48 @@ export class BookingService {
         `Booking finalization error: ${err instanceof Error ? err.message : String(err)}`,
       );
       return { reply: t(PARSE_FAILURE, lang), triageFlag: false };
+    }
+  }
+
+  /**
+   * Notify the clinic staff (doctor/physician) that a new booking was made
+   * through the bot. Sends general information only (member name + slot) — no
+   * clinical/treatment details leak into staff channels.
+   */
+  private async notifyStaffBooking(
+    clinicId: string | null,
+    memberId: string,
+    service: string | null,
+    scheduledAt: Date,
+  ): Promise<void> {
+    if (!clinicId) return;
+    const clinic = await this.prisma.clinic.findUnique({
+      where: { id: clinicId },
+      select: { id: true, name: true, ownerPhone: true },
+    });
+    const member = await this.prisma.member.findUnique({
+      where: { id: memberId },
+      select: { fullName: true },
+    });
+    if (!clinic?.ownerPhone) return;
+    const memberName = member?.fullName || 'A member';
+    const when = new Intl.DateTimeFormat('en-KE', {
+      timeZone: 'Africa/Nairobi',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(scheduledAt);
+    const message =
+      `MenoDAO: New booking for ${memberName}` +
+      (service ? ` — ${service}` : '') +
+      ` at ${clinic.name} on ${when}. Reply or open the staff area to review.`;
+    const smsResult = await this.smsService.sendSms(clinic.ownerPhone, message);
+    if (!smsResult.success) {
+      this.logger.warn(
+        `Staff booking notification SMS failed for ${clinic.ownerPhone}: ${smsResult.error}`,
+      );
     }
   }
 

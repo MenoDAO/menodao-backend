@@ -12,6 +12,7 @@ import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
+import { BotAccountService } from '../account/bot-account.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -68,6 +69,8 @@ export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
   private readonly recentWaboxappInboundMessages = new Map<string, number>();
   private readonly recentFlaresendInboundMessages = new Map<string, number>();
+  /** memberId -> phoneNumber for the in-flight OTP-gated account-info lookup. */
+  private readonly pendingAccountOtp = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -76,6 +79,7 @@ export class BotGatewayService {
     private readonly identity: BotIdentityService,
     private readonly onboardingService: BotOnboardingService,
     private readonly chatService: BotChatService,
+    private readonly botAccountService: BotAccountService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -414,6 +418,28 @@ export class BotGatewayService {
       }
     }
 
+    // Secure account-info lookup from the bot: OTP-gated via the SMS auth flow.
+    if (this.pendingAccountOtp.has(member.id)) {
+      const code = (messageText || '').trim();
+      const result = await this.botAccountService.respondWithAccountInfo(
+        member.phoneNumber,
+        code,
+      );
+      this.pendingAccountOtp.delete(member.id);
+      await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
+      return;
+    }
+
+    const wantsAccountInfo = this.isAccountInfoRequest(messageText);
+    if (wantsAccountInfo) {
+      this.pendingAccountOtp.set(member.id, member.phoneNumber);
+      const reply = await this.botAccountService.requestAccountOtp(
+        member.phoneNumber,
+      );
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
     const replyText = await this.generateReplyText({
       memberId: member.id,
       recipientPhone: member.phoneNumber,
@@ -485,6 +511,27 @@ export class BotGatewayService {
     });
     await this.sendTextSafely(recipientPhone, replyText, chatContext);
     await this.onboardingService.complete(memberId);
+  }
+
+  /**
+   * True when the member is asking for their own personal account information
+   * from the bot (subscription / membership / profile summary).
+   */
+  private isAccountInfoRequest(messageText: string): boolean {
+    const text = (messageText || '').toLowerCase();
+    if (!text) return false;
+    const patterns = [
+      /\baccount info\b/,
+      /\bmy account\b/,
+      /\bmy profile\b/,
+      /\bmy subscription\b/,
+      /\bmy plan\b/,
+      /\bmembership details\b/,
+      /\bcheck my (account|subscription|plan|membership|details|info)\b/,
+      /\baccount status\b/,
+      /\bhow (do|does) (i|we) (look|stand|compare) (in|to) (the )?(app|website|platform)\b/,
+    ];
+    return patterns.some((p) => p.test(text));
   }
 
   private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {
