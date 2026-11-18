@@ -77,6 +77,10 @@ describe('BotMemberDataService', () => {
 
     it('does not treat informational payment questions as a data request', () => {
       expect(service.detectScope('how do I pay my membership?')).toBeNull();
+      expect(
+        service.detectScope('where can I pay my contribution?'),
+      ).toBeNull();
+      expect(service.detectScope('how much do I pay per month?')).toBeNull();
       expect(service.detectScope('what is MenoDAO?')).toBeNull();
     });
   });
