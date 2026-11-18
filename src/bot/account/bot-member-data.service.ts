@@ -68,17 +68,17 @@ export class BotMemberDataService {
     if (!text) return null;
 
     const payments = [
-      /\bmy (payment|payments|payment history|contributions?|receipts?|transactions?)\b/,
-      /\bpayment history\b/,
-      /\bcontribution history\b/,
+      /\bmy (payment|payments) (history|records?|status)\b/,
+      /\b(my )?(payment|contribution) history\b/,
+      /\bmy (contributions?|receipts?|transactions?) (history|records?)\b/,
       /\b(have|did) i (ever )?(made|make|paid)\b/,
       /\bhow (consistent|regular|reliable) (was|have|am) i\b/,
       /\bhow consistent\b.*\b(payment|contribution|membership)\b/,
-      /\bhow much (have|did) i pay\b/,
+      /\bhow much (have|did) i (pay|paid)\b/,
       /\bwhen did i (last )?pay\b/,
       /\bam i (paid up|up to date)\b/,
-      /\bmy membership payment/,
-      /\bpayment (status|records?)\b/,
+      /\bmy membership (payments?|contributions?) (history|records?|status)\b/,
+      /\bmy payment (status|records?)\b/,
     ];
     if (payments.some((pattern) => pattern.test(text))) return 'PAYMENTS';
 
