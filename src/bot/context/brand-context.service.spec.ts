@@ -1,10 +1,10 @@
 import type { PrismaService } from '../../prisma/prisma.service';
 import {
-  BOT_CONTEXT_MAX_INJECTED_CHARS,
-  BotContextService,
-} from './bot-context.service';
+  BRAND_CONTEXT_MAX_INJECTED_CHARS,
+  BrandContextService,
+} from './brand-context.service';
 
-describe('BotContextService (retrieval + administration)', () => {
+describe('BrandContextService (retrieval + administration)', () => {
   const documents = [
     {
       id: 'doc-brushing',
@@ -127,7 +127,7 @@ describe('BotContextService (retrieval + administration)', () => {
     },
   } as unknown as PrismaService;
 
-  const svc = new BotContextService(prisma);
+  const svc = new BrandContextService(prisma);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -224,7 +224,9 @@ describe('BotContextService (retrieval + administration)', () => {
           score: 0.8,
         },
       ]);
-      expect(block.length).toBeLessThanOrEqual(BOT_CONTEXT_MAX_INJECTED_CHARS);
+      expect(block.length).toBeLessThanOrEqual(
+        BRAND_CONTEXT_MAX_INJECTED_CHARS,
+      );
       expect(block).toContain('### First');
       expect(block).toContain('### Second');
       expect(block).not.toContain('### Third');

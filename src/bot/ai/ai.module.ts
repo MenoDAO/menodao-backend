@@ -9,7 +9,7 @@ import {
 } from './interfaces/llm-provider.interface';
 import { ObservedLlmProvider } from './observed-llm.provider';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BotContextModule } from '../context/bot-context.module';
+import { BrandContextModule } from '../context/brand-context.module';
 
 const logger = new Logger('BotAiModule');
 
@@ -74,7 +74,7 @@ const llmProviderFactory: Provider = {
 };
 
 @Module({
-  imports: [ConfigModule, BotContextModule],
+  imports: [ConfigModule, BrandContextModule],
   providers: [GeminiProvider, OpenAiProvider, llmProviderFactory, BotAiService],
   exports: [BotAiService, LLM_PROVIDER],
 })

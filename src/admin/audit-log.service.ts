@@ -10,7 +10,7 @@ export interface AuditLogEntry {
     | 'MEMBER'
     | 'SUBSCRIPTION'
     | 'DISBURSAL'
-    | 'BOT_CONTEXT'
+    | 'BRAND_CONTEXT'
     | 'WHATSAPP_INSTANCE'
     | 'BOT_CHAT';
   targetId: string;
@@ -104,8 +104,10 @@ export class AuditLogService {
         id: log.id,
         at: log.timestamp.toISOString(),
         kind: 'AUDIT' as const,
-        title: titles[log.action] || log.action.replace(/_/g, ' ').toLowerCase(),
-        detail: [log.targetType, log.reason].filter(Boolean).join(' — ') || undefined,
+        title:
+          titles[log.action] || log.action.replace(/_/g, ' ').toLowerCase(),
+        detail:
+          [log.targetType, log.reason].filter(Boolean).join(' — ') || undefined,
       })),
     };
   }
