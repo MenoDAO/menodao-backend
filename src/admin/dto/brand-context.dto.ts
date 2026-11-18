@@ -158,6 +158,16 @@ export class ImportBrandContextDto {
   externalUrl?: string;
 }
 
+export class RestoreBrandContextVersionDto {
+  @ApiProperty({
+    example: 3,
+    description: 'Version number to restore as a new version.',
+  })
+  @IsInt()
+  @Min(1)
+  version: number;
+}
+
 export class PreviewBrandContextDto {
   @ApiProperty({
     example: 'what should I do if a patient has facial swelling?',

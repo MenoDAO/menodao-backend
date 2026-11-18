@@ -125,6 +125,12 @@ describe('BrandContextService (retrieval + administration)', () => {
         ),
       ),
     },
+    brandContextDocumentVersion: {
+      create: jest.fn(() => Promise.resolve({})),
+      count: jest.fn(() => Promise.resolve(0)),
+      findMany: jest.fn(() => Promise.resolve([])),
+      deleteMany: jest.fn(() => Promise.resolve({ count: 0 })),
+    },
   } as unknown as PrismaService;
 
   const svc = new BrandContextService(prisma);
@@ -267,6 +273,293 @@ describe('BrandContextService (retrieval + administration)', () => {
       const sections = svc.splitIntoSections(paragraphs, 'Guide');
       expect(sections.length).toBeGreaterThan(1);
       expect(sections[0].title).toContain('Guide');
+    });
+  });
+
+  describe('versioning and import upsert', () => {
+    interface StoredDoc {
+      id: string;
+      kind: string;
+      title: string | null;
+      content: string;
+      contentHash: string | null;
+      active: boolean;
+      source: string;
+      externalId: string | null;
+      externalUrl: string | null;
+      sectionKey: string | null;
+      externalRevision: string | null;
+      sourceModifiedAt: Date | null;
+      lastSyncedAt: Date | null;
+      version: number;
+      createdAt: Date;
+      updatedAt: Date;
+    }
+
+    let docs: StoredDoc[];
+    let versions: Array<Record<string, unknown>>;
+    let seq: number;
+
+    interface DocWhere {
+      id?: string;
+      source?: string;
+      externalId?: string | null;
+      active?: boolean;
+      sectionKey?: { notIn: Array<string | null> };
+      source_externalId_sectionKey?: {
+        source: string;
+        externalId: string;
+        sectionKey: string;
+      };
+    }
+
+    interface VersionWhere {
+      documentId?: string;
+      documentId_version?: { documentId: string; version: number };
+    }
+
+    const applyData = (doc: StoredDoc, data: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(data)) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'increment' in (value as Record<string, unknown>)
+        ) {
+          (doc as unknown as Record<string, number>)[key] =
+            ((doc as unknown as Record<string, number>)[key] ?? 0) +
+            (value as { increment: number }).increment;
+        } else {
+          (doc as unknown as Record<string, unknown>)[key] = value;
+        }
+      }
+      doc.updatedAt = new Date();
+    };
+
+    const versionedPrisma = {
+      botContextDocument: {
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          const doc: StoredDoc = {
+            id: `doc-${++seq}`,
+            kind: 'BIBLE',
+            title: null,
+            content: '',
+            contentHash: null,
+            active: true,
+            source: 'MANUAL',
+            externalId: null,
+            externalUrl: null,
+            sectionKey: null,
+            externalRevision: null,
+            sourceModifiedAt: null,
+            lastSyncedAt: null,
+            version: 1,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            ...(data as unknown as Partial<StoredDoc>),
+          } as StoredDoc;
+          docs.push(doc);
+          return Promise.resolve(doc);
+        }),
+        findUnique: jest.fn(({ where }: { where: DocWhere }) =>
+          Promise.resolve(
+            docs.find((doc) => {
+              if (where.id) return doc.id === where.id;
+              const key = where.source_externalId_sectionKey;
+              if (!key) return false;
+              return (
+                doc.source === key.source &&
+                doc.externalId === key.externalId &&
+                doc.sectionKey === key.sectionKey
+              );
+            }) ?? null,
+          ),
+        ),
+        findMany: jest.fn(({ where }: { where: DocWhere }) =>
+          Promise.resolve(
+            docs.filter((doc) => {
+              if (where.source !== undefined && doc.source !== where.source) {
+                return false;
+              }
+              if (
+                where.externalId !== undefined &&
+                doc.externalId !== where.externalId
+              ) {
+                return false;
+              }
+              if (where.active !== undefined && doc.active !== where.active) {
+                return false;
+              }
+              if (where.sectionKey?.notIn) {
+                return !where.sectionKey.notIn.includes(doc.sectionKey);
+              }
+              return true;
+            }),
+          ),
+        ),
+        update: jest.fn(
+          ({
+            where,
+            data,
+          }: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            const doc = docs.find((entry) => entry.id === where.id);
+            if (!doc) return Promise.reject(new Error('not found'));
+            applyData(doc, data);
+            return Promise.resolve(doc);
+          },
+        ),
+        delete: jest.fn(),
+      },
+      brandContextDocumentVersion: {
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          versions.push(data);
+          return Promise.resolve(data);
+        }),
+        findMany: jest.fn(
+          ({
+            where,
+            orderBy,
+          }: {
+            where: VersionWhere;
+            orderBy?: { version?: 'asc' | 'desc' };
+          }) => {
+            const rows = versions.filter(
+              (entry) => entry.documentId === where.documentId,
+            );
+            if (orderBy?.version === 'desc') {
+              rows.sort((a, b) => Number(b.version) - Number(a.version));
+            }
+            return Promise.resolve(rows);
+          },
+        ),
+        findUnique: jest.fn(({ where }: { where: VersionWhere }) => {
+          const key = where.documentId_version;
+          if (!key) return Promise.resolve(null);
+          return Promise.resolve(
+            versions.find(
+              (entry) =>
+                entry.documentId === key.documentId &&
+                entry.version === key.version,
+            ) ?? null,
+          );
+        }),
+        count: jest.fn(({ where }: { where: VersionWhere }) =>
+          Promise.resolve(
+            versions.filter((entry) => entry.documentId === where.documentId)
+              .length,
+          ),
+        ),
+        deleteMany: jest.fn(() => Promise.resolve({ count: 0 })),
+      },
+    } as unknown as PrismaService;
+
+    const versionedSvc = new BrandContextService(versionedPrisma);
+
+    beforeEach(() => {
+      docs = [];
+      versions = [];
+      seq = 0;
+      jest.clearAllMocks();
+    });
+
+    it('snapshots a created document with its content hash', async () => {
+      const doc = await versionedSvc.create({ content: 'Be kind.' });
+
+      expect(doc.version).toBe(1);
+      expect(doc.contentHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(versions).toHaveLength(1);
+      expect(versions[0]).toMatchObject({
+        documentId: doc.id,
+        version: 1,
+        changeType: 'CREATE',
+      });
+    });
+
+    it('does not bump the version when the content is unchanged', async () => {
+      const doc = await versionedSvc.create({ content: 'Be kind.' });
+      const updated = await versionedSvc.update(doc.id, {
+        content: 'Be kind.',
+      });
+
+      expect(updated.version).toBe(1);
+      expect(versions).toHaveLength(1);
+    });
+
+    it('bumps the version and snapshots a real content change', async () => {
+      const doc = await versionedSvc.create({ content: 'Be kind.' });
+      const updated = await versionedSvc.update(doc.id, {
+        content: 'Be very kind.',
+      });
+
+      expect(updated.version).toBe(2);
+      expect(versions).toHaveLength(2);
+      expect(versions[1]).toMatchObject({
+        documentId: doc.id,
+        version: 2,
+        changeType: 'UPDATE',
+      });
+    });
+
+    it('re-importing the same guide upserts instead of duplicating', async () => {
+      const guide = '# Ethics\nFirst rule.\n\n## Escalation\nSecond rule.';
+
+      const first = await versionedSvc.importSections({
+        kind: 'ETHICS',
+        title: 'Guide',
+        content: guide,
+      });
+      const second = await versionedSvc.importSections({
+        kind: 'ETHICS',
+        title: 'Guide',
+        content: guide,
+      });
+
+      expect(first.created).toBe(2);
+      expect(second.created).toBe(0);
+      expect(second.updated).toBe(0);
+      expect(docs).toHaveLength(2);
+      expect(docs.every((doc) => doc.sectionKey)).toBe(true);
+    });
+
+    it('updates changed sections and soft-deactivates removed ones', async () => {
+      const first = await versionedSvc.importSections({
+        kind: 'ETHICS',
+        title: 'Guide',
+        content: '# Ethics\nFirst rule.\n\n## Escalation\nSecond rule.',
+      });
+      const ethics = first.documents.find((doc) => doc.title === 'Ethics');
+
+      const second = await versionedSvc.importSections({
+        kind: 'ETHICS',
+        title: 'Guide',
+        content: '# Ethics\nFirst rule, clarified.',
+      });
+
+      expect(second.updated).toBe(1);
+      expect(second.deactivated).toBe(1);
+      const stored = docs.find((doc) => doc.id === ethics?.id);
+      expect(stored?.content).toContain('clarified');
+      expect(stored?.version).toBe(2);
+      expect(docs.find((doc) => doc.title === 'Escalation')?.active).toBe(
+        false,
+      );
+    });
+
+    it('restores a version as a new, append-only version', async () => {
+      const doc = await versionedSvc.create({ content: 'Version one.' });
+      await versionedSvc.update(doc.id, { content: 'Version two.' });
+
+      const restored = await versionedSvc.restoreVersion(doc.id, 1);
+
+      expect(restored.content).toBe('Version one.');
+      expect(restored.version).toBe(3);
+      expect(
+        versions.some(
+          (entry) => entry.changeType === 'ROLLBACK' && entry.version === 3,
+        ),
+      ).toBe(true);
     });
   });
 });
