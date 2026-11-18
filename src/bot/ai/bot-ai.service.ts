@@ -8,8 +8,6 @@ import { LLM_PROVIDER } from './interfaces/llm-provider.interface';
 import { BotContextService } from '../context/bot-context.service';
 import type { RetrievedBotContext } from '../context/bot-context.service';
 import {
-  DR_PAPI_DISCLAIMER,
-  DR_PAPI_DISCLAIMER_SW,
   DR_PAPI_FALLBACK_REPLY,
   DR_PAPI_FALLBACK_REPLY_SW,
   buildDrPapiSystemPrompt,
@@ -81,7 +79,7 @@ export class BotAiService {
       rawReply =
         language === 'sw' ? DR_PAPI_FALLBACK_REPLY_SW : DR_PAPI_FALLBACK_REPLY;
     }
-    const message = this.appendDisclaimerIfMissing(rawReply, language);
+    const message = rawReply;
     const detectedLeadIntent = this.detectLeadIntent(userMessage, rawReply);
     return { message, detectedLeadIntent };
   }
@@ -170,19 +168,6 @@ export class BotAiService {
       language: options.language,
       memberName: options.memberName,
     });
-  }
-
-  private appendDisclaimerIfMissing(
-    reply: string,
-    language: 'en' | 'sw' = 'en',
-  ): string {
-    if (
-      reply.includes('Disclaimer: I am an AI assistant') ||
-      reply.includes('Kanusho: Mimi ni msaidizi wa AI')
-    ) {
-      return reply;
-    }
-    return `${reply}${language === 'sw' ? DR_PAPI_DISCLAIMER_SW : DR_PAPI_DISCLAIMER}`;
   }
 
   private detectLeadIntent(userMessage: string, reply: string): LeadIntent {
