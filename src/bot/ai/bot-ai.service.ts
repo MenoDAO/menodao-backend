@@ -5,8 +5,8 @@ import type {
   ILlmProvider,
 } from './interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from './interfaces/llm-provider.interface';
-import { BotContextService } from '../context/bot-context.service';
-import type { RetrievedBotContext } from '../context/bot-context.service';
+import { BrandContextService } from '../context/brand-context.service';
+import type { RetrievedBrandContext } from '../context/brand-context.service';
 import {
   DR_PAPI_FALLBACK_REPLY,
   DR_PAPI_FALLBACK_REPLY_SW,
@@ -39,7 +39,7 @@ export class BotAiService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly contextService: BotContextService,
+    private readonly contextService: BrandContextService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
   ) {}
 
@@ -87,7 +87,7 @@ export class BotAiService {
   /** Retrieval: ground the bot reply in the most relevant context docs. */
   private async retrieveContext(
     userMessage: string,
-  ): Promise<RetrievedBotContext[]> {
+  ): Promise<RetrievedBrandContext[]> {
     try {
       const results = await this.contextService.retrieve(userMessage);
       if (results.length > 0) {
@@ -106,14 +106,14 @@ export class BotAiService {
     }
   }
 
-  private renderContextBlock(retrieved: RetrievedBotContext[]): string {
+  private renderContextBlock(retrieved: RetrievedBrandContext[]): string {
     return this.contextService.renderPromptBlock(retrieved);
   }
 
   /** Grounding: backend Clinic (APPROVED) + active Procedure catalogue. */
   public async buildSystemPrompt(
     userMessage?: string,
-    retrieved?: RetrievedBotContext[],
+    retrieved?: RetrievedBrandContext[],
     options: AiReplyOptions = {},
   ): Promise<string> {
     const [clinics, procedures] = await Promise.all([

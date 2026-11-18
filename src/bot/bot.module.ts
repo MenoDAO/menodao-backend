@@ -11,8 +11,8 @@ import { WHATSAPP_CLIENT } from './whatsapp-clients/whatsapp-provider.interface'
 import { BotIdentityModule } from './identity/identity.module';
 import { BotOnboardingModule } from './onboarding/bot-onboarding.module';
 import { BotOnboardingService } from './onboarding/bot-onboarding.service';
-import { BotContextModule } from './context/bot-context.module';
-import { BotContextService } from './context/bot-context.service';
+import { BrandContextModule } from './context/brand-context.module';
+import { BrandContextService } from './context/brand-context.service';
 import { BotChatModule } from './chat/bot-chat.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
@@ -63,7 +63,7 @@ const whatsappProviderFactory: Provider = {
     WhatsappClientsModule,
     BotIdentityModule,
     BotOnboardingModule,
-    BotContextModule,
+    BrandContextModule,
     BotChatModule,
     AuthModule,
   ],
@@ -72,13 +72,13 @@ const whatsappProviderFactory: Provider = {
     whatsappProviderFactory,
     BotGatewayService,
     BotOnboardingService,
-    BotContextService,
+    BrandContextService,
     BotAccountService,
   ],
   exports: [
     BotIdentityModule,
     BotOnboardingModule,
-    BotContextModule,
+    BrandContextModule,
     BotGatewayService,
     AuthModule,
   ],

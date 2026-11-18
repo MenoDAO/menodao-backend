@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export const BOT_CONTEXT_DEFAULT_KIND = 'BIBLE';
+export const BRAND_CONTEXT_DEFAULT_KIND = 'BIBLE';
 
 /**
  * Document categories. The bot retrieves from every active document of the
@@ -14,7 +14,7 @@ export const BOT_CONTEXT_DEFAULT_KIND = 'BIBLE';
  *  - POLICY     pricing, membership, refunds, escalation
  *  - BIBLE      catch-all for everything else
  */
-export const BOT_CONTEXT_KINDS = [
+export const BRAND_CONTEXT_KINDS = [
   'BRAND',
   'ETHICS',
   'OPERATING',
@@ -23,24 +23,24 @@ export const BOT_CONTEXT_KINDS = [
   'BIBLE',
 ] as const;
 
-export type BotContextKind = (typeof BOT_CONTEXT_KINDS)[number];
+export type BrandContextKind = (typeof BRAND_CONTEXT_KINDS)[number];
 
-export const BOT_CONTEXT_TOP_K = 3;
+export const BRAND_CONTEXT_TOP_K = 3;
 
 /** How long the in-process document cache stays warm before a DB re-read. */
-export const BOT_CONTEXT_CACHE_TTL_MS = 60_000;
+export const BRAND_CONTEXT_CACHE_TTL_MS = 60_000;
 
 /** Hard cap on how much retrieved text is injected into one prompt. */
-export const BOT_CONTEXT_MAX_INJECTED_CHARS = 8_000;
+export const BRAND_CONTEXT_MAX_INJECTED_CHARS = 8_000;
 
 /** Per-document cap inside the injected block. */
-export const BOT_CONTEXT_MAX_DOC_CHARS = 4_000;
+export const BRAND_CONTEXT_MAX_DOC_CHARS = 4_000;
 
 /**
  * High-frequency English/Swahili words that produce false-positive matches.
  * Kept small on purpose — over-filtering hurts recall on short queries.
  */
-const BOT_CONTEXT_STOPWORDS = new Set<string>([
+const BRAND_CONTEXT_STOPWORDS = new Set<string>([
   'the',
   'and',
   'for',
@@ -135,7 +135,7 @@ const BOT_CONTEXT_STOPWORDS = new Set<string>([
   'wewe',
 ]);
 
-export interface BotContextDocumentRecord {
+export interface BrandContextDocumentRecord {
   id: string;
   kind: string;
   title: string | null;
@@ -150,7 +150,7 @@ export interface BotContextDocumentRecord {
   updatedAt: Date;
 }
 
-export interface RetrievedBotContext {
+export interface RetrievedBrandContext {
   documentId: string;
   kind: string;
   title: string | null;
@@ -158,7 +158,7 @@ export interface RetrievedBotContext {
   score: number;
 }
 
-export interface BotContextPreview {
+export interface BrandContextPreview {
   query: string;
   kind: string;
   scanned: number;
@@ -197,7 +197,7 @@ const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
 /**
- * BotContextService — retrieval layer for the Dr. Papi bot.
+ * BrandContextService — retrieval layer for the Dr. Papi bot.
  *
  * Backing store for the "bible" source documents the assistant grounds its
  * answers in (brand voice, ethics, operating principles, policies). Retrieval
@@ -210,8 +210,8 @@ const BM25_B = 0.75;
  * minute per kind instead of one per message.
  */
 @Injectable()
-export class BotContextService {
-  private readonly logger = new Logger(BotContextService.name);
+export class BrandContextService {
+  private readonly logger = new Logger(BrandContextService.name);
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(private readonly prisma: PrismaService) {}
@@ -230,9 +230,9 @@ export class BotContextService {
    */
   async retrieve(
     query: string,
-    kinds: string | readonly string[] = BOT_CONTEXT_KINDS,
-    topK: number = BOT_CONTEXT_TOP_K,
-  ): Promise<RetrievedBotContext[]> {
+    kinds: string | readonly string[] = BRAND_CONTEXT_KINDS,
+    topK: number = BRAND_CONTEXT_TOP_K,
+  ): Promise<RetrievedBrandContext[]> {
     const startedAt = Date.now();
     const wanted: string[] = typeof kinds === 'string' ? [kinds] : [...kinds];
     const { documents, df, avgdl } = await this.loadDocuments();
@@ -287,10 +287,10 @@ export class BotContextService {
   async preview(
     query: string,
     kind?: string,
-    topK: number = BOT_CONTEXT_TOP_K,
-  ): Promise<BotContextPreview> {
+    topK: number = BRAND_CONTEXT_TOP_K,
+  ): Promise<BrandContextPreview> {
     const startedAt = Date.now();
-    const kinds: string[] = kind ? [kind] : [...BOT_CONTEXT_KINDS];
+    const kinds: string[] = kind ? [kind] : [...BRAND_CONTEXT_KINDS];
     const retrieved = await this.retrieve(query, kinds, topK);
     const { documents } = await this.loadDocuments();
     const promptBlock = this.renderPromptBlock(retrieved);
@@ -313,7 +313,7 @@ export class BotContextService {
   }
 
   /** Renders the retrieval block exactly as the bot injects it. */
-  renderPromptBlock(retrieved: RetrievedBotContext[]): string {
+  renderPromptBlock(retrieved: RetrievedBrandContext[]): string {
     if (retrieved.length === 0) return '';
 
     const parts: string[] = [];
@@ -322,11 +322,11 @@ export class BotContextService {
       const header = `### ${doc.title ?? 'Relevant Guide'}\n`;
       const separator = parts.length > 0 ? 2 : 0;
       const remaining =
-        BOT_CONTEXT_MAX_INJECTED_CHARS - used - header.length - separator;
+        BRAND_CONTEXT_MAX_INJECTED_CHARS - used - header.length - separator;
       if (remaining <= 0) break;
       const content = doc.content.slice(
         0,
-        Math.min(BOT_CONTEXT_MAX_DOC_CHARS, remaining),
+        Math.min(BRAND_CONTEXT_MAX_DOC_CHARS, remaining),
       );
       if (!content.trim()) continue;
       const rendered = `${header}${content}`;
@@ -345,7 +345,7 @@ export class BotContextService {
     source?: string;
     active?: boolean;
     search?: string;
-  }): Promise<BotContextDocumentRecord[]> {
+  }): Promise<BrandContextDocumentRecord[]> {
     const where: Record<string, unknown> = {};
     if (filters.kind) where.kind = filters.kind;
     if (filters.source) where.source = filters.source;
@@ -363,7 +363,7 @@ export class BotContextService {
     });
   }
 
-  async findById(id: string): Promise<BotContextDocumentRecord> {
+  async findById(id: string): Promise<BrandContextDocumentRecord> {
     const doc = await this.prisma.botContextDocument.findUnique({
       where: { id },
     });
@@ -381,10 +381,10 @@ export class BotContextService {
     source?: string;
     externalId?: string;
     externalUrl?: string;
-  }): Promise<BotContextDocumentRecord> {
+  }): Promise<BrandContextDocumentRecord> {
     const created = await this.prisma.botContextDocument.create({
       data: {
-        kind: input.kind ?? BOT_CONTEXT_DEFAULT_KIND,
+        kind: input.kind ?? BRAND_CONTEXT_DEFAULT_KIND,
         title: input.title ?? null,
         content: input.content,
         active: input.active ?? true,
@@ -412,7 +412,7 @@ export class BotContextService {
       externalUrl?: string | null;
       lastSyncedAt?: Date | null;
     },
-  ): Promise<BotContextDocumentRecord> {
+  ): Promise<BrandContextDocumentRecord> {
     await this.findById(id);
     const updated = await this.prisma.botContextDocument.update({
       where: { id },
@@ -466,12 +466,12 @@ export class BotContextService {
     externalUrl?: string;
   }): Promise<{
     created: number;
-    documents: BotContextDocumentRecord[];
+    documents: BrandContextDocumentRecord[];
   }> {
-    const kind = input.kind ?? BOT_CONTEXT_DEFAULT_KIND;
+    const kind = input.kind ?? BRAND_CONTEXT_DEFAULT_KIND;
     const sections = this.splitIntoSections(input.content, input.title);
 
-    const created: BotContextDocumentRecord[] = [];
+    const created: BrandContextDocumentRecord[] = [];
     for (const section of sections) {
       created.push(
         await this.prisma.botContextDocument.create({
@@ -608,7 +608,7 @@ export class BotContextService {
   }> {
     const cached = this.cache.get('ALL');
     const now = Date.now();
-    if (cached && now - cached.loadedAt < BOT_CONTEXT_CACHE_TTL_MS) {
+    if (cached && now - cached.loadedAt < BRAND_CONTEXT_CACHE_TTL_MS) {
       return {
         documents: cached.documents,
         df: cached.df,
@@ -666,7 +666,7 @@ export class BotContextService {
       .split(/\s+/)
       .map((token) => token.trim())
       .filter((token) => token.length > 2)
-      .filter((token) => !BOT_CONTEXT_STOPWORDS.has(token));
+      .filter((token) => !BRAND_CONTEXT_STOPWORDS.has(token));
     for (const token of normalized) {
       tf.set(token, (tf.get(token) ?? 0) + 1);
     }

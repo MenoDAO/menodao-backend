@@ -10,16 +10,16 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { BOT_CONTEXT_KINDS } from '../../bot/context/bot-context.service';
+import { BRAND_CONTEXT_KINDS } from '../../bot/context/brand-context.service';
 
 /** Where a context document comes from. GOOGLE_DRIVE is reserved for the sync. */
-export const BOT_CONTEXT_SOURCES = ['MANUAL', 'GOOGLE_DRIVE'] as const;
+export const BRAND_CONTEXT_SOURCES = ['MANUAL', 'GOOGLE_DRIVE'] as const;
 
-export type BotContextSource = (typeof BOT_CONTEXT_SOURCES)[number];
+export type BrandContextSource = (typeof BRAND_CONTEXT_SOURCES)[number];
 
-export class CreateBotContextDocumentDto {
+export class CreateBrandContextDocumentDto {
   @ApiProperty({
-    enum: BOT_CONTEXT_KINDS,
+    enum: BRAND_CONTEXT_KINDS,
     default: 'BIBLE',
     description:
       'Retrieval bucket. BRAND = voice/positioning, ETHICS = matters of ethics, ' +
@@ -27,8 +27,8 @@ export class CreateBotContextDocumentDto {
       'POLICY = pricing/membership/escalation, BIBLE = everything else.',
   })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_KINDS])
-  kind?: (typeof BOT_CONTEXT_KINDS)[number];
+  @IsIn([...BRAND_CONTEXT_KINDS])
+  kind?: (typeof BRAND_CONTEXT_KINDS)[number];
 
   @ApiPropertyOptional({ example: 'Escalation boundaries' })
   @IsOptional()
@@ -50,10 +50,10 @@ export class CreateBotContextDocumentDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ enum: BOT_CONTEXT_SOURCES, default: 'MANUAL' })
+  @ApiPropertyOptional({ enum: BRAND_CONTEXT_SOURCES, default: 'MANUAL' })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_SOURCES])
-  source?: BotContextSource;
+  @IsIn([...BRAND_CONTEXT_SOURCES])
+  source?: BrandContextSource;
 
   @ApiPropertyOptional({
     description: 'Google Drive file id (used when source is GOOGLE_DRIVE).',
@@ -68,11 +68,11 @@ export class CreateBotContextDocumentDto {
   externalUrl?: string;
 }
 
-export class UpdateBotContextDocumentDto {
-  @ApiPropertyOptional({ enum: BOT_CONTEXT_KINDS })
+export class UpdateBrandContextDocumentDto {
+  @ApiPropertyOptional({ enum: BRAND_CONTEXT_KINDS })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_KINDS])
-  kind?: (typeof BOT_CONTEXT_KINDS)[number];
+  @IsIn([...BRAND_CONTEXT_KINDS])
+  kind?: (typeof BRAND_CONTEXT_KINDS)[number];
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -91,10 +91,10 @@ export class UpdateBotContextDocumentDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ enum: BOT_CONTEXT_SOURCES })
+  @ApiPropertyOptional({ enum: BRAND_CONTEXT_SOURCES })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_SOURCES])
-  source?: BotContextSource;
+  @IsIn([...BRAND_CONTEXT_SOURCES])
+  source?: BrandContextSource;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -113,11 +113,11 @@ export class UpdateBotContextDocumentDto {
   lastSyncedAt?: Date | null;
 }
 
-export class ImportBotContextDto {
-  @ApiProperty({ enum: BOT_CONTEXT_KINDS, default: 'BIBLE' })
+export class ImportBrandContextDto {
+  @ApiProperty({ enum: BRAND_CONTEXT_KINDS, default: 'BIBLE' })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_KINDS])
-  kind?: (typeof BOT_CONTEXT_KINDS)[number];
+  @IsIn([...BRAND_CONTEXT_KINDS])
+  kind?: (typeof BRAND_CONTEXT_KINDS)[number];
 
   @ApiPropertyOptional({
     example: 'Dr. Papi operating principles',
@@ -142,10 +142,10 @@ export class ImportBotContextDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ enum: BOT_CONTEXT_SOURCES, default: 'MANUAL' })
+  @ApiPropertyOptional({ enum: BRAND_CONTEXT_SOURCES, default: 'MANUAL' })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_SOURCES])
-  source?: BotContextSource;
+  @IsIn([...BRAND_CONTEXT_SOURCES])
+  source?: BrandContextSource;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -158,7 +158,7 @@ export class ImportBotContextDto {
   externalUrl?: string;
 }
 
-export class PreviewBotContextDto {
+export class PreviewBrandContextDto {
   @ApiProperty({
     example: 'what should I do if a patient has facial swelling?',
     description: 'The question to simulate retrieval against.',
@@ -167,10 +167,10 @@ export class PreviewBotContextDto {
   @MinLength(1)
   query: string;
 
-  @ApiPropertyOptional({ enum: BOT_CONTEXT_KINDS, default: 'BIBLE' })
+  @ApiPropertyOptional({ enum: BRAND_CONTEXT_KINDS, default: 'BIBLE' })
   @IsOptional()
-  @IsIn([...BOT_CONTEXT_KINDS])
-  kind?: (typeof BOT_CONTEXT_KINDS)[number];
+  @IsIn([...BRAND_CONTEXT_KINDS])
+  kind?: (typeof BRAND_CONTEXT_KINDS)[number];
 
   @ApiPropertyOptional({ default: 3, minimum: 1, maximum: 10 })
   @IsOptional()
