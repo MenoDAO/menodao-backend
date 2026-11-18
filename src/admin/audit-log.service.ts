@@ -12,7 +12,8 @@ export interface AuditLogEntry {
     | 'DISBURSAL'
     | 'BRAND_CONTEXT'
     | 'WHATSAPP_INSTANCE'
-    | 'BOT_CHAT';
+    | 'BOT_CHAT'
+    | 'ADMIN_USER';
   targetId: string;
   reason: string;
   metadata?: any;

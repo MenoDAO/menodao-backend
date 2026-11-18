@@ -81,6 +81,11 @@ export class AdminAuthGuard implements CanActivate {
         throw new UnauthorizedException('Admin not found');
       }
 
+      if (!admin.isActive) {
+        console.log(`[AdminAuthGuard] Admin disabled: ${payload.sub}`);
+        throw new UnauthorizedException('Admin account is disabled');
+      }
+
       console.log(
         `[AdminAuthGuard] Auth successful for admin: ${admin.username} (${admin.role}) on ${requestPath}`,
       );

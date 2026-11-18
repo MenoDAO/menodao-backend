@@ -22,6 +22,7 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './guards/roles.decorator';
 import { AdminLoginDto, ChangePasswordDto } from './dto/admin-login.dto';
+import { AcceptInviteDto } from './dto/admin-user.dto';
 import {
   PaymentSearchQuery,
   MemberSearchQuery,
@@ -57,6 +58,16 @@ export class AdminController {
   @ApiBody({ type: AdminLoginDto })
   async login(@Body() dto: AdminLoginDto) {
     return this.adminService.login(dto.username, dto.password);
+  }
+
+  @Post('invite/accept')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Set password using a one-time admin invite / reset token',
+  })
+  @ApiBody({ type: AcceptInviteDto })
+  acceptInvite(@Body() dto: AcceptInviteDto) {
+    return this.adminService.acceptInvite(dto.token, dto.password);
   }
 
   @Post('webauthn/login/options')

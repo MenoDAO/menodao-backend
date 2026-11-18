@@ -354,6 +354,7 @@ enum TxStatus {
 // Admin role enum
 enum AdminRole {
   SUPER_ADMIN
+  JUNIOR_ADMIN
   CUSTOMER_SERVICE
 }
 
@@ -363,6 +364,13 @@ model AdminUser {
   username     String    @unique
   passwordHash String
   role         AdminRole @default(SUPER_ADMIN)
+  phoneNumber  String?   @unique
+  isActive     Boolean   @default(true)
+  // One-time invite/reset flow: the plaintext token is shown only once at
+  // creation, the hash is stored here. Accepting the invite sets the password.
+  mustChangePassword Boolean  @default(false)
+  inviteTokenHash    String?
+  inviteExpiresAt    DateTime?
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

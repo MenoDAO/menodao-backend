@@ -1,11 +1,15 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
-  UnauthorizedException,
-  OnModuleInit,
   Logger,
+  NotFoundException,
+  OnModuleInit,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 
@@ -82,7 +86,7 @@ export class AdminService implements OnModuleInit {
       where: { username },
     });
 
-    if (!admin) {
+    if (!admin || !admin.isActive) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -99,7 +103,7 @@ export class AdminService implements OnModuleInit {
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: adminId },
     });
-    if (!admin) {
+    if (!admin || !admin.isActive) {
       throw new UnauthorizedException('Invalid credentials');
     }
     return this.issueSession(admin);
@@ -181,17 +185,19 @@ export class AdminService implements OnModuleInit {
   /**
    * Verify admin JWT token
    */
-  async validateAdminToken(payload: {
-    sub: string;
-    type: string;
-  }): Promise<{ id: string; username: string; role: string } | null> {
+  async validateAdminToken(payload: { sub: string; type: string }): Promise<{
+    id: string;
+    username: string;
+    role: string;
+    isActive: boolean;
+  } | null> {
     if (payload.type !== 'admin') {
       return null;
     }
 
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: payload.sub },
-      select: { id: true, username: true, role: true },
+      select: { id: true, username: true, role: true, isActive: true },
     });
 
     return admin;
@@ -213,6 +219,193 @@ export class AdminService implements OnModuleInit {
     });
 
     return admin;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Admin account management (super admins only, via AdminUsersController)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  async listAdmins() {
+    return this.prisma.adminUser.findMany({
+      select: {
+        id: true,
+        username: true,
+        phoneNumber: true,
+        role: true,
+        isActive: true,
+        mustChangePassword: true,
+        lastLogin: true,
+        createdAt: true,
+      },
+      orderBy: [{ role: 'asc' }, { username: 'asc' }],
+    });
+  }
+
+  /**
+   * Creates a disabled-password account plus a one-time invite token. The
+   * plaintext token is returned once and never stored; only its hash is.
+   */
+  async createAdmin(input: {
+    username: string;
+    role: string;
+    phoneNumber?: string;
+  }) {
+    const { token, hash, expiresAt } = this.generateInvite();
+    const username = input.username.trim();
+
+    try {
+      const created = await this.prisma.adminUser.create({
+        data: {
+          username,
+          role: input.role as never,
+          phoneNumber: input.phoneNumber?.trim() || null,
+          // Unusable password until the invite is accepted.
+          passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 10),
+          mustChangePassword: true,
+          inviteTokenHash: hash,
+          inviteExpiresAt: expiresAt,
+        },
+      });
+      return {
+        admin: this.toAdminRecord(created),
+        inviteToken: token,
+        expiresAt,
+      };
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') {
+        throw new ConflictException(
+          'That username or phone number is already in use',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async updateAdmin(
+    id: string,
+    input: { role?: string; isActive?: boolean; phoneNumber?: string | null },
+    actorId: string,
+  ) {
+    const target = await this.prisma.adminUser.findUnique({ where: { id } });
+    if (!target) throw new NotFoundException('Admin not found');
+
+    const demotingOrDisabling =
+      (input.role !== undefined &&
+        target.role === 'SUPER_ADMIN' &&
+        input.role !== 'SUPER_ADMIN') ||
+      input.isActive === false;
+
+    if (
+      id === actorId &&
+      (input.role !== undefined || input.isActive === false)
+    ) {
+      throw new BadRequestException(
+        'You cannot change your own role or deactivate yourself',
+      );
+    }
+
+    if (target.role === 'SUPER_ADMIN' && demotingOrDisabling) {
+      const activeSupers = await this.prisma.adminUser.count({
+        where: { role: 'SUPER_ADMIN', isActive: true },
+      });
+      if (activeSupers <= 1) {
+        throw new BadRequestException(
+          'Cannot demote or deactivate the last active super admin',
+        );
+      }
+    }
+
+    const updated = await this.prisma.adminUser.update({
+      where: { id },
+      data: {
+        ...(input.role !== undefined ? { role: input.role as never } : {}),
+        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+        ...(input.phoneNumber !== undefined
+          ? { phoneNumber: input.phoneNumber?.trim() || null }
+          : {}),
+      },
+    });
+    return this.toAdminRecord(updated);
+  }
+
+  /** Issues a fresh one-time token; the old one stops working immediately. */
+  async resetAdminPassword(id: string) {
+    const target = await this.prisma.adminUser.findUnique({ where: { id } });
+    if (!target) throw new NotFoundException('Admin not found');
+
+    const { token, hash, expiresAt } = this.generateInvite();
+    await this.prisma.adminUser.update({
+      where: { id },
+      data: {
+        inviteTokenHash: hash,
+        inviteExpiresAt: expiresAt,
+        mustChangePassword: true,
+      },
+    });
+    return {
+      admin: this.toAdminRecord(target),
+      inviteToken: token,
+      expiresAt,
+    };
+  }
+
+  /** Public endpoint: a new admin sets their password using the invite token. */
+  async acceptInvite(token: string, password: string) {
+    const hash = createHash('sha256').update(token).digest('hex');
+    const admin = await this.prisma.adminUser.findFirst({
+      where: { inviteTokenHash: hash },
+    });
+
+    if (
+      !admin ||
+      !admin.isActive ||
+      !admin.inviteExpiresAt ||
+      admin.inviteExpiresAt.getTime() < Date.now()
+    ) {
+      throw new BadRequestException('Invite link is invalid or has expired');
+    }
+
+    await this.prisma.adminUser.update({
+      where: { id: admin.id },
+      data: {
+        passwordHash: await bcrypt.hash(password, 10),
+        inviteTokenHash: null,
+        inviteExpiresAt: null,
+        mustChangePassword: false,
+      },
+    });
+    return { message: 'Password set. You can now sign in.' };
+  }
+
+  private generateInvite() {
+    const token = randomBytes(32).toString('hex');
+    return {
+      token,
+      hash: createHash('sha256').update(token).digest('hex'),
+      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    };
+  }
+
+  private toAdminRecord(admin: {
+    id: string;
+    username: string;
+    phoneNumber?: string | null;
+    role: string;
+    isActive: boolean;
+    mustChangePassword?: boolean;
+    lastLogin?: Date | null;
+    createdAt: Date;
+  }) {
+    return {
+      id: admin.id,
+      username: admin.username,
+      phoneNumber: admin.phoneNumber ?? null,
+      role: admin.role,
+      isActive: admin.isActive,
+      mustChangePassword: admin.mustChangePassword ?? false,
+      lastLogin: admin.lastLogin ?? null,
+      createdAt: admin.createdAt,
+    };
   }
 
   /**
