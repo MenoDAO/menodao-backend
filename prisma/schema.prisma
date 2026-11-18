@@ -1346,15 +1346,50 @@ model BotContextDocument {
   // Where the document came from: MANUAL (written in the admin dashboard) or
   // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id.
   source      String    @default("MANUAL")
+  // Source-document identity: the Drive file id for GOOGLE_DRIVE documents, or
+  // a stable derived key for manual imports (so re-importing a guide updates
+  // its sections instead of duplicating them).
   externalId  String?
   externalUrl String?
   lastSyncedAt DateTime?
-  version     Int       @default(1)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  // Stable identity of a section inside its source document
+  // (sha1 of normalised heading + duplicate ordinal).
+  sectionKey       String?
+  // sha256 of the normalised content; a version only bumps when this changes.
+  contentHash      String?
+  // Drive revision id / checksum of the source file at last sync.
+  externalRevision String?
+  // Drive modifiedTime of the source file at last sync.
+  sourceModifiedAt DateTime?
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
+  versions BrandContextDocumentVersion[]
+
+  @@unique([source, externalId, sectionKey])
   @@index([kind, active])
   @@index([source, externalId])
+}
+
+model BrandContextDocumentVersion {
+  id               String   @id @default(uuid())
+  documentId       String
+  document         BotContextDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version          Int
+  kind             String
+  title            String?
+  content          String   @db.Text
+  contentHash      String
+  source           String
+  externalRevision String?
+  // CREATE | UPDATE | SYNC | ROLLBACK | DELETE
+  changeType       String
+  createdByAdminId String?
+  createdAt        DateTime @default(now())
+
+  @@unique([documentId, version])
+  @@index([documentId, createdAt])
 }
 
 model BotLlmCallLog {

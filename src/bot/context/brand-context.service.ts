@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export const BRAND_CONTEXT_DEFAULT_KIND = 'BIBLE';
@@ -35,6 +36,23 @@ export const BRAND_CONTEXT_MAX_INJECTED_CHARS = 8_000;
 
 /** Per-document cap inside the injected block. */
 export const BRAND_CONTEXT_MAX_DOC_CHARS = 4_000;
+
+/**
+ * How many historical versions to keep per document. Clinical and policy
+ * guides keep every version: they are the evidence trail for what the
+ * assistant was instructed to tell patients.
+ */
+export const BRAND_CONTEXT_VERSION_RETENTION = 20;
+
+/** Kinds whose version history is never pruned. */
+export const BRAND_CONTEXT_UNPRUNED_KINDS = ['CLINICAL', 'POLICY'] as const;
+
+export type BrandContextChangeType =
+  | 'CREATE'
+  | 'UPDATE'
+  | 'SYNC'
+  | 'ROLLBACK'
+  | 'DELETE';
 
 /**
  * High-frequency English/Swahili words that produce false-positive matches.
@@ -145,9 +163,28 @@ export interface BrandContextDocumentRecord {
   externalId: string | null;
   externalUrl: string | null;
   lastSyncedAt: Date | null;
+  sectionKey: string | null;
+  contentHash: string | null;
+  externalRevision: string | null;
+  sourceModifiedAt: Date | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface BrandContextVersionRecord {
+  id: string;
+  documentId: string;
+  version: number;
+  kind: string;
+  title: string | null;
+  content: string;
+  contentHash: string;
+  source: string;
+  externalRevision: string | null;
+  changeType: string;
+  createdByAdminId: string | null;
+  createdAt: Date;
 }
 
 export interface RetrievedBrandContext {
@@ -381,21 +418,32 @@ export class BrandContextService {
     source?: string;
     externalId?: string;
     externalUrl?: string;
+    sectionKey?: string;
+    externalRevision?: string;
+    sourceModifiedAt?: Date;
+    lastSyncedAt?: Date;
+    actorAdminId?: string;
   }): Promise<BrandContextDocumentRecord> {
     const created = await this.prisma.botContextDocument.create({
       data: {
         kind: input.kind ?? BRAND_CONTEXT_DEFAULT_KIND,
         title: input.title ?? null,
         content: input.content,
+        contentHash: this.hashContent(input.content),
         active: input.active ?? true,
         source: input.source ?? 'MANUAL',
         externalId: input.externalId ?? null,
         externalUrl: input.externalUrl ?? null,
+        sectionKey: input.sectionKey ?? null,
+        externalRevision: input.externalRevision ?? null,
+        sourceModifiedAt: input.sourceModifiedAt ?? null,
+        lastSyncedAt: input.lastSyncedAt ?? null,
       },
     });
+    await this.snapshot(created, 'CREATE', input.actorAdminId);
     this.invalidateCache();
     this.logger.log(
-      `Context document created: ${created.kind}/${created.title ?? created.id}`,
+      `Context document created: ${created.kind}/${created.title ?? created.id} (v${created.version})`,
     );
     return created;
   }
@@ -411,15 +459,29 @@ export class BrandContextService {
       externalId?: string | null;
       externalUrl?: string | null;
       lastSyncedAt?: Date | null;
+      externalRevision?: string | null;
+      sourceModifiedAt?: Date | null;
+      changeType?: BrandContextChangeType;
+      actorAdminId?: string;
     },
   ): Promise<BrandContextDocumentRecord> {
-    await this.findById(id);
+    const existing = await this.findById(id);
+    const contentChanged =
+      input.content !== undefined &&
+      this.hashContent(input.content) !==
+        (existing.contentHash ?? this.hashContent(existing.content));
+
     const updated = await this.prisma.botContextDocument.update({
       where: { id },
       data: {
         ...(input.kind !== undefined ? { kind: input.kind } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
-        ...(input.content !== undefined ? { content: input.content } : {}),
+        ...(input.content !== undefined
+          ? {
+              content: input.content,
+              contentHash: this.hashContent(input.content),
+            }
+          : {}),
         ...(input.active !== undefined ? { active: input.active } : {}),
         ...(input.source !== undefined ? { source: input.source } : {}),
         ...(input.externalId !== undefined
@@ -431,9 +493,25 @@ export class BrandContextService {
         ...(input.lastSyncedAt !== undefined
           ? { lastSyncedAt: input.lastSyncedAt }
           : {}),
-        version: { increment: 1 },
+        ...(input.externalRevision !== undefined
+          ? { externalRevision: input.externalRevision }
+          : {}),
+        ...(input.sourceModifiedAt !== undefined
+          ? { sourceModifiedAt: input.sourceModifiedAt }
+          : {}),
+        // Version tracks content only: metadata edits (title, active) are
+        // audited but must not spam the history.
+        ...(contentChanged ? { version: { increment: 1 } } : {}),
       },
     });
+    if (contentChanged) {
+      await this.snapshot(
+        updated,
+        input.changeType ?? 'UPDATE',
+        input.actorAdminId,
+        input.externalRevision ?? undefined,
+      );
+    }
     this.invalidateCache();
     this.logger.log(
       `Context document updated: ${updated.id} (v${updated.version})`,
@@ -455,6 +533,11 @@ export class BrandContextService {
    * question matches the whole thing and the whole thing is injected into the
    * prompt. Splitting on headings produces one document per section, so the
    * top-K actually returns the sections that matter.
+   *
+   * Re-importing the same guide is an upsert, not a duplication: sections are
+   * matched by a stable `sectionKey` (normalised heading + duplicate ordinal)
+   * inside their source document. Sections that disappeared from the guide are
+   * soft-deactivated so their version history survives.
    */
   async importSections(input: {
     kind?: string;
@@ -464,37 +547,192 @@ export class BrandContextService {
     source?: string;
     externalId?: string;
     externalUrl?: string;
+    externalRevision?: string;
+    sourceModifiedAt?: Date;
+    actorAdminId?: string;
   }): Promise<{
     created: number;
+    updated: number;
+    deactivated: number;
     documents: BrandContextDocumentRecord[];
   }> {
     const kind = input.kind ?? BRAND_CONTEXT_DEFAULT_KIND;
+    const source = input.source ?? 'MANUAL';
     const sections = this.splitIntoSections(input.content, input.title);
+    const externalId =
+      input.externalId ?? this.deriveImportKey(kind, input.title, sections);
+    const syncedAt = source === 'GOOGLE_DRIVE' ? new Date() : null;
 
-    const created: BrandContextDocumentRecord[] = [];
-    for (const section of sections) {
-      created.push(
-        await this.prisma.botContextDocument.create({
+    // Keys must be stable across edits elsewhere in the guide, so the ordinal
+    // counts repeats of the same heading rather than the section's position.
+    const occurrences = new Map<string, number>();
+    const keyed = sections.map((section) => {
+      const normalized = this.normalizeHeading(section.title);
+      const ordinal = occurrences.get(normalized) ?? 0;
+      occurrences.set(normalized, ordinal + 1);
+      return {
+        ...section,
+        sectionKey: this.hashKey(`${normalized}#${ordinal}`),
+        contentHash: this.hashContent(section.content),
+      };
+    });
+
+    const documents: BrandContextDocumentRecord[] = [];
+    const seenKeys = new Set<string>();
+    let created = 0;
+    let updated = 0;
+
+    for (const section of keyed) {
+      seenKeys.add(section.sectionKey);
+      const existing = await this.prisma.botContextDocument.findUnique({
+        where: {
+          source_externalId_sectionKey: {
+            source,
+            externalId,
+            sectionKey: section.sectionKey,
+          },
+        },
+      });
+
+      if (!existing) {
+        const doc = await this.prisma.botContextDocument.create({
           data: {
             kind,
             title: section.title,
             content: section.content,
+            contentHash: section.contentHash,
             active: input.active ?? true,
-            source: input.source ?? 'MANUAL',
-            externalId: input.externalId ?? null,
+            source,
+            externalId,
             externalUrl: input.externalUrl ?? null,
+            sectionKey: section.sectionKey,
+            externalRevision: input.externalRevision ?? null,
+            sourceModifiedAt: input.sourceModifiedAt ?? null,
+            lastSyncedAt: syncedAt,
           },
-        }),
+        });
+        await this.snapshot(doc, 'CREATE', input.actorAdminId);
+        documents.push(doc);
+        created += 1;
+        continue;
+      }
+
+      const changed =
+        existing.contentHash !== section.contentHash ||
+        (input.active ?? true) !== existing.active;
+
+      if (!changed) {
+        documents.push(existing);
+        continue;
+      }
+
+      const doc = await this.prisma.botContextDocument.update({
+        where: { id: existing.id },
+        data: {
+          title: section.title,
+          content: section.content,
+          contentHash: section.contentHash,
+          active: input.active ?? true,
+          externalUrl: input.externalUrl ?? existing.externalUrl,
+          externalRevision: input.externalRevision ?? existing.externalRevision,
+          sourceModifiedAt: input.sourceModifiedAt ?? existing.sourceModifiedAt,
+          lastSyncedAt: syncedAt ?? existing.lastSyncedAt,
+          version: { increment: 1 },
+        },
+      });
+      await this.snapshot(
+        doc,
+        'SYNC',
+        input.actorAdminId,
+        input.externalRevision,
       );
+      documents.push(doc);
+      updated += 1;
+    }
+
+    const stale = await this.prisma.botContextDocument.findMany({
+      where: {
+        source,
+        externalId,
+        sectionKey: { notIn: [...seenKeys] },
+        active: true,
+      },
+    });
+    let deactivated = 0;
+    for (const doc of stale) {
+      const removed = await this.prisma.botContextDocument.update({
+        where: { id: doc.id },
+        data: { active: false, version: { increment: 1 } },
+      });
+      await this.snapshot(removed, 'DELETE', input.actorAdminId);
+      deactivated += 1;
     }
 
     this.invalidateCache();
     this.logger.log(
-      `Imported ${created.length} section(s) into kind=${kind}${
-        input.externalId ? ` (drive file ${input.externalId})` : ''
-      }`,
+      `Imported ${sections.length} section(s) into kind=${kind}: ` +
+        `${created} created, ${updated} updated, ${deactivated} deactivated` +
+        `${input.externalId ? ` (drive file ${input.externalId})` : ''}`,
     );
-    return { created: created.length, documents: created };
+    return { created, updated, deactivated, documents };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Version history
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** Lists the immutable snapshots of a document, newest first. */
+  async listVersions(documentId: string): Promise<BrandContextVersionRecord[]> {
+    await this.findById(documentId);
+    return this.prisma.brandContextDocumentVersion.findMany({
+      where: { documentId },
+      orderBy: { version: 'desc' },
+    });
+  }
+
+  /**
+   * Restores a historical version by writing it as a new version. History is
+   * append-only: the bad state being replaced stays available for audit.
+   */
+  async restoreVersion(
+    documentId: string,
+    version: number,
+    actorAdminId?: string,
+  ): Promise<BrandContextDocumentRecord> {
+    await this.findById(documentId);
+    const snapshot = await this.prisma.brandContextDocumentVersion.findUnique({
+      where: { documentId_version: { documentId, version } },
+    });
+    if (!snapshot) {
+      throw new NotFoundException(
+        `Version ${version} of context document ${documentId} not found`,
+      );
+    }
+
+    const restored = await this.prisma.botContextDocument.update({
+      where: { id: documentId },
+      data: {
+        kind: snapshot.kind,
+        title: snapshot.title,
+        content: snapshot.content,
+        contentHash: snapshot.contentHash,
+        source: snapshot.source,
+        externalRevision: snapshot.externalRevision,
+        active: true,
+        version: { increment: 1 },
+      },
+    });
+    await this.snapshot(
+      restored,
+      'ROLLBACK',
+      actorAdminId,
+      snapshot.externalRevision ?? undefined,
+    );
+    this.invalidateCache();
+    this.logger.log(
+      `Context document ${documentId} restored from v${version} (now v${restored.version})`,
+    );
+    return restored;
   }
 
   /**
@@ -595,6 +833,90 @@ export class BrandContextService {
   // ───────────────────────────────────────────────────────────────────────────
   // Internals
   // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Writes an immutable snapshot of the current document state, then prunes
+   * old history for non-clinical kinds. Snapshotting must never block the
+   * write that already succeeded, so failures are logged and swallowed.
+   */
+  private async snapshot(
+    doc: BrandContextDocumentRecord,
+    changeType: BrandContextChangeType,
+    actorAdminId?: string,
+    externalRevision?: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.brandContextDocumentVersion.create({
+        data: {
+          documentId: doc.id,
+          version: doc.version,
+          kind: doc.kind,
+          title: doc.title,
+          content: doc.content,
+          contentHash: doc.contentHash ?? this.hashContent(doc.content),
+          source: doc.source,
+          externalRevision: externalRevision ?? doc.externalRevision ?? null,
+          changeType,
+          createdByAdminId: actorAdminId ?? null,
+        },
+      });
+      await this.pruneVersions(doc.id, doc.kind);
+    } catch (error) {
+      this.logger.warn(
+        `Could not snapshot context document ${doc.id} (v${doc.version}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private async pruneVersions(documentId: string, kind: string): Promise<void> {
+    if ((BRAND_CONTEXT_UNPRUNED_KINDS as readonly string[]).includes(kind)) {
+      return;
+    }
+    const total = await this.prisma.brandContextDocumentVersion.count({
+      where: { documentId },
+    });
+    if (total <= BRAND_CONTEXT_VERSION_RETENTION) return;
+
+    const excess = await this.prisma.brandContextDocumentVersion.findMany({
+      where: { documentId },
+      orderBy: { version: 'asc' },
+      take: total - BRAND_CONTEXT_VERSION_RETENTION,
+      select: { id: true },
+    });
+    await this.prisma.brandContextDocumentVersion.deleteMany({
+      where: { id: { in: excess.map((entry) => entry.id) } },
+    });
+  }
+
+  /** sha256 of normalised content — the gate for a version bump. */
+  private hashContent(content: string): string {
+    return createHash('sha256')
+      .update((content ?? '').replace(/\r\n/g, '\n').trim())
+      .digest('hex');
+  }
+
+  private hashKey(input: string): string {
+    return createHash('sha1').update(input).digest('hex');
+  }
+
+  private normalizeHeading(title: string): string {
+    return (title ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Stable identity for a manual import: re-importing a guide with the same
+   * kind and title updates its sections instead of creating duplicates.
+   */
+  private deriveImportKey(
+    kind: string,
+    title: string | undefined,
+    sections: Array<{ title: string }>,
+  ): string {
+    const basis = title ?? sections[0]?.title ?? 'guide';
+    return `manual:${this.hashKey(`${kind}|${basis}`)}`;
+  }
 
   /**
    * Reads every active document once, caching them (with term frequencies and
