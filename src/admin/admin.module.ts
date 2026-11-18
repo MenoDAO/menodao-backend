@@ -20,6 +20,8 @@ import { WhatsappClientsModule } from '../bot/whatsapp-clients/whatsapp-clients.
 import { AdminWhatsappController } from './whatsapp/whatsapp-instance.controller';
 import { AdminWhatsappService } from './whatsapp/whatsapp-instance.service';
 import { AdminBotChatController } from './whatsapp/bot-chat.controller';
+import { AdminUsersController } from './admin-users.controller';
+import { CapabilityGuard } from './guards/capabilities.guard';
 
 @Global()
 @Module({
@@ -35,6 +37,7 @@ import { AdminBotChatController } from './whatsapp/bot-chat.controller';
   ],
   controllers: [
     AdminController,
+    AdminUsersController,
     StatsController,
     UsersController,
     PaymentsController,
@@ -48,6 +51,7 @@ import { AdminBotChatController } from './whatsapp/bot-chat.controller';
     StatsService,
     AdminAuthGuard,
     RolesGuard,
+    CapabilityGuard,
     AdminWhatsappService,
   ],
   exports: [AdminService, AuditLogService, AdminAuthGuard],

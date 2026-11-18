@@ -23,6 +23,8 @@ import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './guards/roles.decorator';
 import { AuditLogService } from './audit-log.service';
+import { CapabilityGuard } from './guards/capabilities.guard';
+import { Capability } from './guards/capabilities';
 import {
   CreateBrandContextDocumentDto,
   ImportBrandContextDto,
@@ -46,7 +48,8 @@ interface AdminRequest extends ExpressRequest {
  */
 @ApiTags('Admin Bot Context')
 @Controller('admin/brand-context')
-@UseGuards(AdminAuthGuard, RolesGuard)
+@UseGuards(AdminAuthGuard, RolesGuard, CapabilityGuard)
+@Capability('brand_context.read')
 @ApiBearerAuth()
 export class AdminBrandContextController {
   constructor(
@@ -83,6 +86,7 @@ export class AdminBrandContextController {
   @Post('documents')
   @HttpCode(HttpStatus.CREATED)
   @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
   @ApiOperation({ summary: 'Create a context document' })
   async createDocument(
     @Body() dto: CreateBrandContextDocumentDto,
@@ -107,6 +111,7 @@ export class AdminBrandContextController {
 
   @Patch('documents/:id')
   @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
   @ApiOperation({ summary: 'Update a context document' })
   async updateDocument(
     @Param('id') id: string,
@@ -134,6 +139,7 @@ export class AdminBrandContextController {
   @Delete('documents/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
   @ApiOperation({ summary: 'Delete a context document' })
   async deleteDocument(@Param('id') id: string, @Request() req: AdminRequest) {
     await this.contextService.remove(id);
@@ -143,6 +149,7 @@ export class AdminBrandContextController {
   @Post('import')
   @HttpCode(HttpStatus.CREATED)
   @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
   @ApiOperation({
     summary:
       'Import a guide as retrievable sections (markdown headings become ' +
@@ -187,6 +194,7 @@ export class AdminBrandContextController {
   @Post('documents/:id/restore')
   @HttpCode(HttpStatus.OK)
   @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
   @ApiOperation({
     summary:
       'Restore a historical version as a new version (history is append-only)',
