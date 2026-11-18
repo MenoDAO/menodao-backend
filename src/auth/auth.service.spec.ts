@@ -21,6 +21,7 @@ describe('AuthService', () => {
       create: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     member: {
       findUnique: jest.fn(),
@@ -229,6 +230,15 @@ describe('AuthService', () => {
         ServiceUnavailableException,
       );
     });
+
+    it('should throttle OTP requests per phone', async () => {
+      mockPrismaService.oTPCode.count.mockResolvedValueOnce(10);
+
+      await expect(service.requestOtp('+254712345678', true)).rejects.toThrow(
+        'Too many verification code requests. Please try again later.',
+      );
+      expect(mockSmsService.sendOtp).not.toHaveBeenCalled();
+    });
   });
 
   describe('verifyOtp', () => {
@@ -337,6 +347,48 @@ describe('AuthService', () => {
         fullName: 'Test User',
         isVerified: true,
       });
+    });
+
+    it('should count a wrong code without burning it below the limit', async () => {
+      mockPrismaService.oTPCode.findFirst.mockResolvedValue({
+        id: 'otp-1',
+        code: '123456',
+        attempts: 1,
+        memberId: 'member-1',
+        member: mockMember,
+      });
+      mockPrismaService.oTPCode.update.mockResolvedValue({});
+
+      await expect(
+        service.verifyOtp('+254712345678', '000000'),
+      ).rejects.toThrow('Invalid or expired OTP');
+
+      expect(mockPrismaService.oTPCode.update).toHaveBeenCalledWith({
+        where: { id: 'otp-1' },
+        data: { attempts: 2 },
+      });
+      expect(mockPrismaService.member.update).not.toHaveBeenCalled();
+    });
+
+    it('should burn the code after five wrong guesses', async () => {
+      mockPrismaService.oTPCode.findFirst.mockResolvedValue({
+        id: 'otp-1',
+        code: '123456',
+        attempts: 4,
+        memberId: 'member-1',
+        member: mockMember,
+      });
+      mockPrismaService.oTPCode.update.mockResolvedValue({});
+
+      await expect(
+        service.verifyOtp('+254712345678', '000000'),
+      ).rejects.toThrow('Invalid or expired OTP');
+
+      expect(mockPrismaService.oTPCode.update).toHaveBeenCalledWith({
+        where: { id: 'otp-1' },
+        data: { attempts: 5, isUsed: true },
+      });
+      expect(mockPrismaService.member.update).not.toHaveBeenCalled();
     });
   });
 

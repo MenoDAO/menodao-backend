@@ -4,7 +4,7 @@ import type { VoicePipelineService } from '../voice-pipeline/voice-pipeline.serv
 import type { BotIdentityService } from '../identity/bot-identity.service';
 import type { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import type { BotChatService } from '../chat/bot-chat.service';
-import type { BotAccountService } from '../account/bot-account.service';
+import type { BotMemberDataService } from '../account/bot-member-data.service';
 import type { IWhatsappClient } from '../whatsapp-clients/whatsapp-provider.interface';
 import type { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import type { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
@@ -38,7 +38,7 @@ function build(env: Record<string, string> = {}) {
     {} as BotIdentityService,
     {} as BotOnboardingService,
     {} as BotChatService,
-    {} as BotAccountService,
+    {} as BotMemberDataService,
     {} as IWhatsappClient,
     {} as WhatsappApiClient,
     {} as FlaresendApiClient,
