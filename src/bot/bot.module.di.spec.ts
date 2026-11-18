@@ -6,6 +6,8 @@ import { CaptchaModule } from '../captcha/captcha.module';
 import { WebAuthnModule } from '../webauthn/webauthn.module';
 import { BotModule } from './bot.module';
 
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
+
 describe('BotModule dependency wiring', () => {
   it('compiles the module graph', async () => {
     const moduleRef = await Test.createTestingModule({
