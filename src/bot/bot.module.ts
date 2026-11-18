@@ -16,7 +16,7 @@ import { BrandContextService } from './context/brand-context.service';
 import { BotChatModule } from './chat/bot-chat.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
-import { BotAccountService } from './account/bot-account.service';
+import { BotMemberDataService } from './account/bot-member-data.service';
 import { AuthModule } from '../auth/auth.module';
 
 const logger = new Logger('BotModule');
@@ -73,7 +73,7 @@ const whatsappProviderFactory: Provider = {
     BotGatewayService,
     BotOnboardingService,
     BrandContextService,
-    BotAccountService,
+    BotMemberDataService,
   ],
   exports: [
     BotIdentityModule,

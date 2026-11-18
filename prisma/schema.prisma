@@ -58,6 +58,7 @@ model Member {
   botOnboardingSessions BotOnboardingSession[]
   botLlmLogs        BotLlmCallLog[]
   botChatThreads    BotChatThread[]
+  botDataAccessSessions BotDataAccessSession[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -73,6 +74,8 @@ model OTPCode {
   phoneNumber String
   expiresAt   DateTime
   isUsed      Boolean  @default(false)
+  /// Failed verification attempts. The code is burned after 5 wrong guesses.
+  attempts    Int      @default(0)
   createdAt   DateTime @default(now())
 
   member   Member? @relation(fields: [memberId], references: [id])
@@ -1218,6 +1221,54 @@ model BotMessageLog {
 
   @@index([memberId])
   @@index([createdAt])
+}
+
+/// OTP-gated access to a member's own records from WhatsApp. A session is
+/// created when a member asks for payments/appointments/visits/claims, then
+/// upgraded to VERIFIED for a short window after the SMS code is accepted.
+/// The scope is stored so a verification cannot be replayed for other data.
+model BotDataAccessSession {
+  id            String    @id @default(uuid())
+  memberId      String
+  member        Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  channel       String    @default("WHATSAPP")
+  /// ACCOUNT | PAYMENTS | APPOINTMENTS | VISITS | CLAIMS
+  scope         String
+  /// PENDING | VERIFIED | EXPIRED | LOCKED
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  requestedAt   DateTime  @default(now())
+  expiresAt     DateTime
+  verifiedUntil DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([memberId, createdAt])
+  @@index([status, expiresAt])
+  @@index([memberId, status])
+}
+
+/// Append-only record of every sensitive-data access attempt, for both members
+/// and (later) admins. Deliberately not linked by FK so the trail survives
+/// account deletion and cannot be cascaded away.
+model SensitiveDataAccessLog {
+  id        String   @id @default(uuid())
+  /// MEMBER | ADMIN
+  actorType String
+  actorId   String
+  memberId  String?
+  /// ACCOUNT | PAYMENTS | APPOINTMENTS | VISITS | CLAIMS | MEMBER_RECORD
+  scope     String
+  /// WHATSAPP | ADMIN_PORTAL
+  channel   String
+  /// OTP_SENT | GRANTED | DENIED | RATE_LIMITED | LOCKED
+  outcome   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([memberId, createdAt])
+  @@index([outcome, createdAt])
 }
 
 /// A WhatsApp instance the bot can send from. Mirrors a FlareSend instance and

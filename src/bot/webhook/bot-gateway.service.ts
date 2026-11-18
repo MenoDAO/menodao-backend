@@ -12,7 +12,7 @@ import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
-import { BotAccountService } from '../account/bot-account.service';
+import { BotMemberDataService } from '../account/bot-member-data.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -69,8 +69,6 @@ export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
   private readonly recentWaboxappInboundMessages = new Map<string, number>();
   private readonly recentFlaresendInboundMessages = new Map<string, number>();
-  /** memberId -> phoneNumber for the in-flight OTP-gated account-info lookup. */
-  private readonly pendingAccountOtp = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -79,7 +77,7 @@ export class BotGatewayService {
     private readonly identity: BotIdentityService,
     private readonly onboardingService: BotOnboardingService,
     private readonly chatService: BotChatService,
-    private readonly botAccountService: BotAccountService,
+    private readonly memberDataService: BotMemberDataService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -418,23 +416,26 @@ export class BotGatewayService {
       }
     }
 
-    // Secure account-info lookup from the bot: OTP-gated via the SMS auth flow.
-    if (this.pendingAccountOtp.has(member.id)) {
-      const code = (messageText || '').trim();
-      const result = await this.botAccountService.respondWithAccountInfo(
-        member.phoneNumber,
-        code,
+    // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
+    // verification code only while a pending challenge exists for this member.
+    const trimmed = (messageText || '').trim();
+    if (
+      /^\d{6}$/.test(trimmed) &&
+      (await this.memberDataService.hasPendingVerification(member.id))
+    ) {
+      const result = await this.memberDataService.verify(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        trimmed,
       );
-      this.pendingAccountOtp.delete(member.id);
       await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
       return;
     }
 
-    const wantsAccountInfo = this.isAccountInfoRequest(messageText);
-    if (wantsAccountInfo) {
-      this.pendingAccountOtp.set(member.id, member.phoneNumber);
-      const reply = await this.botAccountService.requestAccountOtp(
-        member.phoneNumber,
+    const scope = this.memberDataService.detectScope(messageText);
+    if (scope) {
+      const reply = await this.memberDataService.handleRequest(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        scope,
       );
       await this.sendTextSafely(member.phoneNumber, reply, chatContext);
       return;
@@ -511,27 +512,6 @@ export class BotGatewayService {
     });
     await this.sendTextSafely(recipientPhone, replyText, chatContext);
     await this.onboardingService.complete(memberId);
-  }
-
-  /**
-   * True when the member is asking for their own personal account information
-   * from the bot (subscription / membership / profile summary).
-   */
-  private isAccountInfoRequest(messageText: string): boolean {
-    const text = (messageText || '').toLowerCase();
-    if (!text) return false;
-    const patterns = [
-      /\baccount info\b/,
-      /\bmy account\b/,
-      /\bmy profile\b/,
-      /\bmy subscription\b/,
-      /\bmy plan\b/,
-      /\bmembership details\b/,
-      /\bcheck my (account|subscription|plan|membership|details|info)\b/,
-      /\baccount status\b/,
-      /\bhow (do|does) (i|we) (look|stand|compare) (in|to) (the )?(app|website|platform)\b/,
-    ];
-    return patterns.some((p) => p.test(text));
   }
 
   private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {

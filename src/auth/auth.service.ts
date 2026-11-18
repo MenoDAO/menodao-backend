@@ -4,13 +4,22 @@ import {
   UnauthorizedException,
   BadRequestException,
   ServiceUnavailableException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
+import { randomInt } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
 import { ReferralService } from '../referrals/referral.service';
 import { CareEventsService } from '../care-intelligence/care-events.service';
 import { CareEventType } from '@prisma/client';
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+/** Per-phone SMS request cap. Protects against SMS-cost abuse and spam. */
+const MAX_OTP_REQUESTS_PER_HOUR = 10;
+/** Wrong guesses allowed before a code is burned. */
+const MAX_OTP_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
@@ -26,7 +35,7 @@ export class AuthService {
    * Generate a 6-digit OTP code
    */
   private generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   /**
@@ -62,9 +71,22 @@ export class AuthService {
     // Normalize phone number (ensure it starts with country code)
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
 
+    // Throttle per phone: an attacker who knows a number must not be able to
+    // trigger unlimited SMS sends (cost) or farm fresh codes to guess.
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recentRequests = await this.prisma.oTPCode.count({
+      where: { phoneNumber: normalizedPhone, createdAt: { gte: hourAgo } },
+    });
+    if (recentRequests >= MAX_OTP_REQUESTS_PER_HOUR) {
+      throw new HttpException(
+        'Too many verification code requests. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     // Generate OTP
     const code = this.generateOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
     // Invalidate any existing unused OTPs for this number
     await this.prisma.oTPCode.updateMany({
@@ -172,16 +194,19 @@ export class AuthService {
   ): Promise<{ accessToken: string; member: any }> {
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
 
-    // Find valid OTP
+    // Find the newest live code for this phone. Compare the submitted code
+    // ourselves so a wrong guess can be counted and the code burned after
+    // MAX_OTP_ATTEMPTS. Without this, the public verify endpoint would allow
+    // unlimited guesses against a 6-digit code.
     const otpRecord = await this.prisma.oTPCode.findFirst({
       where: {
         phoneNumber: normalizedPhone,
-        code,
         isUsed: false,
         expiresAt: {
           gt: new Date(),
         },
       },
+      orderBy: { createdAt: 'desc' },
       include: {
         member: {
           include: {
@@ -192,6 +217,18 @@ export class AuthService {
     });
 
     if (!otpRecord || !otpRecord.memberId) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
+    if (otpRecord.code !== code) {
+      const attempts = otpRecord.attempts + 1;
+      await this.prisma.oTPCode.update({
+        where: { id: otpRecord.id },
+        data: {
+          attempts,
+          ...(attempts >= MAX_OTP_ATTEMPTS ? { isUsed: true } : {}),
+        },
+      });
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
@@ -274,7 +311,9 @@ export class AuthService {
   /**
    * Re-issue JWT after CAPTCHA verification (for sessions created before CAPTCHA rollout).
    */
-  async refreshCaptchaSession(memberId: string): Promise<{ accessToken: string }> {
+  async refreshCaptchaSession(
+    memberId: string,
+  ): Promise<{ accessToken: string }> {
     const member = await this.prisma.member.findUnique({
       where: { id: memberId },
     });
