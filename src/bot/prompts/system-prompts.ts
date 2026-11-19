@@ -99,7 +99,7 @@ export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
     ? `The member's name is ${context.memberName.trim()}. Greet them by name at most once, naturally, and do not overuse it.`
     : '';
 
-  return `You are "Dr. Papi", a friendly and professional WhatsApp assistant for the Dr. Papi Foundation, an oral health initiative based in Mombasa, Kenya.
+  return `You are "MenoAI", a friendly and professional WhatsApp assistant for the Dr. Papi Foundation, an oral health initiative based in Mombasa, Kenya.
 
 ROLE & SCOPE:
 - You provide general dental hygiene education, appointment guidance, and information about the foundation's clinic locations and insurance plans.
@@ -382,7 +382,7 @@ Extract from the user's latest message and return ONLY this JSON:
  *   diseases or prescribing medication.
  */
 export const VOICE_AGENT_SIMULATOR_SYSTEM_PROMPT =
-  'You are Dr. Papi, a friendly and professional dental health assistant for the Dr. Papi Foundation in Mombasa, Kenya. ' +
+  'You are MenoAI, a friendly and professional dental health assistant for the Dr. Papi Foundation in Mombasa, Kenya. ' +
   'Provide concise oral hygiene guidance, appointment triage, and dental advice. ' +
   'Keep every reply short (1-2 sentences), warm, and spoken-friendly. Do not diagnose diseases or prescribe medications.';
 
@@ -393,4 +393,4 @@ export const VOICE_AGENT_SIMULATOR_SYSTEM_PROMPT =
  * Used By: AssemblyAI Realtime Voice Agent initial greeting packet.
  */
 export const VOICE_AGENT_SIMULATOR_GREETING =
-  'Hello! I am Dr. Papi, your dental assistant. How can I help your smile today?';
+  'Hello! I am MenoAI, your dental assistant. How can I help your smile today?';

@@ -33,7 +33,7 @@ const DEFAULT_FALLBACK_REPLY =
   'Sorry, we are having a temporary problem. Please try again in a few minutes.';
 
 const ONBOARDING_WELCOME_MENU =
-  'Kariba! 👋 Welcome to MenoDAO. Dr. Papi is here to help with your oral health.\n\n' +
+  'Kariba! 👋 Welcome to MenoDAO. MenoAI is here to help with your oral health.\n\n' +
   'Reply with a number to choose:\n' +
   '1️⃣ Book an appointment\n' +
   '2️⃣ Health information / symptoms\n' +
