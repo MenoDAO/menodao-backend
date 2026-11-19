@@ -333,35 +333,78 @@ export class BotMemberDataService {
   }
 
   private async buildPaymentsReply(memberId: string): Promise<string> {
-    const [subscription, contributions] = await Promise.all([
-      this.prisma.subscription.findUnique({
-        where: { memberId },
-        select: {
-          tier: true,
-          monthlyAmount: true,
-          paymentFrequency: true,
-          isActive: true,
-          startDate: true,
-          subscriptionStartDate: true,
-        },
-      }),
-      this.prisma.contribution.findMany({
-        where: { memberId, status: 'COMPLETED' },
-        orderBy: { month: 'desc' },
-        take: CONSISTENCY_MONTHS,
-        select: { month: true, amount: true, confirmedAt: true },
-      }),
-    ]);
+    const [subscription, recent, completed, notCompletedCount] =
+      await Promise.all([
+        this.prisma.subscription.findUnique({
+          where: { memberId },
+          select: {
+            tier: true,
+            monthlyAmount: true,
+            paymentFrequency: true,
+            isActive: true,
+            startDate: true,
+            subscriptionStartDate: true,
+          },
+        }),
+        // Recent rows of any status, so a failed or pending attempt is still
+        // visible when a member asks "have I ever paid?".
+        this.prisma.contribution.findMany({
+          where: { memberId },
+          orderBy: [{ month: 'desc' }, { createdAt: 'desc' }],
+          take: 6,
+          select: {
+            month: true,
+            amount: true,
+            status: true,
+            confirmedAt: true,
+          },
+        }),
+        this.prisma.contribution.findMany({
+          where: { memberId, status: 'COMPLETED' },
+          orderBy: { month: 'desc' },
+          take: CONSISTENCY_MONTHS * 2,
+          select: { month: true, amount: true, confirmedAt: true },
+        }),
+        this.prisma.contribution.count({
+          where: { memberId, status: { not: 'COMPLETED' } },
+        }),
+      ]);
 
-    if (contributions.length === 0) {
+    if (recent.length === 0) {
       return (
-        'I do not see any completed membership payments on your account yet. ' +
+        'I do not see any membership payments on your account yet. ' +
         'If you have just paid, give it a few minutes and ask again.'
       );
     }
 
+    const lines = recent.map(
+      (item) =>
+        `• ${this.monthLabel(item.month)} — ${this.money(item.amount)} — ${this.titleCase(
+          item.status.replace(/_/g, ' ').toLowerCase(),
+        )}`,
+    );
+
+    if (completed.length === 0) {
+      const parts = [
+        'Here is your membership payment history:',
+        '',
+        ...lines,
+        '',
+        'I do not see any completed membership payments on your account yet.',
+      ];
+      if (notCompletedCount > 0) {
+        parts.push(
+          `Attempts not completed: ${notCompletedCount}. If a payment failed, you can retry in the app or ask me how to pay.`,
+        );
+      }
+      if (subscription) {
+        parts.push(this.membershipLine(subscription));
+      }
+      return parts.join('\n');
+    }
+
     const paidMonths = new Set(
-      contributions.map((item) => this.monthKey(item.month)),
+      completed.map((item) => this.monthKey(item.month)),
     );
     const now = new Date();
     const windowStart = new Date(
@@ -388,16 +431,9 @@ export class BotMemberDataService {
       paidMonths.has(month),
     );
     const missed = expectedMonths.filter((month) => !paidMonths.has(month));
-    const totalInWindow = contributions
+    const totalInWindow = completed
       .filter((item) => expectedMonths.includes(this.monthKey(item.month)))
       .reduce((sum, item) => sum + item.amount, 0);
-
-    const lines = contributions
-      .slice(0, 6)
-      .map(
-        (item) =>
-          `• ${this.monthLabel(item.month)} — ${this.money(item.amount)} — Completed`,
-      );
 
     const consistency =
       expectedMonths.length > 0
@@ -414,18 +450,32 @@ export class BotMemberDataService {
       `Consistency: ${consistency}.`,
     ];
     if (missed.length > 0) {
-      parts.push(`Months without a completed payment: ${missed.join(', ')}.`);
+      const missedLabel =
+        missed.length > 6
+          ? `${missed.slice(0, 6).join(', ')} and ${missed.length - 6} more`
+          : missed.join(', ');
+      parts.push(`Months without a completed payment: ${missedLabel}.`);
+    }
+    if (notCompletedCount > 0) {
+      parts.push(`Other attempts not completed: ${notCompletedCount}.`);
     }
     if (subscription) {
-      const frequency =
-        subscription.paymentFrequency === 'ANNUAL' ? 'year' : 'month';
-      parts.push(
-        `Membership: ${this.titleCase(subscription.tier)} — ${
-          subscription.isActive ? 'Active' : 'Not active'
-        } · ${this.money(subscription.monthlyAmount)} per ${frequency}.`,
-      );
+      parts.push(this.membershipLine(subscription));
     }
     return parts.join('\n');
+  }
+
+  private membershipLine(subscription: {
+    tier: string;
+    monthlyAmount: number;
+    paymentFrequency: string;
+    isActive: boolean;
+  }): string {
+    const frequency =
+      subscription.paymentFrequency === 'ANNUAL' ? 'year' : 'month';
+    return `Membership: ${this.titleCase(subscription.tier)} — ${
+      subscription.isActive ? 'Active' : 'Not active'
+    } · ${this.money(subscription.monthlyAmount)} per ${frequency}.`;
   }
 
   private async buildAppointmentsReply(memberId: string): Promise<string> {
