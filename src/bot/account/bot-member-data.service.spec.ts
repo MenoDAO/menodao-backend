@@ -113,7 +113,7 @@ describe('BotMemberDataService', () => {
       const reply = await service.handleRequest(member, 'PAYMENTS');
 
       expect(auth.requestOtp).not.toHaveBeenCalled();
-      expect(reply).toContain('do not see any completed membership payments');
+      expect(reply).toContain('do not see any membership payments');
     });
 
     it('reuses a live pending challenge instead of sending another SMS', async () => {
@@ -155,6 +155,7 @@ describe('BotMemberDataService', () => {
         {
           month: new Date(),
           amount: 500,
+          status: 'COMPLETED',
           confirmedAt: new Date(),
         },
       ]);
@@ -208,7 +209,7 @@ describe('BotMemberDataService', () => {
         scope: 'PAYMENTS',
       });
       prisma.contribution.findMany.mockResolvedValue([
-        { month, amount: 500, confirmedAt: month },
+        { month, amount: 500, status: 'COMPLETED', confirmedAt: month },
       ]);
       prisma.subscription.findUnique.mockResolvedValue({
         tier: 'SILVER',
@@ -223,6 +224,41 @@ describe('BotMemberDataService', () => {
 
       expect(reply).toContain('1 of 1 months paid (100%)');
       expect(reply).not.toContain(member.phoneNumber);
+    });
+
+    it('shows failed attempts even when no payment completed', async () => {
+      const month = new Date(Date.UTC(2026, 1, 1));
+      const failed = {
+        month,
+        amount: 525,
+        status: 'FAILED',
+        confirmedAt: null,
+      };
+      prisma.botDataAccessSession.findFirst.mockResolvedValue({
+        id: 'verified-1',
+        status: 'VERIFIED',
+        scope: 'PAYMENTS',
+      });
+      prisma.contribution.findMany.mockImplementation(
+        (args: { where?: { status?: string } }) =>
+          Promise.resolve(args.where?.status === 'COMPLETED' ? [] : [failed]),
+      );
+      prisma.contribution.count.mockResolvedValue(2);
+      prisma.subscription.findUnique.mockResolvedValue({
+        tier: 'BRONZE',
+        monthlyAmount: 525,
+        paymentFrequency: 'MONTHLY',
+        isActive: false,
+        startDate: month,
+        subscriptionStartDate: month,
+      });
+
+      const reply = await service.handleRequest(member, 'PAYMENTS');
+
+      expect(reply).toContain('KES 525');
+      expect(reply).toContain('Failed');
+      expect(reply).toContain('any completed membership payments');
+      expect(reply).toContain('Attempts not completed: 2');
     });
 
     it('lists appointments with clinic and status but no clinical notes', async () => {
