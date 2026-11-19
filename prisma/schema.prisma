@@ -1440,8 +1440,10 @@ model BotContextDocument {
   title     String?
   content   String   @db.Text
   active    Boolean  @default(true)
-  // Where the document came from: MANUAL (written in the admin dashboard) or
-  // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id.
+  // Where the document came from: MANUAL (written in the admin dashboard),
+  // UPLOAD (extracted from a file the admin dropped in the dashboard) or
+  // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id
+  // for Drive documents and the upload's identity for uploaded ones.
   source      String    @default("MANUAL")
   // Source-document identity: the Drive file id for GOOGLE_DRIVE documents, or
   // a stable derived key for manual imports (so re-importing a guide updates
@@ -1462,11 +1464,59 @@ model BotContextDocument {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  // Set when this section was produced by extracting an uploaded file; traces
+  // the retrievable text back to the raw bytes held in S3.
+  fileId String?
+  file   BotContextFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
   versions BrandContextDocumentVersion[]
 
   @@unique([source, externalId, sectionKey])
   @@index([kind, active])
   @@index([source, externalId])
+  @@index([fileId])
+}
+
+/**
+ * A file the admin uploaded to the brand context library.
+ *
+ * The original bytes are stored untouched in S3 (`raw/…`), and the extracted,
+ * retrieval-friendly text is stored beside them (`text/…`) so re-processing a
+ * guide never has to re-run the expensive PDF/DOCX extraction. The sections
+ * that actually feed retrieval live on BotContextDocument, keyed back to this
+ * row through `fileId`.
+ */
+model BotContextFile {
+  id        String @id @default(uuid())
+  filename  String
+  // Original mime type reported by the browser, kept for diagnostics only:
+  // the extension decides how the bytes are parsed.
+  contentType String
+  byteSize    Int
+  sha256      String
+  // S3 key of the untouched original: raw/<sha256>/<filename>
+  storageKey  String
+  // S3 key of the extracted markdown: text/<sha256>/<filename>.md
+  textStorageKey String?
+  // UPLOADED | EXTRACTED | FAILED
+  status      String   @default("UPLOADED")
+  // Why extraction failed (unsupported type, no extractable text, corrupt).
+  extractError String?
+  extractedAt DateTime?
+  // How many retrievable sections this upload produced.
+  sectionCount Int     @default(0)
+  // Defaults applied to every section the file produced.
+  kind        String   @default("BIBLE")
+  title       String?
+  uploadedByAdminId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents BotContextDocument[]
+
+  @@index([sha256])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model BrandContextDocumentVersion {

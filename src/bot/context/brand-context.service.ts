@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -413,7 +418,9 @@ export class BrandContextService {
   async create(input: {
     kind?: string;
     title?: string;
-    content: string;
+    // Optional at the API level so the admin form can be submitted with files
+    // instead of typed text; a document with nothing in it is still rejected.
+    content?: string;
     active?: boolean;
     source?: string;
     externalId?: string;
@@ -424,12 +431,18 @@ export class BrandContextService {
     lastSyncedAt?: Date;
     actorAdminId?: string;
   }): Promise<BrandContextDocumentRecord> {
+    const content = (input.content ?? '').trim();
+    if (!content) {
+      throw new BadRequestException(
+        'A context document needs content — type it here, or upload a file instead.',
+      );
+    }
     const created = await this.prisma.botContextDocument.create({
       data: {
         kind: input.kind ?? BRAND_CONTEXT_DEFAULT_KIND,
         title: input.title ?? null,
-        content: input.content,
-        contentHash: this.hashContent(input.content),
+        content,
+        contentHash: this.hashContent(content),
         active: input.active ?? true,
         source: input.source ?? 'MANUAL',
         externalId: input.externalId ?? null,
@@ -542,13 +555,22 @@ export class BrandContextService {
   async importSections(input: {
     kind?: string;
     title?: string;
-    content: string;
+    content?: string;
+    /**
+     * Pre-split sections. File ingestion supplies these directly (an archive
+     * expands to several documents, each with its own fallback title), while a
+     * pasted guide is split from `content` instead.
+     */
+    sections?: Array<{ title: string; content: string }>;
     active?: boolean;
     source?: string;
     externalId?: string;
     externalUrl?: string;
     externalRevision?: string;
     sourceModifiedAt?: Date;
+    // Set when the sections came from an uploaded file, so the retrievable
+    // text traces back to the raw bytes in S3.
+    fileId?: string;
     actorAdminId?: string;
   }): Promise<{
     created: number;
@@ -558,7 +580,15 @@ export class BrandContextService {
   }> {
     const kind = input.kind ?? BRAND_CONTEXT_DEFAULT_KIND;
     const source = input.source ?? 'MANUAL';
-    const sections = this.splitIntoSections(input.content, input.title);
+    const sections =
+      input.sections && input.sections.length > 0
+        ? input.sections
+        : this.splitIntoSections(input.content ?? '', input.title);
+    if (sections.length === 0) {
+      throw new BadRequestException(
+        'Nothing to import — the document has no content.',
+      );
+    }
     const externalId =
       input.externalId ?? this.deriveImportKey(kind, input.title, sections);
     const syncedAt = source === 'GOOGLE_DRIVE' ? new Date() : null;
@@ -609,6 +639,7 @@ export class BrandContextService {
             externalRevision: input.externalRevision ?? null,
             sourceModifiedAt: input.sourceModifiedAt ?? null,
             lastSyncedAt: syncedAt,
+            fileId: input.fileId ?? null,
           },
         });
         await this.snapshot(doc, 'CREATE', input.actorAdminId);
@@ -637,6 +668,7 @@ export class BrandContextService {
           externalRevision: input.externalRevision ?? existing.externalRevision,
           sourceModifiedAt: input.sourceModifiedAt ?? existing.sourceModifiedAt,
           lastSyncedAt: syncedAt ?? existing.lastSyncedAt,
+          ...(input.fileId ? { fileId: input.fileId } : {}),
           version: { increment: 1 },
         },
       });
@@ -793,10 +825,24 @@ export class BrandContextService {
     fallbackTitle?: string,
   ): Array<{ title: string; content: string }> {
     const target = 1_200;
-    const paragraphs = text
-      .split(/\n\s*\n/)
-      .map((p) => p.trim())
-      .filter(Boolean);
+    const split = (raw: string, separator: RegExp): string[] =>
+      raw
+        .split(separator)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+    // Guides typed into the dashboard have blank lines between paragraphs.
+    // PDF extraction usually does not: it emits one visual line per newline,
+    // so splitting on blank lines alone would yield a single document the
+    // size of the whole file, which BM25 cannot rank usefully. Fall back to
+    // line granularity, then break up anything still over the target.
+    let paragraphs = split(text, /\n\s*\n/);
+    if (paragraphs.length === 1 && (paragraphs[0]?.length ?? 0) > target) {
+      paragraphs = split(text, /\n/);
+    }
+    paragraphs = paragraphs.flatMap((paragraph) =>
+      paragraph.length > target * 2 ? split(paragraph, /\n/) : [paragraph],
+    );
 
     const chunks: Array<{ title: string; content: string }> = [];
     let buffer: string[] = [];

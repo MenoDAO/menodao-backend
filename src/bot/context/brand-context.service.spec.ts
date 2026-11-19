@@ -274,6 +274,34 @@ describe('BrandContextService (retrieval + administration)', () => {
       expect(sections.length).toBeGreaterThan(1);
       expect(sections[0].title).toContain('Guide');
     });
+
+    it('splits wall-of-text into retrievable chunks when there are no blank lines', () => {
+      // PDF extraction emits one visual line per newline and no blank lines, so
+      // treating that as "one paragraph" would produce a single document the size
+      // of the file — unretrievable, and useless for a top-K search.
+      const lines = Array.from(
+        { length: 40 },
+        (_, i) =>
+          `Sentence ${i} describes a distinct topic for the assistant to reason about.`,
+      ).join('\n');
+      const sections = svc.splitIntoSections(lines, 'Long Guide');
+
+      expect(sections.length).toBeGreaterThan(1);
+      // Chunks past the first are numbered so heading-less content stays distinct.
+      expect(sections[0].title).toContain('Long Guide');
+      for (const section of sections) {
+        expect(section.content.length).toBeLessThanOrEqual(1_200 * 2);
+      }
+    });
+
+    it('keeps a short heading-less document as a single section', () => {
+      const sections = svc.splitIntoSections(
+        'Just one short sentence about everything.',
+        'Brief',
+      );
+      expect(sections).toHaveLength(1);
+      expect(sections[0].content).toContain('Just one short sentence');
+    });
   });
 
   describe('versioning and import upsert', () => {
