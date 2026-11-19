@@ -62,6 +62,18 @@ export class BotMemberDataService {
     private readonly auth: AuthService,
   ) {}
 
+  /**
+   * Reuse the member-safe reply builders for an already-authorised caller
+   * (admin WhatsApp access). The output contains no clinical notes, staff names
+   * or full identifiers, exactly as for the member's own request.
+   */
+  async buildScopedReply(
+    memberId: string,
+    scope: MemberDataScope,
+  ): Promise<string> {
+    return this.buildReply(memberId, scope);
+  }
+
   /** Maps a member message to the narrowest data scope it asks for. */
   detectScope(messageText: string): MemberDataScope | null {
     const text = (messageText || '').toLowerCase();

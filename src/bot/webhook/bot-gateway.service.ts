@@ -13,6 +13,7 @@ import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
+import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -78,6 +79,7 @@ export class BotGatewayService {
     private readonly onboardingService: BotOnboardingService,
     private readonly chatService: BotChatService,
     private readonly memberDataService: BotMemberDataService,
+    private readonly adminAccess: AdminWhatsappAccessService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -375,6 +377,28 @@ export class BotGatewayService {
     } catch {
       /* non-fatal */
     }
+
+    // An admin can use the same phone as their member account. Admin mode is
+    // explicit (`ADMIN`), and once entered all follow-ups stay in admin mode
+    // until EXIT/expiry. This runs before member resolution so an admin phone
+    // never creates a member stub or enters member onboarding.
+    const admin = await this.adminAccess.findAdminBySender(
+      senderId,
+      fallbackPhone,
+    );
+    if (admin) {
+      const wantsAdminMode = this.adminAccess.isAdminModeCommand(messageText);
+      const hasAdminSession =
+        wantsAdminMode || (await this.adminAccess.hasActiveSession(admin.id));
+      if (hasAdminSession) {
+        const reply = await this.adminAccess.handleMessage(admin, messageText);
+        // Admin conversations are intentionally not written to the member chat
+        // transcript; SensitiveDataAccessLog carries the access audit.
+        await this.sendTextSafely(admin.phoneNumber, reply);
+        return;
+      }
+    }
+
     const member = await this.identity.resolveMember({
       phoneDigitsFallback: fallbackPhone,
       whatsappId: senderId,
