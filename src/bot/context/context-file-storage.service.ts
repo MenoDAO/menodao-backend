@@ -32,10 +32,11 @@ export class ContextFileStorageService {
   private readonly bucket: string;
 
   constructor(config: ConfigService) {
-    const region =
-      config.get<string>('AWS_REGION') ||
-      config.get<string>('AWS_DEFAULT_REGION') ||
-      'us-west-2';
+    // Deliberately NOT the shared AWS_REGION: that variable is set to the SES
+    // region (us-east-1) for this service, while the bucket lives in us-west-2.
+    // Pointing the S3 client at the wrong region yields a PermanentRedirect
+    // ("addressed using the specified endpoint") on every write.
+    const region = config.get<string>('BRAND_CONTEXT_S3_REGION') || 'us-west-2';
     this.bucket =
       config.get<string>('BRAND_CONTEXT_S3_BUCKET') ||
       BRAND_CONTEXT_S3_BUCKET_DEFAULT;
