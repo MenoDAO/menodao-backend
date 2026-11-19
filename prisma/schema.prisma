@@ -1261,7 +1261,7 @@ model SensitiveDataAccessLog {
   scope     String
   /// WHATSAPP | ADMIN_PORTAL
   channel   String
-  /// OTP_SENT | GRANTED | DENIED | RATE_LIMITED | LOCKED
+  /// OTP_SENT | OTP_VERIFIED | GRANTED | DENIED | RATE_LIMITED | LOCKED
   outcome   String
   metadata  Json?
   createdAt DateTime @default(now())
@@ -1269,6 +1269,44 @@ model SensitiveDataAccessLog {
   @@index([actorId, createdAt])
   @@index([memberId, createdAt])
   @@index([outcome, createdAt])
+}
+
+/// An admin's short-lived WhatsApp data-access session. An admin phone can be
+/// in member mode or admin mode; this session binds the admin to one member at
+/// a time, so switching member always requires a fresh SMS OTP.
+model AdminWhatsappSession {
+  id            String    @id @default(uuid())
+  adminId       String
+  adminPhone    String
+  memberId      String?
+  /// AWAITING_MEMBER | PENDING_OTP | VERIFIED | LOCKED | ENDED
+  status        String    @default("AWAITING_MEMBER")
+  attempts      Int       @default(0)
+  requestedAt   DateTime  @default(now())
+  expiresAt     DateTime?
+  verifiedUntil DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([adminId, createdAt])
+  @@index([adminId, status])
+  @@index([status, expiresAt])
+}
+
+/// Admin OTP codes are kept separate from member OTPCode rows so a member login
+/// can never invalidate an admin second factor (and vice versa).
+model AdminOtpCode {
+  id          String   @id @default(uuid())
+  adminId     String
+  phoneNumber String
+  code        String
+  expiresAt   DateTime
+  isUsed      Boolean  @default(false)
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([phoneNumber, code])
 }
 
 /// A WhatsApp instance the bot can send from. Mirrors a FlareSend instance and

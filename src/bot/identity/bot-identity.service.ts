@@ -137,6 +137,22 @@ export class BotIdentityService {
   }
 
   /**
+   * Read-only lookup by phone for authorised staff. Unlike resolveMember this
+   * never creates a stub or links a WhatsApp id; it returns null when there is
+   * no exact or unambiguous suffix match.
+   */
+  async lookupMemberByPhone(phone: string): Promise<ResolvedBotMember | null> {
+    const e164 = this.normalizeToE164(phone);
+    if (!e164) return null;
+    return (
+      (await this.prisma.member.findUnique({
+        where: { phoneNumber: e164 },
+        select: MEMBER_SELECT,
+      })) ?? (await this.findByPhoneSuffix(e164))
+    );
+  }
+
+  /**
    * Last-resort phone match: a Member stored as "0712 345 678" or with a
    * different country-code formatting still has the same trailing digits as
    * the WhatsApp sender. Matching the last nine avoids telling a real member
