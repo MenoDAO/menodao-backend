@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import {
   existsSync,
@@ -15,6 +16,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import { FOUNDATION_PLAYBACK_RATES } from './foundation-settings.dto';
 
 export type FounderPhotoMeta = {
   hasPhoto: boolean;
@@ -41,6 +43,57 @@ export type FoundationImpact = {
   counties: number;
 };
 
+export type FoundationHeroContent = {
+  videoUrl: string | null;
+  posterUrl: string | null;
+  playbackRate: number;
+  autoplay: boolean;
+  muted: boolean;
+  loop: boolean;
+};
+
+export type FoundationFounderVideo = {
+  videoUrl: string | null;
+  posterUrl: string | null;
+  caption: string | null;
+  playbackRate: number;
+  muted: boolean;
+};
+
+export type FoundationMediaItem = {
+  id: string;
+  kind: 'image' | 'video';
+  src: string;
+  posterUrl: string | null;
+  alt: string | null;
+  altSw: string | null;
+  caption: string | null;
+  captionSw: string | null;
+  href: string | null;
+  playbackRate: number;
+};
+
+export type FoundationCopyLocale = {
+  eyebrow: string | null;
+  h1: string | null;
+  subhead: string | null;
+  primaryCta: string | null;
+  secondaryCta: string | null;
+  challengeTitle: string | null;
+  pillarsTitle: string | null;
+  letterEyebrow: string | null;
+  letterTitle: string | null;
+  letterBody: string | null;
+  letterSummary: string | null;
+  involvedTitle: string | null;
+  involvedBody: string | null;
+};
+
+export type FoundationContentCopy = {
+  en: FoundationCopyLocale;
+  sw: FoundationCopyLocale;
+};
+
 type ClinicOverride = {
   displayName: string | null;
   location: string | null;
@@ -58,6 +111,30 @@ type FoundationSettings = {
     counties: number | null;
   };
   clinicOverrides: Record<string, ClinicOverride>;
+  hero: FoundationHeroContent;
+  founderVideo: FoundationFounderVideo;
+  mediaItems: FoundationMediaItem[];
+  copy: FoundationContentCopy;
+};
+
+type UpdateFoundationSettingsInput = {
+  whatsappNumber?: string | null;
+  anchorClinicId?: string | null;
+  clinicalClassification?: string | null;
+  impact?: Partial<FoundationSettings['impact']>;
+  clinics?: {
+    id: string;
+    displayName?: string | null;
+    location?: string | null;
+    hidden?: boolean;
+  }[];
+  hero?: Partial<FoundationHeroContent>;
+  founderVideo?: Partial<FoundationFounderVideo>;
+  mediaItems?: Partial<FoundationMediaItem>[];
+  copy?: {
+    en?: Partial<FoundationCopyLocale>;
+    sw?: Partial<FoundationCopyLocale>;
+  };
 };
 
 type ImageFile = {
@@ -80,11 +157,29 @@ const ANCHOR_FALLBACK_ID = 'mikindani';
 const ANCHOR_FALLBACK_NAME = 'Mikindani Hospital Dental Unit';
 const ANCHOR_FALLBACK_LOCATION = 'Mikindani, Mombasa, Kenya';
 const SETTINGS_FILE = 'settings.json';
+const CONTENT_ROW_ID = 'primary';
+const MAX_MEDIA_ITEMS = 12;
 const EMPTY_IMPACT = {
   registeredMembers: null,
   contributingMembers: null,
   approvedFacilities: null,
   counties: null,
+};
+
+const EMPTY_COPY: FoundationCopyLocale = {
+  eyebrow: null,
+  h1: null,
+  subhead: null,
+  primaryCta: null,
+  secondaryCta: null,
+  challengeTitle: null,
+  pillarsTitle: null,
+  letterEyebrow: null,
+  letterTitle: null,
+  letterBody: null,
+  letterSummary: null,
+  involvedTitle: null,
+  involvedBody: null,
 };
 
 const DEFAULT_SETTINGS: FoundationSettings = {
@@ -93,6 +188,23 @@ const DEFAULT_SETTINGS: FoundationSettings = {
   clinicalClassification: null,
   impact: { ...EMPTY_IMPACT },
   clinicOverrides: {},
+  hero: {
+    videoUrl: null,
+    posterUrl: null,
+    playbackRate: 1,
+    autoplay: true,
+    muted: true,
+    loop: true,
+  },
+  founderVideo: {
+    videoUrl: null,
+    posterUrl: null,
+    caption: null,
+    playbackRate: 1,
+    muted: true,
+  },
+  mediaItems: [],
+  copy: { en: { ...EMPTY_COPY }, sw: { ...EMPTY_COPY } },
 };
 
 @Injectable()
@@ -106,7 +218,11 @@ export class FoundationSiteService {
   ) {}
 
   getMeta(publicBase: string): FounderPhotoMeta {
-    return this.imageMeta(this.findStemFile(this.dir, FILE_STEM), publicBase, 'founder-photo');
+    return this.imageMeta(
+      this.findStemFile(this.dir, FILE_STEM),
+      publicBase,
+      'founder-photo',
+    );
   }
 
   savePhoto(buffer: Buffer, mimetype: string) {
@@ -129,8 +245,8 @@ export class FoundationSiteService {
   }
 
   async getPublicSite(publicBase: string) {
+    const { settings, updatedAt } = await this.readSettingsRecord();
     const photo = this.getMeta(publicBase);
-    const settings = this.readSettings();
     const clinics = await this.buildClinicCards(publicBase, settings);
     const visible = clinics.filter((clinic) => !clinic.hidden);
     const live = await this.liveImpact(visible.length);
@@ -139,15 +255,20 @@ export class FoundationSiteService {
     return {
       founderPhotoUrl: photo.url,
       updatedAt: photo.updatedAt,
+      contentUpdatedAt: updatedAt,
       whatsappNumber: settings.whatsappNumber,
       clinicalClassification: settings.clinicalClassification,
+      hero: settings.hero,
+      founderVideo: settings.founderVideo,
+      mediaItems: settings.mediaItems,
+      copy: settings.copy,
       clinics: visible,
       impact,
     };
   }
 
   async getAdminNetwork(publicBase: string) {
-    const settings = this.readSettings();
+    const { settings, updatedAt } = await this.readSettingsRecord();
     const clinics = await this.buildClinicCards(publicBase, settings);
     const liveImpact = await this.liveImpact(
       clinics.filter((clinic) => !clinic.hidden).length,
@@ -163,22 +284,16 @@ export class FoundationSiteService {
         ...clinic,
         logo: this.clinicLogoMeta(clinic.id, publicBase),
       })),
+      hero: settings.hero,
+      founderVideo: settings.founderVideo,
+      mediaItems: settings.mediaItems,
+      copy: settings.copy,
+      contentUpdatedAt: updatedAt,
     };
   }
 
-  async updateSettings(input: {
-    whatsappNumber?: string | null;
-    anchorClinicId?: string | null;
-    clinicalClassification?: string | null;
-    impact?: Partial<FoundationSettings['impact']>;
-    clinics?: {
-      id: string;
-      displayName?: string | null;
-      location?: string | null;
-      hidden?: boolean;
-    }[];
-  }) {
-    const current = this.readSettings();
+  async updateSettings(input: UpdateFoundationSettingsInput) {
+    const current = await this.readSettings();
     if (input.whatsappNumber !== undefined) {
       current.whatsappNumber = this.normalizeWhatsApp(input.whatsappNumber);
     }
@@ -186,13 +301,17 @@ export class FoundationSiteService {
       current.anchorClinicId = await this.resolveAnchorId(input.anchorClinicId);
     }
     if (input.clinicalClassification !== undefined) {
-      const text = input.clinicalClassification?.trim() || null;
-      current.clinicalClassification = text;
+      current.clinicalClassification = normalizeText(
+        input.clinicalClassification,
+        2000,
+      );
     }
     if (input.impact) {
       current.impact = {
         registeredMembers: this.optionalCount(input.impact.registeredMembers),
-        contributingMembers: this.optionalCount(input.impact.contributingMembers),
+        contributingMembers: this.optionalCount(
+          input.impact.contributingMembers,
+        ),
         approvedFacilities: this.optionalCount(input.impact.approvedFacilities),
         counties: this.optionalCount(input.impact.counties),
       };
@@ -201,13 +320,28 @@ export class FoundationSiteService {
       for (const row of input.clinics) {
         const id = this.normalizeClinicId(row.id);
         current.clinicOverrides[id] = {
-          displayName: row.displayName?.trim() || null,
-          location: row.location?.trim() || null,
+          displayName: normalizeText(row.displayName, 200),
+          location: normalizeText(row.location, 300),
           hidden: Boolean(row.hidden),
         };
       }
     }
-    this.writeSettings(current);
+    if (input.hero !== undefined) {
+      current.hero = normalizeHero(input.hero, current.hero);
+    }
+    if (input.founderVideo !== undefined) {
+      current.founderVideo = normalizeFounderVideo(
+        input.founderVideo,
+        current.founderVideo,
+      );
+    }
+    if (input.mediaItems !== undefined) {
+      current.mediaItems = normalizeMediaItems(input.mediaItems);
+    }
+    if (input.copy !== undefined) {
+      current.copy = normalizeCopy(input.copy, current.copy);
+    }
+    await this.writeSettings(current);
     return current;
   }
 
@@ -256,16 +390,23 @@ export class FoundationSiteService {
       },
     });
 
-    const mikindaniRecord = approved.find((clinic) => this.isMikindani(clinic.name));
-    const designated = approved.find((clinic) => clinic.id === settings.anchorClinicId);
-    const anchorId = designated?.id || mikindaniRecord?.id || ANCHOR_FALLBACK_ID;
+    const mikindaniRecord = approved.find((clinic) =>
+      this.isMikindani(clinic.name),
+    );
+    const designated = approved.find(
+      (clinic) => clinic.id === settings.anchorClinicId,
+    );
+    const anchorId =
+      designated?.id || mikindaniRecord?.id || ANCHOR_FALLBACK_ID;
 
     const cards: FoundationClinicCard[] = approved.map((clinic) =>
       this.toCard(
         {
           id: clinic.id,
           name: clinic.name,
-          location: [clinic.physicalLocation, clinic.subCounty].filter(Boolean).join(', '),
+          location: [clinic.physicalLocation, clinic.subCounty]
+            .filter(Boolean)
+            .join(', '),
           chairs: clinic.activeDentalChairs,
           isNamedPartner: this.isMikindani(clinic.name),
         },
@@ -294,7 +435,8 @@ export class FoundationSiteService {
 
     return cards.sort((a, b) => {
       if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
-      if (a.isNamedPartner !== b.isNamedPartner) return a.isNamedPartner ? -1 : 1;
+      if (a.isNamedPartner !== b.isNamedPartner)
+        return a.isNamedPartner ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
   }
@@ -321,7 +463,9 @@ export class FoundationSiteService {
     };
   }
 
-  private async liveImpact(visibleFacilities: number): Promise<FoundationImpact> {
+  private async liveImpact(
+    visibleFacilities: number,
+  ): Promise<FoundationImpact> {
     const [registeredMembers, contributingMembers] = await Promise.all([
       this.prisma.member.count(),
       this.prisma.subscription.count({ where: { isActive: true } }),
@@ -334,11 +478,17 @@ export class FoundationSiteService {
     };
   }
 
-  private resolveImpact(live: FoundationImpact, settings: FoundationSettings): FoundationImpact {
+  private resolveImpact(
+    live: FoundationImpact,
+    settings: FoundationSettings,
+  ): FoundationImpact {
     return {
-      registeredMembers: settings.impact.registeredMembers ?? live.registeredMembers,
-      contributingMembers: settings.impact.contributingMembers ?? live.contributingMembers,
-      approvedFacilities: settings.impact.approvedFacilities ?? live.approvedFacilities,
+      registeredMembers:
+        settings.impact.registeredMembers ?? live.registeredMembers,
+      contributingMembers:
+        settings.impact.contributingMembers ?? live.contributingMembers,
+      approvedFacilities:
+        settings.impact.approvedFacilities ?? live.approvedFacilities,
       counties: settings.impact.counties ?? live.counties,
     };
   }
@@ -368,7 +518,11 @@ export class FoundationSiteService {
   private normalizeClinicId(id: string) {
     const value = String(id || '').trim();
     if (value === ANCHOR_FALLBACK_ID) return value;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        value,
+      )
+    ) {
       throw new BadRequestException('Unknown clinic.');
     }
     return value;
@@ -396,7 +550,9 @@ export class FoundationSiteService {
       digits = `254${digits}`;
     }
     if (digits.length < 10 || digits.length > 15) {
-      throw new BadRequestException('Enter a valid WhatsApp number, including country code.');
+      throw new BadRequestException(
+        'Enter a valid WhatsApp number, including country code.',
+      );
     }
     return digits;
   }
@@ -405,31 +561,63 @@ export class FoundationSiteService {
     return /mikindani/i.test(name);
   }
 
-  private readSettings(): FoundationSettings {
-    const path = join(this.dir, SETTINGS_FILE);
-    if (!existsSync(path)) return { ...DEFAULT_SETTINGS };
+  private async readSettingsRecord(): Promise<{
+    settings: FoundationSettings;
+    updatedAt: string | null;
+  }> {
     try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<FoundationSettings>;
-      return {
-        whatsappNumber: parsed.whatsappNumber || null,
-        anchorClinicId: parsed.anchorClinicId || null,
-        clinicalClassification: parsed.clinicalClassification || null,
-        impact: {
-          registeredMembers: parsed.impact?.registeredMembers ?? null,
-          contributingMembers: parsed.impact?.contributingMembers ?? null,
-          approvedFacilities: parsed.impact?.approvedFacilities ?? null,
-          counties: parsed.impact?.counties ?? null,
-        },
-        clinicOverrides: parsed.clinicOverrides || {},
-      };
+      const row = await this.prisma.foundationSiteContent.findUnique({
+        where: { id: CONTENT_ROW_ID },
+      });
+      if (row?.payload) {
+        return {
+          settings: normalizeSettings(
+            row.payload as unknown as Partial<FoundationSettings>,
+          ),
+          updatedAt: row.updatedAt.toISOString(),
+        };
+      }
     } catch {
-      return { ...DEFAULT_SETTINGS };
+      // Keep serving the last known file snapshot if the table is not ready.
     }
+    return { settings: this.readLegacySettings(), updatedAt: null };
   }
 
-  private writeSettings(settings: FoundationSettings) {
+  private async readSettings(): Promise<FoundationSettings> {
+    return (await this.readSettingsRecord()).settings;
+  }
+
+  private async writeSettings(settings: FoundationSettings) {
+    // Mirror to the legacy file so a still-running old container sees the same
+    // content during a rolling deploy. Postgres is the durable source of truth.
     mkdirSync(this.dir, { recursive: true });
-    writeFileSync(join(this.dir, SETTINGS_FILE), JSON.stringify(settings, null, 2));
+    writeFileSync(
+      join(this.dir, SETTINGS_FILE),
+      JSON.stringify(settings, null, 2),
+    );
+
+    await this.prisma.foundationSiteContent.upsert({
+      where: { id: CONTENT_ROW_ID },
+      create: {
+        id: CONTENT_ROW_ID,
+        payload: settings as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        payload: settings as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private readLegacySettings(): FoundationSettings {
+    const path = join(this.dir, SETTINGS_FILE);
+    if (!existsSync(path)) return normalizeSettings(DEFAULT_SETTINGS);
+    try {
+      return normalizeSettings(
+        JSON.parse(readFileSync(path, 'utf8')) as Partial<FoundationSettings>,
+      );
+    } catch {
+      return normalizeSettings(DEFAULT_SETTINGS);
+    }
   }
 
   private imageMeta(
@@ -497,4 +685,170 @@ export class FoundationSiteService {
   private normalizeBase(url: string) {
     return url.replace(/\/$/, '');
   }
+}
+
+function normalizeText(value: unknown, max: number): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  return text.slice(0, max);
+}
+
+function normalizeMediaUrl(value: unknown, max = 2000): string | null {
+  const text = normalizeText(value, max);
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRate(value: unknown, fallback = 1): number {
+  const rate = Number(value);
+  return FOUNDATION_PLAYBACK_RATES.includes(
+    rate as (typeof FOUNDATION_PLAYBACK_RATES)[number],
+  )
+    ? rate
+    : fallback;
+}
+
+function normalizeHero(
+  input: Partial<FoundationHeroContent> | null | undefined,
+  fallback: FoundationHeroContent,
+): FoundationHeroContent {
+  return {
+    videoUrl:
+      input?.videoUrl !== undefined
+        ? normalizeMediaUrl(input.videoUrl)
+        : fallback.videoUrl,
+    posterUrl:
+      input?.posterUrl !== undefined
+        ? normalizeMediaUrl(input.posterUrl)
+        : fallback.posterUrl,
+    playbackRate:
+      input?.playbackRate !== undefined
+        ? normalizeRate(input.playbackRate, fallback.playbackRate)
+        : fallback.playbackRate,
+    autoplay:
+      input?.autoplay !== undefined
+        ? Boolean(input.autoplay)
+        : fallback.autoplay,
+    muted: input?.muted !== undefined ? Boolean(input.muted) : fallback.muted,
+    loop: input?.loop !== undefined ? Boolean(input.loop) : fallback.loop,
+  };
+}
+
+function normalizeFounderVideo(
+  input: Partial<FoundationFounderVideo> | null | undefined,
+  fallback: FoundationFounderVideo,
+): FoundationFounderVideo {
+  return {
+    videoUrl:
+      input?.videoUrl !== undefined
+        ? normalizeMediaUrl(input.videoUrl)
+        : fallback.videoUrl,
+    posterUrl:
+      input?.posterUrl !== undefined
+        ? normalizeMediaUrl(input.posterUrl)
+        : fallback.posterUrl,
+    caption:
+      input?.caption !== undefined
+        ? normalizeText(input.caption, 160)
+        : fallback.caption,
+    playbackRate:
+      input?.playbackRate !== undefined
+        ? normalizeRate(input.playbackRate, fallback.playbackRate)
+        : fallback.playbackRate,
+    muted: input?.muted !== undefined ? Boolean(input.muted) : fallback.muted,
+  };
+}
+
+function normalizeMediaItems(
+  input: Partial<FoundationMediaItem>[] | null | undefined,
+): FoundationMediaItem[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  return input
+    .slice(0, MAX_MEDIA_ITEMS)
+    .map((item, index) => {
+      const src = normalizeMediaUrl(item.src);
+      if (!src) return null;
+      let id = normalizeText(item.id, 60) || `media-${index + 1}`;
+      if (seen.has(id)) id = `${id}-${index + 1}`;
+      seen.add(id);
+      return {
+        id,
+        kind: item.kind === 'video' ? 'video' : 'image',
+        src,
+        posterUrl: normalizeMediaUrl(item.posterUrl),
+        alt: normalizeText(item.alt, 240),
+        altSw: normalizeText(item.altSw, 240),
+        caption: normalizeText(item.caption, 240),
+        captionSw: normalizeText(item.captionSw, 240),
+        href: normalizeMediaUrl(item.href),
+        playbackRate: normalizeRate(item.playbackRate),
+      } satisfies FoundationMediaItem;
+    })
+    .filter((item): item is FoundationMediaItem => item !== null);
+}
+
+function normalizeCopyLocale(
+  input: Partial<FoundationCopyLocale> | null | undefined,
+  fallback: FoundationCopyLocale,
+): FoundationCopyLocale {
+  const result = { ...fallback };
+  if (!input) return result;
+  for (const key of Object.keys(EMPTY_COPY) as (keyof FoundationCopyLocale)[]) {
+    if (input[key] !== undefined) {
+      result[key] = normalizeText(
+        input[key],
+        key === 'letterBody' ? 1600 : key === 'letterSummary' ? 600 : 500,
+      );
+    }
+  }
+  return result;
+}
+
+function normalizeCopy(
+  input:
+    | {
+        en?: Partial<FoundationCopyLocale>;
+        sw?: Partial<FoundationCopyLocale>;
+      }
+    | null
+    | undefined,
+  fallback: FoundationContentCopy,
+): FoundationContentCopy {
+  return {
+    en: normalizeCopyLocale(input?.en, fallback.en),
+    sw: normalizeCopyLocale(input?.sw, fallback.sw),
+  };
+}
+
+function normalizeSettings(
+  input: Partial<FoundationSettings>,
+): FoundationSettings {
+  return {
+    whatsappNumber: input.whatsappNumber || null,
+    anchorClinicId: input.anchorClinicId || null,
+    clinicalClassification: input.clinicalClassification || null,
+    impact: {
+      registeredMembers: input.impact?.registeredMembers ?? null,
+      contributingMembers: input.impact?.contributingMembers ?? null,
+      approvedFacilities: input.impact?.approvedFacilities ?? null,
+      counties: input.impact?.counties ?? null,
+    },
+    clinicOverrides: input.clinicOverrides || {},
+    hero: normalizeHero(input.hero, DEFAULT_SETTINGS.hero),
+    founderVideo: normalizeFounderVideo(
+      input.founderVideo,
+      DEFAULT_SETTINGS.founderVideo,
+    ),
+    mediaItems: normalizeMediaItems(input.mediaItems),
+    copy: normalizeCopy(input.copy, DEFAULT_SETTINGS.copy),
+  };
 }

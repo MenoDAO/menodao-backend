@@ -1207,6 +1207,17 @@ model FoundationInquiry {
   @@index([createdAt])
 }
 
+/// Admin-editable Foundation public site content. A single row keeps the
+/// settings previously stored in uploads/foundation/settings.json and the
+/// media/copy that powers the refreshed landing page. Stored in Postgres so
+/// admin edits survive container replacements and deploys.
+model FoundationSiteContent {
+  id        String   @id @default("primary")
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ─── WhatsApp bot (ported from menobot) ─────────────────────────────────────
 // Kept separate from Member/Clinic/Appointment. Bot tables hold conversation
 // state only; Clinic + Appointment remain the source of truth.
