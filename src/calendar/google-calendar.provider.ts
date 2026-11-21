@@ -20,7 +20,8 @@ export class GoogleCalendarProvider implements ICalendarProvider {
   readonly provider = 'GOOGLE' as const;
 
   readonly configured: boolean = Boolean(
-    process.env.GOOGLE_CALENDAR_CLIENT_ID && process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+    process.env.GOOGLE_CALENDAR_CLIENT_ID &&
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
   );
 
   private get clientId(): string {
@@ -33,7 +34,9 @@ export class GoogleCalendarProvider implements ICalendarProvider {
 
   private get redirectUri(): string {
     return (
-      process.env.GOOGLE_CALENDAR_REDIRECT_URI || process.env.CALENDAR_REDIRECT_URI || ''
+      process.env.GOOGLE_CALENDAR_REDIRECT_URI ||
+      process.env.CALENDAR_REDIRECT_URI ||
+      ''
     );
   }
 
@@ -65,12 +68,12 @@ export class GoogleCalendarProvider implements ICalendarProvider {
       string,
       unknown
     >;
-    if (!response.ok || !data.access_token) {
+    if (!response.ok || typeof data.access_token !== 'string') {
       throw new Error('GOOGLE_TOKEN_REFRESH_FAILED');
     }
     const expiresIn = Number(data.expires_in) || 3600;
     return {
-      accessToken: String(data.access_token),
+      accessToken: data.access_token,
       refreshToken: (data.refresh_token as string) ?? options.refreshToken,
       expiresAt: new Date(Date.now() + expiresIn * 1000),
       scopes: (data.scope as string) || options.scopes?.[0] || '',
@@ -99,12 +102,12 @@ export class GoogleCalendarProvider implements ICalendarProvider {
       string,
       unknown
     >;
-    if (!response.ok || !data.access_token) {
+    if (!response.ok || typeof data.access_token !== 'string') {
       throw new Error('GOOGLE_TOKEN_EXCHANGE_FAILED');
     }
     const expiresIn = Number(data.expires_in) || 3600;
     return {
-      accessToken: String(data.access_token),
+      accessToken: data.access_token,
       refreshToken: (data.refresh_token as string) ?? null,
       expiresAt: new Date(Date.now() + expiresIn * 1000),
       scopes: (data.scope as string) || options.scopes[0] || '',
@@ -130,9 +133,12 @@ export class GoogleCalendarProvider implements ICalendarProvider {
   }
 
   async getUserEmail(accessToken: string): Promise<string | null> {
-    const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const response = await fetch(
+      'https://www.googleapis.com/oauth2/v3/userinfo',
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
     if (!response.ok) return null;
     const data = (await response.json().catch(() => ({}))) as Record<
       string,
@@ -179,21 +185,20 @@ export class GoogleCalendarProvider implements ICalendarProvider {
         string,
         { busy?: Array<{ start?: string; end?: string }> }
       >;
-    }>(
-      'https://www.googleapis.com/calendar/v3/freeBusy',
-      options.accessToken,
-      {
-        timeMin: options.from.toISOString(),
-        timeMax: options.to.toISOString(),
-        timeZone: options.timeZone,
-        items: [{ id: options.calendarId || 'primary' }],
-      },
-    );
+    }>('https://www.googleapis.com/calendar/v3/freeBusy', options.accessToken, {
+      timeMin: options.from.toISOString(),
+      timeMax: options.to.toISOString(),
+      timeZone: options.timeZone,
+      items: [{ id: options.calendarId || 'primary' }],
+    });
     const busy = data.calendars?.[options.calendarId || 'primary']?.busy ?? [];
     const intervals: BusyInterval[] = [];
     for (const block of busy) {
       if (!block.start || !block.end) continue;
-      intervals.push({ start: new Date(block.start), end: new Date(block.end) });
+      intervals.push({
+        start: new Date(block.start),
+        end: new Date(block.end),
+      });
     }
     return intervals;
   }
@@ -264,7 +269,10 @@ export class GoogleCalendarProvider implements ICalendarProvider {
   }): Promise<{ ok: boolean }> {
     const response = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${options.calendarId || 'primary'}/events/${options.eventId}`,
-      { method: 'DELETE', headers: { Authorization: `Bearer ${options.accessToken}` } },
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${options.accessToken}` },
+      },
     );
     if (!response.ok) throw new Error('GOOGLE_EVENT_DELETE_FAILED');
     return { ok: true };

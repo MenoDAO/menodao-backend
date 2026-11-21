@@ -32,11 +32,13 @@ function safeEqual(a: string, b: string): boolean {
 @Injectable()
 export class CalendarConfigService {
   getProviderConfig(provider: string): CalendarProviderConfig | null {
-    const resolved = (CALENDAR_PROVIDERS.includes(
-      provider as (typeof CALENDAR_PROVIDERS)[number],
-    )
-      ? provider
-      : 'GOOGLE') as CalendarProvider;
+    const resolved = (
+      CALENDAR_PROVIDERS.includes(
+        provider as (typeof CALENDAR_PROVIDERS)[number],
+      )
+        ? provider
+        : 'GOOGLE'
+    ) as CalendarProvider;
 
     const rawClientId =
       process.env[`${resolved}_CALENDAR_CLIENT_ID`] ??
@@ -71,7 +73,9 @@ export class CalendarConfigService {
 
   getCalendarStateSecret(): string {
     return (
-      process.env.CALENDAR_STATE_SECRET ?? process.env.JWT_SECRET ?? 'menodao-calendar-state-secret'
+      process.env.CALENDAR_STATE_SECRET ??
+      process.env.JWT_SECRET ??
+      'menodao-calendar-state-secret'
     );
   }
 
@@ -94,8 +98,7 @@ export class CalendarConfigService {
       const parsed = JSON.parse(
         Buffer.from(body, 'base64url').toString('utf8'),
       ) as Record<string, unknown>;
-      const exp =
-        typeof parsed.exp === 'number' ? parsed.exp : NaN;
+      const exp = typeof parsed.exp === 'number' ? parsed.exp : NaN;
       // Small clock-skew tolerance, but reject states that actually expired.
       if (Number.isNaN(exp) || exp < Math.floor(Date.now() / 1000) - 60) {
         return null;

@@ -1,9 +1,7 @@
 import {
   BusyInterval,
-  CalendarConnectionRecord,
   CalendarEventInput,
   CalendarEventResult,
-  CalendarOwnerType,
   CalendarProvider,
   OAuthTokenResult,
 } from './calendar.types';
@@ -48,34 +46,28 @@ export interface ICalendarProvider {
     timeZone: string;
   }): Promise<BusyInterval[]>;
 
-  createEvent(
-    options: {
-      accessToken: string;
-      refreshToken: string | null;
-      expiresAt: Date | null;
-      calendarId: string | null;
-      event: CalendarEventInput;
-    },
-  ): Promise<CalendarEventResult>;
+  createEvent(options: {
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: Date | null;
+    calendarId: string | null;
+    event: CalendarEventInput;
+  }): Promise<CalendarEventResult>;
 
-  updateEvent(
-    options: {
-      accessToken: string;
-      refreshToken: string | null;
-      expiresAt: Date | null;
-      calendarId: string | null;
-      eventId: string;
-      event: CalendarEventInput;
-    },
-  ): Promise<CalendarEventResult>;
+  updateEvent(options: {
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: Date | null;
+    calendarId: string | null;
+    eventId: string;
+    event: CalendarEventInput;
+  }): Promise<CalendarEventResult>;
 
-  deleteEvent(
-    options: {
-      accessToken: string;
-      refreshToken: string | null;
-      expiresAt: Date | null;
-      calendarId: string | null;
-      eventId: string;
-    },
-  ): Promise<{ ok: boolean }>;
+  deleteEvent(options: {
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: Date | null;
+    calendarId: string | null;
+    eventId: string;
+  }): Promise<{ ok: boolean }>;
 }

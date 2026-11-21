@@ -11,7 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AdminAuthGuard } from '../admin/guards/admin-auth.guard';
 import { AdminService } from '../admin/admin.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,7 +19,10 @@ import { CalendarSyncService } from './calendar-sync.service';
 import { CalendarConfigService } from './calendar-config.service';
 import { GoogleCalendarProvider } from './google-calendar.provider';
 import { MicrosoftCalendarProvider } from './microsoft-calendar.provider';
-import type { CalendarOwnerKind, CalendarProviderKind } from './calendar-sync.service';
+import type {
+  CalendarOwnerKind,
+  CalendarProviderKind,
+} from './calendar-sync.service';
 
 const FRONTEND_BASE_URL =
   process.env.WEB_APP_URL ?? process.env.APP_URL ?? 'https://app.menodao.org';
@@ -50,13 +53,25 @@ export class AdminCalendarController {
   @Get('providers')
   @UseGuards(AdminAuthGuard)
   @ApiOperation({ summary: 'Which external calendars are configured' })
-  async listProviders() {
+  listProviders() {
     const providers: Record<string, boolean> = {};
     for (const kind of ['GOOGLE', 'MICROSOFT'] as CalendarProviderKind[]) {
-      const provider = kind === 'MICROSOFT' ? new MicrosoftCalendarProvider() : new GoogleCalendarProvider();
+      const provider =
+        kind === 'MICROSOFT'
+          ? new MicrosoftCalendarProvider()
+          : new GoogleCalendarProvider();
       providers[kind] = provider.configured;
     }
-    return { google: { configured: providers.GOOGLE, clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID || null }, microsoft: { configured: providers.MICROSOFT, clientId: process.env.MICROSOFT_CALENDAR_CLIENT_ID || null } };
+    return {
+      google: {
+        configured: providers.GOOGLE,
+        clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID || null,
+      },
+      microsoft: {
+        configured: providers.MICROSOFT,
+        clientId: process.env.MICROSOFT_CALENDAR_CLIENT_ID || null,
+      },
+    };
   }
 
   @Get('connect')
@@ -70,8 +85,12 @@ export class AdminCalendarController {
   ) {
     const ownerKind: CalendarOwnerKind =
       ownerType === 'CLINIC' ? 'CLINIC' : 'DOCTOR';
-    const kind = (provider === 'MICROSOFT' ? 'MICROSOFT' : 'GOOGLE') as CalendarProviderKind;
-    const admin = await this.adminService.getAdminForCalendarState(req.admin?.id ?? '');
+    const kind = (
+      provider === 'MICROSOFT' ? 'MICROSOFT' : 'GOOGLE'
+    ) as CalendarProviderKind;
+    const admin = await this.adminService.getAdminForCalendarState(
+      req.admin?.id ?? '',
+    );
     if (!admin) throw new NotFoundException('Admin not found');
     const config = this.calendarConfig.getProviderConfig(kind);
     if (!config) {
@@ -87,15 +106,15 @@ export class AdminCalendarController {
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 600,
     });
-    const url = new (kind === 'MICROSOFT' ? MicrosoftCalendarProvider : GoogleCalendarProvider)().buildAuthorizationUrl(
-      {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        redirectUri: config.redirectUri,
-        scopes: config.scopes,
-        state,
-      },
-    );
+    const url = new (kind === 'MICROSOFT'
+      ? MicrosoftCalendarProvider
+      : GoogleCalendarProvider)().buildAuthorizationUrl({
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      redirectUri: config.redirectUri,
+      scopes: config.scopes,
+      state,
+    });
     return { url, provider: kind, ownerType: ownerKind, ownerId };
   }
 
@@ -110,13 +129,17 @@ export class AdminCalendarController {
     const ownerType = parsed.ownerType as CalendarOwnerKind;
     const ownerId = String(parsed.ownerId);
     const kind = String(parsed.provider) as CalendarProviderKind;
-    const adminId = String(parsed.adminId ?? '');
+    const adminId = typeof parsed.adminId === 'string' ? parsed.adminId : '';
     const admin = await this.adminService.getAdminForCalendarState(adminId);
     if (!admin) throw new BadRequestException('Invalid calendar admin state');
 
     const config = this.calendarConfig.getProviderConfig(kind);
-    if (!config) throw new BadRequestException('Calendar provider is not configured');
-    const providerInstance = kind === 'MICROSOFT' ? new MicrosoftCalendarProvider() : new GoogleCalendarProvider();
+    if (!config)
+      throw new BadRequestException('Calendar provider is not configured');
+    const providerInstance =
+      kind === 'MICROSOFT'
+        ? new MicrosoftCalendarProvider()
+        : new GoogleCalendarProvider();
 
     const token = await providerInstance.exchangeCode({
       code,
@@ -126,7 +149,13 @@ export class AdminCalendarController {
       scopes: config.scopes,
     });
     const accountEmail = await providerInstance.getUserEmail(token.accessToken);
-    await this.calendarSync.createConnection(ownerType, ownerId, kind, token, accountEmail);
+    await this.calendarSync.createConnection(
+      ownerType,
+      ownerId,
+      kind,
+      token,
+      accountEmail,
+    );
     return res.redirect(
       `${FRONTEND_BASE_URL}/admin/clinics?calendar=connected&ownerType=${ownerType}&ownerId=${ownerId}`,
     );
@@ -140,9 +169,14 @@ export class AdminCalendarController {
     @Query('provider') provider: string,
     @Req() req: { admin?: { id: string } },
   ) {
-    const ownerKind: CalendarOwnerKind = ownerType === 'CLINIC' ? 'CLINIC' : 'DOCTOR';
-    const kind = (provider === 'MICROSOFT' ? 'MICROSOFT' : 'GOOGLE') as CalendarProviderKind;
-    const admin = await this.adminService.getAdminForCalendarState(req.admin?.id ?? '');
+    const ownerKind: CalendarOwnerKind =
+      ownerType === 'CLINIC' ? 'CLINIC' : 'DOCTOR';
+    const kind = (
+      provider === 'MICROSOFT' ? 'MICROSOFT' : 'GOOGLE'
+    ) as CalendarProviderKind;
+    const admin = await this.adminService.getAdminForCalendarState(
+      req.admin?.id ?? '',
+    );
     if (!admin) throw new NotFoundException('Admin not found');
     await this.calendarSync.disconnect(ownerKind, ownerId, kind);
     return { ok: true };

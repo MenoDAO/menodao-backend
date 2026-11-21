@@ -18,7 +18,7 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
 
   readonly configured: boolean = Boolean(
     process.env.MICROSOFT_CALENDAR_CLIENT_ID &&
-      process.env.MICROSOFT_CALENDAR_CLIENT_SECRET,
+    process.env.MICROSOFT_CALENDAR_CLIENT_SECRET,
   );
 
   private get clientId(): string {
@@ -30,7 +30,11 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
   }
 
   private get tenantId(): string {
-    return process.env.MICROSOFT_CALENDAR_TENANT_ID || process.env.MICROSOFT_CALENDAR_TENANT || 'common';
+    return (
+      process.env.MICROSOFT_CALENDAR_TENANT_ID ||
+      process.env.MICROSOFT_CALENDAR_TENANT ||
+      'common'
+    );
   }
 
   private get scopes(): string[] {
@@ -62,12 +66,12 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
       string,
       unknown
     >;
-    if (!response.ok || !data.access_token) {
+    if (!response.ok || typeof data.access_token !== 'string') {
       throw new Error('MICROSOFT_TOKEN_REFRESH_FAILED');
     }
     const expiresIn = Number(data.expires_in) || 3600;
     return {
-      accessToken: String(data.access_token),
+      accessToken: data.access_token,
       refreshToken: (data.refresh_token as string) ?? options.refreshToken,
       expiresAt: new Date(Date.now() + expiresIn * 1000),
       scopes: (data.scope as string) || this.scopes[0],
@@ -97,12 +101,12 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
       string,
       unknown
     >;
-    if (!response.ok || !data.access_token) {
+    if (!response.ok || typeof data.access_token !== 'string') {
       throw new Error('MICROSOFT_TOKEN_EXCHANGE_FAILED');
     }
     const expiresIn = Number(data.expires_in) || 3600;
     return {
-      accessToken: String(data.access_token),
+      accessToken: data.access_token,
       refreshToken: (data.refresh_token as string) ?? null,
       expiresAt: new Date(Date.now() + expiresIn * 1000),
       scopes: (data.scope as string) || options.scopes[0] || '',
@@ -193,7 +197,10 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
     for (const entry of data.value ?? []) {
       for (const block of entry.busyBlocks ?? []) {
         if (!block.start || !block.end) continue;
-        intervals.push({ start: new Date(block.start), end: new Date(block.end) });
+        intervals.push({
+          start: new Date(block.start),
+          end: new Date(block.end),
+        });
       }
     }
     return intervals;
@@ -208,22 +215,18 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
   }): Promise<CalendarEventResult> {
     const data = await this.postJson<{
       id?: string;
-    }>(
-      'https://graph.microsoft.com/v1.0/me/events',
-      options.accessToken,
-      {
-        subject: options.event.title,
-        body: { contentType: 'text', content: options.event.description ?? '' },
-        start: {
-          dateTime: new Date(options.event.start).toISOString(),
-          timeZone: 'UTC',
-        },
-        end: {
-          dateTime: new Date(options.event.end).toISOString(),
-          timeZone: 'UTC',
-        },
+    }>('https://graph.microsoft.com/v1.0/me/events', options.accessToken, {
+      subject: options.event.title,
+      body: { contentType: 'text', content: options.event.description ?? '' },
+      start: {
+        dateTime: new Date(options.event.start).toISOString(),
+        timeZone: 'UTC',
       },
-    );
+      end: {
+        dateTime: new Date(options.event.end).toISOString(),
+        timeZone: 'UTC',
+      },
+    });
     if (!data.id) throw new Error('MICROSOFT_EVENT_CREATE_FAILED');
     return { eventId: String(data.id) };
   }
@@ -265,7 +268,10 @@ export class MicrosoftCalendarProvider implements ICalendarProvider {
   }): Promise<{ ok: boolean }> {
     const response = await fetch(
       `https://graph.microsoft.com/v1.0/me/events/${options.eventId}`,
-      { method: 'DELETE', headers: { Authorization: `Bearer ${options.accessToken}` } },
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${options.accessToken}` },
+      },
     );
     if (!response.ok) throw new Error('MICROSOFT_EVENT_DELETE_FAILED');
     return { ok: true };

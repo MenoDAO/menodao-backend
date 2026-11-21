@@ -222,7 +222,9 @@ export class AdminBookingController {
   @Patch('doctors/:id')
   @ApiOperation({ summary: 'Update a doctor (admin)' })
   async updateDoctor(@Param('id') id: string, @Body() dto: UpdateDoctorDto) {
-    const existing = await this.prisma.clinicDoctor.findUnique({ where: { id } });
+    const existing = await this.prisma.clinicDoctor.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new Error('Doctor not found');
     }
@@ -266,7 +268,9 @@ export class AdminBookingController {
       endTime: item.endTime,
       isActive: item.isActive ?? true,
     }));
-    await this.prisma.doctorAvailability.deleteMany({ where: { doctorId: id } });
+    await this.prisma.doctorAvailability.deleteMany({
+      where: { doctorId: id },
+    });
     if (ops.length > 0) {
       await this.prisma.doctorAvailability.createMany({ data: ops });
     }
@@ -286,8 +290,8 @@ export class AdminBookingController {
     const items = (dto.items ?? []).map((item) => ({
       clinicId,
       dayOfWeek: item.dayOfWeek,
-      openTime: item.isClosed ? null : item.openTime ?? null,
-      closeTime: item.isClosed ? null : item.closeTime ?? null,
+      openTime: item.isClosed ? null : (item.openTime ?? null),
+      closeTime: item.isClosed ? null : (item.closeTime ?? null),
       isClosed: item.isClosed ?? false,
     }));
     for (const item of items) {

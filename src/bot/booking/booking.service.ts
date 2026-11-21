@@ -774,9 +774,9 @@ export class BookingService {
         name: updatedDraft.clientName ?? memberName ?? 'there',
         doctor:
           updatedDraft.doctorId &&
-          clinics.find((c) => c.id === updatedDraft.clinicId)?.doctors.some(
-            (d) => d.id === updatedDraft.doctorId,
-          )
+          clinics
+            .find((c) => c.id === updatedDraft.clinicId)
+            ?.doctors.some((d) => d.id === updatedDraft.doctorId)
             ? clinics
                 .find((c) => c.id === updatedDraft.clinicId)!
                 .doctors.find((d) => d.id === updatedDraft.doctorId)!.name
@@ -849,7 +849,9 @@ export class BookingService {
           const doctorConflict = nearby.some(
             (row) =>
               scheduledAt.getTime() <
-                new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
+                new Date(
+                  row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+                ).getTime() &&
               new Date(row.scheduledAt).getTime() <
                 scheduledAt.getTime() + durationMinutes * 60_000,
           );
@@ -1161,20 +1163,24 @@ export class BookingService {
     const internalOverlap = internal.some(
       (row) =>
         start.getTime() <
-          new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
-        new Date(row.scheduledAt).getTime() < end.getTime(),
+          new Date(
+            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
     );
 
     const externalBusy = doctorId
-      ? await this.getCalendarBusy(
-          'DOCTOR',
-          doctorId,
-          { from: windowStart, to: windowEnd },
-        )
-      : await this.getCalendarBusy('CLINIC', clinicId, { from: windowStart, to: windowEnd });
+      ? await this.getCalendarBusy('DOCTOR', doctorId, {
+          from: windowStart,
+          to: windowEnd,
+        })
+      : await this.getCalendarBusy('CLINIC', clinicId, {
+          from: windowStart,
+          to: windowEnd,
+        });
     const externalOverlap = externalBusy.some(
       (busy) =>
-        start.getTime() < busy.end.getTime() && busy.start.getTime() < end.getTime(),
+        start.getTime() < busy.end.getTime() &&
+        busy.start.getTime() < end.getTime(),
     );
 
     if (doctorId) {
@@ -1192,8 +1198,9 @@ export class BookingService {
     const internalOverlaps = internal.filter(
       (row) =>
         start.getTime() <
-          new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
-        new Date(row.scheduledAt).getTime() < end.getTime(),
+          new Date(
+            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
     ).length;
     if (externalOverlap) return true;
     return internalOverlaps >= chairs;
@@ -1204,15 +1211,11 @@ export class BookingService {
     ownerId: string,
     window: { from: Date; to: Date },
   ): Promise<{ start: Date; end: Date }[]> {
-    const busy = await this.calendarSync.getBusyIntervals(
-      ownerType,
-      ownerId,
-      {
-        from: window.from,
-        to: window.to,
-        timeZone: this.cfg.timezone,
-      },
-    );
+    const busy = await this.calendarSync.getBusyIntervals(ownerType, ownerId, {
+      from: window.from,
+      to: window.to,
+      timeZone: this.cfg.timezone,
+    });
     return busy;
   }
 
@@ -1290,7 +1293,12 @@ export class BookingService {
         if (candidateDt <= DateTime.fromJSDate(fromUtc)) continue;
         if (
           clinicId &&
-          (await this.isSlotTaken(clinicId, candidate, doctorId, durationMinutes))
+          (await this.isSlotTaken(
+            clinicId,
+            candidate,
+            doctorId,
+            durationMinutes,
+          ))
         ) {
           continue;
         }
@@ -1366,7 +1374,10 @@ export class BookingService {
    * Resolve a doctor reply from ASK_DOCTOR: "2", "Dr. Achieng", "Achieng", …
    * Only active doctors are selectable; fall back to all when none are active.
    */
-  private parseDoctorSelection(text: string, doctors: BotDoctor[]): BotDoctor | null {
+  private parseDoctorSelection(
+    text: string,
+    doctors: BotDoctor[],
+  ): BotDoctor | null {
     const trimmed = (text ?? '').trim();
     if (!trimmed) return null;
     const active = doctors.filter((doctor) => doctor.isActive !== false);
@@ -1405,14 +1416,12 @@ export class BookingService {
     const missing: string[] = [];
     if (!draft.service) missing.push('service');
     if (!draft.clinicId) missing.push('clinic');
-    const clinic =
-      draft.clinicId
-        ? clinics.find((c) => c.id === draft.clinicId) ?? null
-        : null;
+    const clinic = draft.clinicId
+      ? (clinics.find((c) => c.id === draft.clinicId) ?? null)
+      : null;
     const doctorValid = draft.doctorId
       ? (clinic?.doctors ?? []).some(
-          (doctor) =>
-            doctor.id === draft.doctorId && doctor.isActive !== false,
+          (doctor) => doctor.id === draft.doctorId && doctor.isActive !== false,
         )
       : false;
     if ((clinic?.doctors.length ?? 0) > 0 && !doctorValid) {
@@ -1446,7 +1455,10 @@ export class BookingService {
             (clinic ? clinic.doctors : []);
           if (doctors.length > 0) {
             const doctorList = doctors
-              .map((d, i) => `${i + 1}. ${d.name}${d.specialty ? ` (${d.specialty})` : ''}`)
+              .map(
+                (d, i) =>
+                  `${i + 1}. ${d.name}${d.specialty ? ` (${d.specialty})` : ''}`,
+              )
               .join('\n');
             return t(ASK_DOCTOR, lang, { doctorList });
           }

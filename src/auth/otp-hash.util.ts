@@ -9,7 +9,10 @@ import { createHmac } from 'crypto';
  */
 
 function otpHashKey(): Buffer {
-  const raw = process.env.OTP_HASH_SECRET ?? process.env.JWT_SECRET ?? 'menodao-otp-hash-secret';
+  const raw =
+    process.env.OTP_HASH_SECRET ??
+    process.env.JWT_SECRET ??
+    'menodao-otp-hash-secret';
   return createHmac('sha256', raw).digest();
 }
 
