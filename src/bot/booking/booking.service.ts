@@ -35,11 +35,10 @@ import {
   anchors,
   nairobiNow,
   toScheduledAt,
-  validateSlot,
-  daySlots,
   openDayNames,
   snapToSlot,
 } from './booking-time.util';
+import type { SlotValidationResult } from './booking-time.util';
 import {
   BookingLang,
   t,
@@ -133,16 +132,37 @@ export interface BookingResult {
   error?: string;
 }
 
+type BotDoctor = {
+  id: string;
+  name: string;
+  consultationMinutes: number;
+  bufferMinutes: number;
+  availability: Array<{
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+  }>;
+};
+
 type BotClinic = {
   id: string;
   name: string;
   services: string[];
+  doctors: BotDoctor[];
+  operatingSchedule: Array<{
+    dayOfWeek: number;
+    openTime: string | null;
+    closeTime: string | null;
+    isClosed: boolean;
+  }>;
 };
 
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
   private readonly cfg: BookingConfig;
+  private procedureDurations = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -195,6 +215,125 @@ export class BookingService {
     );
   }
 
+  private getServiceDurationMinutes(service?: string | null): number {
+    if (!service) return this.cfg.slotMinutes;
+    const key = service.toLowerCase();
+    const direct = this.procedureDurations.get(key);
+    if (direct) return direct;
+    for (const [name, mins] of this.procedureDurations.entries()) {
+      if (key.includes(name) || name.includes(key)) return mins;
+    }
+    return this.cfg.slotMinutes;
+  }
+
+  /** JS day (0=Sun..6=Sat) -> Luxon ISO weekday (1=Mon..7=Sun). */
+  private jsDayToIso(day: number): number {
+    return day === 0 ? 7 : day;
+  }
+
+  private getClinicDayWindows(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+  ): Array<{ open: string; close: string }> {
+    // Doctor availability takes precedence when any doctor has schedule for the day.
+    if (clinic?.doctors?.length) {
+      const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
+      const windows: Array<{ open: string; close: string }> = [];
+      for (const doc of clinic.doctors) {
+        for (const a of doc.availability) {
+          if (a.isActive && a.dayOfWeek === jsDay) {
+            windows.push({ open: a.startTime, close: a.endTime });
+          }
+        }
+      }
+      if (windows.length > 0) return windows;
+    }
+    // Clinic operating schedule
+    const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
+    const row = clinic?.operatingSchedule?.find((r) => r.dayOfWeek === jsDay);
+    if (row) {
+      if (row.isClosed || !row.openTime || !row.closeTime) return [];
+      return [{ open: row.openTime, close: row.closeTime }];
+    }
+    // Kenyan medic default: Mon-Sat 08:00-17:00, Sun closed
+    if (isoWeekday === 7) return [];
+    return [{ open: this.cfg.openTime, close: this.cfg.closeTime }];
+  }
+
+  private isClinicOpenOnDay(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+  ): boolean {
+    return this.getClinicDayWindows(clinic, isoWeekday).length > 0;
+  }
+
+  private validateSlotForClinic(
+    dateIso: string,
+    timeHHmm: string,
+    now: DateTime,
+    clinic: BotClinic | null | undefined,
+  ): SlotValidationResult {
+    const [hour, minute] = timeHHmm.split(':').map(Number);
+    const candidate = DateTime.fromISO(dateIso, {
+      zone: this.cfg.timezone,
+    }).set({
+      hour,
+      minute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (candidate <= now) return 'PAST';
+
+    const weekday = candidate.weekday;
+    const windows = this.getClinicDayWindows(clinic, weekday);
+    if (windows.length === 0) return 'CLOSED_DAY';
+
+    const slotEndMinutes = hour * 60 + minute + this.cfg.slotMinutes;
+    const startMinutes = hour * 60 + minute;
+    const fitsWindow = windows.some((w) => {
+      const [openH, openM] = w.open.split(':').map(Number);
+      const [closeH, closeM] = w.close.split(':').map(Number);
+      const openMinutes = openH * 60 + openM;
+      const closeMinutes = closeH * 60 + closeM;
+      return startMinutes >= openMinutes && slotEndMinutes <= closeMinutes;
+    });
+    if (!fitsWindow) return 'OUTSIDE_HOURS';
+
+    // Boundary check: align to earliest opening window
+    const [refH, refM] = windows[0].open.split(':').map(Number);
+    const refOpen = refH * 60 + refM;
+    const minutesSinceOpen = startMinutes - refOpen;
+    if (minutesSinceOpen % this.cfg.slotMinutes !== 0) {
+      return 'NOT_ON_SLOT_BOUNDARY';
+    }
+    return 'OK';
+  }
+
+  private getClinicDaySlots(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+  ): string[] {
+    const windows = this.getClinicDayWindows(clinic, isoWeekday);
+    const out: string[] = [];
+    for (const w of windows) {
+      const [openH, openM] = w.open.split(':').map(Number);
+      const [closeH, closeM] = w.close.split(':').map(Number);
+      const openMinutes = openH * 60 + openM;
+      const closeMinutes = closeH * 60 + closeM;
+      for (
+        let m = openMinutes;
+        m + this.cfg.slotMinutes <= closeMinutes;
+        m += this.cfg.slotMinutes
+      ) {
+        const hh = String(Math.floor(m / 60)).padStart(2, '0');
+        const mm = String(m % 60).padStart(2, '0');
+        const slot = `${hh}:${mm}`;
+        if (!out.includes(slot)) out.push(slot);
+      }
+    }
+    return out;
+  }
+
   private async loadClinics(): Promise<BotClinic[]> {
     const [clinics, procedures] = await Promise.all([
       this.prisma.clinic.findMany({
@@ -206,17 +345,59 @@ export class BookingService {
           subCounty: true,
           operatingHours: true,
           whatsappNumber: true,
+          doctors: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              consultationMinutes: true,
+              bufferMinutes: true,
+              availability: {
+                where: { isActive: true },
+                select: {
+                  dayOfWeek: true,
+                  startTime: true,
+                  endTime: true,
+                  isActive: true,
+                },
+              },
+            },
+            orderBy: { name: 'asc' },
+          },
+          operatingSchedule: {
+            select: {
+              dayOfWeek: true,
+              openTime: true,
+              closeTime: true,
+              isClosed: true,
+            },
+          },
         },
         orderBy: { name: 'asc' },
       }),
       this.prisma.procedure.findMany({
         where: { isActive: true },
-        select: { name: true },
+        select: { name: true, durationMinutes: true },
         orderBy: { name: 'asc' },
       }),
     ]);
     const services = procedures.map((p) => p.name);
-    return clinics.map((c) => ({ id: c.id, name: c.name, services }));
+    this.procedureDurations = new Map(
+      procedures.map((p) => [p.name.toLowerCase(), p.durationMinutes ?? 15]),
+    );
+    return clinics.map((c) => ({
+      id: c.id,
+      name: c.name,
+      services,
+      doctors: c.doctors.map((d) => ({
+        id: d.id,
+        name: d.name,
+        consultationMinutes: d.consultationMinutes ?? 15,
+        bufferMinutes: d.bufferMinutes ?? 5,
+        availability: d.availability,
+      })),
+      operatingSchedule: c.operatingSchedule,
+    }));
   }
 
   async handleDraftTurn(
@@ -447,7 +628,16 @@ export class BookingService {
 
     if (mergedDate && mergedTime) {
       const now = nairobiNow(this.cfg);
-      const validation = validateSlot(mergedDate, mergedTime, now, this.cfg);
+      const clinicForValidation =
+        resolvedClinic ??
+        clinics.find((c) => c.id === (updates.clinicId ?? draft.clinicId)) ??
+        null;
+      const validation = this.validateSlotForClinic(
+        mergedDate,
+        mergedTime,
+        now,
+        clinicForValidation,
+      );
       if (validation !== 'OK') {
         await this.saveDraft(userId, updates);
         const reply = this.buildSlotError(
@@ -768,8 +958,8 @@ export class BookingService {
         dayOffset++
       ) {
         const day = start.plus({ days: dayOffset });
-        if (!this.cfg.openDays.includes(day.weekday)) continue;
-        const daySlotsList = daySlots(this.cfg);
+        const daySlotsList = this.getClinicDaySlots(c, day.weekday);
+        if (daySlotsList.length === 0) continue;
         const dayIso = day.toISODate()!;
         const free: string[] = [];
         for (const slot of daySlotsList) {
@@ -876,15 +1066,54 @@ export class BookingService {
     count: number = 3,
   ): Promise<DateTime[]> {
     const from = DateTime.fromJSDate(fromUtc).setZone(this.cfg.timezone);
-    const slots = daySlots(this.cfg);
     const results: DateTime[] = [];
     let chairs = 1;
+    let clinic: BotClinic | null = null;
     if (clinicId) {
-      const clinic = await this.prisma.clinic.findUnique({
+      const row = await this.prisma.clinic.findUnique({
         where: { id: clinicId },
-        select: { activeDentalChairs: true },
+        select: {
+          id: true,
+          name: true,
+          activeDentalChairs: true,
+          doctors: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              consultationMinutes: true,
+              bufferMinutes: true,
+              availability: {
+                where: { isActive: true },
+                select: {
+                  dayOfWeek: true,
+                  startTime: true,
+                  endTime: true,
+                  isActive: true,
+                },
+              },
+            },
+          },
+          operatingSchedule: {
+            select: {
+              dayOfWeek: true,
+              openTime: true,
+              closeTime: true,
+              isClosed: true,
+            },
+          },
+        },
       });
-      chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
+      if (row) {
+        chairs = Math.max(row.activeDentalChairs || 1, 1);
+        clinic = {
+          id: row.id,
+          name: row.name,
+          services: [],
+          doctors: row.doctors,
+          operatingSchedule: row.operatingSchedule,
+        } as BotClinic;
+      }
     }
     for (
       let dayOffset = 0;
@@ -893,7 +1122,8 @@ export class BookingService {
     ) {
       const day = from.plus({ days: dayOffset });
       const dayIso = day.toISODate()!;
-      if (!this.cfg.openDays.includes(day.weekday)) continue;
+      const slots = this.getClinicDaySlots(clinic, day.weekday);
+      if (slots.length === 0) continue;
       for (const slot of slots) {
         if (results.length >= count) break;
         const candidate = toScheduledAt(dayIso, slot, this.cfg);

@@ -582,15 +582,16 @@ enum VisitStatus {
 
 // Dental procedure definitions
 model Procedure {
-  id           String   @id @default(uuid())
-  code         String   @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
-  name         String // e.g., "Consultation", "Simple Extraction"
-  description  String?
-  cost         Int // Cost in KES
-  allowedTiers Json // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(uuid())
+  code            String   @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
+  name            String // e.g., "Consultation", "Simple Extraction"
+  description     String?
+  cost            Int // Cost in KES
+  allowedTiers    Json // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
+  durationMinutes Int      @default(15) // expected chair time; booking uses this when set
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   visitProcedures VisitProcedure[]
 }
@@ -766,6 +767,8 @@ model Clinic {
   disbursals             Disbursal[]
   paymentConfig          ClinicPaymentConfig?
   appointments           Appointment[]
+  doctors                ClinicDoctor[]
+  operatingSchedule      ClinicOperatingHour[]
   parentClinic           Clinic?  @relation("ClinicBranches", fields: [parentClinicId], references: [id])
   branches               Clinic[] @relation("ClinicBranches")
 
@@ -828,9 +831,10 @@ model Appointment {
   memberId                   String
   clinicId                   String
   staffId                    String?
+  doctorId                   String?
   visitId                    String?           @unique
   scheduledAt                DateTime
-  durationMinutes            Int               @default(30)
+  durationMinutes            Int               @default(20)
   status                     AppointmentStatus @default(BOOKED)
   intakeReason               String
   painLevel                  Int?
@@ -851,6 +855,7 @@ model Appointment {
   member    Member              @relation(fields: [memberId], references: [id])
   clinic    Clinic              @relation(fields: [clinicId], references: [id])
   staff     StaffUser?          @relation(fields: [staffId], references: [id])
+  doctor    ClinicDoctor?       @relation(fields: [doctorId], references: [id])
   visit     Visit?              @relation(fields: [visitId], references: [id])
   events    AppointmentEvent[]
   reminders AppointmentReminder[]
@@ -859,6 +864,7 @@ model Appointment {
   @@index([clinicId, scheduledAt])
   @@index([status, scheduledAt])
   @@index([staffId])
+  @@index([doctorId, scheduledAt])
 }
 
 model AppointmentEvent {
@@ -892,6 +898,64 @@ model AppointmentReminder {
 
   @@unique([appointmentId, kind, channel])
   @@index([appointmentId])
+}
+
+// ─── Booking: doctors, schedules, calendar sync ─────────────────────────────
+
+model ClinicDoctor {
+  id                  String   @id @default(uuid())
+  clinicId            String
+  name                String
+  title               String? // e.g. "Dr.", "DDS"
+  specialty           String?
+  isActive            Boolean  @default(true)
+  consultationMinutes Int      @default(15)
+  bufferMinutes       Int      @default(5)
+  timezone            String? // defaults to clinic/BOT_BOOKING_TIMEZONE when null
+  // External calendar (Google Calendar / MS365 / etc.) — future sync
+  calendarProvider    String? // GOOGLE | MICROSOFT | NONE
+  calendarId          String?
+  calendarSyncToken   String?  @db.Text
+  calendarConnectedAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  clinic       Clinic               @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  availability DoctorAvailability[]
+  appointments Appointment[]
+
+  @@index([clinicId, isActive])
+}
+
+model DoctorAvailability {
+  id        String   @id @default(uuid())
+  doctorId  String
+  dayOfWeek Int      // 0=Sunday ... 6=Saturday (JS/Date.getDay convention)
+  startTime String   // "HH:mm" 24h local
+  endTime   String   // "HH:mm" 24h local
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor ClinicDoctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, dayOfWeek, isActive])
+}
+
+model ClinicOperatingHour {
+  id        String   @id @default(uuid())
+  clinicId  String
+  dayOfWeek Int      // 0=Sunday ... 6=Saturday
+  openTime  String?  // "HH:mm"; null when isClosed
+  closeTime String?  // "HH:mm"; null when isClosed
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, dayOfWeek])
+  @@index([clinicId])
 }
 
 // ─── Champion Referral System ────────────────────────────────────────────────
@@ -1407,19 +1471,20 @@ model BotLead {
 }
 
 model BotBookingDraft {
-  id        String   @id @default(uuid())
-  memberId  String   @unique
-  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  clinicId  String?
-  service   String?
-  date      String?
-  time      String?
-  clientName String?
+  id               String   @id @default(uuid())
+  memberId         String   @unique
+  member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  clinicId         String?
+  doctorId         String?
+  service          String?
+  date             String?
+  time             String?
+  clientName       String?
   rawDateMentioned String?
-  language  String   @default("en")
-  status    String   @default("COLLECTING")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  language         String   @default("en")
+  status           String   @default("COLLECTING")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model BotOnboardingSession {
