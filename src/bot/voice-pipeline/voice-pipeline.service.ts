@@ -18,12 +18,30 @@ import {
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { CareEventsService } from '../../care-intelligence/care-events.service';
 import { CareEventType, CarePrivacyClass } from '@prisma/client';
+import {
+  intentGuidance,
+  normalizeAction,
+  normalizeIntent,
+} from '../intents/intent.types';
+import type {
+  BotActionName,
+  IntentClassification,
+  IntentEntities,
+  IntentType,
+} from '../intents/intent.types';
+import { fallbackClassification } from '../intents/intent-fallback';
+import { BotActorService } from '../actions/bot-actor.service';
+import { BotActionRegistryService } from '../actions/bot-action-registry.service';
+import type {
+  BotActionContext,
+  BotActionResult,
+} from '../actions/bot-action.types';
+import {
+  BotMemberDataService,
+  type MemberDataScope,
+} from '../account/bot-member-data.service';
 
-export type IntentType =
-  | 'CLINICAL_INTAKE'
-  | 'HEALTH_EDUCATION'
-  | 'BOOKING_SESSION'
-  | 'AVAILABILITY_INQUIRY';
+export type { IntentType } from '../intents/intent.types';
 
 export interface ClinicalIntakeSchema {
   primary_symptom: string;
@@ -75,6 +93,9 @@ export class VoicePipelineService {
     private readonly bookingService: BookingService,
     private readonly identity: BotIdentityService,
     private readonly botAi: BotAiService,
+    private readonly actorService: BotActorService,
+    private readonly actionRegistry: BotActionRegistryService,
+    private readonly memberData: BotMemberDataService,
     @Optional() private readonly careEvents?: CareEventsService,
   ) {}
 
@@ -190,10 +211,65 @@ export class VoicePipelineService {
       }
     }
 
-    const classification = await this.classifyIntent(transcriptText);
-    this.logger.log(
-      `Intent classified [${sessionUuid}]: ${classification.intent} (${classification.confidence})`,
+    const recentHistory = await this.loadChatHistory(userId, sessionUuid);
+    const classification = await this.classifyIntent(
+      transcriptText,
+      recentHistory,
     );
+    this.logger.log(
+      `Intent classified [${sessionUuid}]: ${classification.intent} (${classification.confidence})` +
+        (classification.action ? ` action=${classification.action}` : ''),
+    );
+
+    // Resolve the sender once. An admin phone is only privileged after the
+    // explicit ADMIN + SMS verification flow, so normal chat stays member-level.
+    const actor = await this.actorService.resolve({
+      memberId: userId,
+      memberPhone: e164,
+      senderId: whatsappId,
+      memberName,
+    });
+    const actionContext: BotActionContext = {
+      actor,
+      memberId: userId,
+      memberPhone: e164,
+      senderId: whatsappId,
+      language,
+      message: transcriptText,
+      sessionId: sessionUuid,
+      entities: classification.entities,
+    };
+
+    // Bounded runtime execution: the model may propose an action, but the
+    // registry validates it, checks the capability server-side, and only then
+    // runs it. Unknown or mismatched actions fall through to intent routing.
+    const planned = await this.tryPlannedAction(classification, actionContext);
+    if (planned) {
+      if (planned.route === 'BOOKING') {
+        return this.runBookingDraftTurn(
+          transcriptText,
+          e164,
+          userId,
+          sessionUuid,
+          detectedLanguage,
+          language,
+          memberName,
+        );
+      }
+      if (planned.reply) {
+        return this.respond({
+          memberId: userId,
+          transcriptText,
+          senderPhone,
+          sessionUuid,
+          detectedLanguage,
+          language,
+          intent: classification.intent,
+          confidence: classification.confidence,
+          reply: planned.reply,
+        });
+      }
+    }
 
     if (classification.intent === 'AVAILABILITY_INQUIRY') {
       return this.runAvailabilityInquiry(
@@ -208,10 +284,13 @@ export class VoicePipelineService {
       );
     }
 
-    if (classification.intent === 'BOOKING_SESSION' || hasActiveDraft) {
-      // Fresh draft: let the booking state machine handle the turn (confirm,
-      // decline, provide details) even if the classifier wavered. Availability
-      // questions are already handled above.
+    if (
+      classification.intent === 'BOOKING_SESSION' ||
+      (hasActiveDraft && classification.intent === 'GENERAL_CONVERSATION')
+    ) {
+      // A fresh draft handles confirmations ("yes", "sawa") as conversation.
+      // Side questions (pricing, directions, symptoms) are answered instead of
+      // being swallowed by the booking state machine.
       return this.runBookingDraftTurn(
         transcriptText,
         e164,
@@ -273,25 +352,246 @@ export class VoicePipelineService {
       };
     }
 
-    const stewardReply = await this.generateMemberReply(
-      userId,
+    if (classification.intent === 'APPOINTMENT_MANAGEMENT') {
+      return this.runMemberRecordReply(
+        'APPOINTMENTS',
+        actionContext,
+        classification,
+        transcriptText,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
+      );
+    }
+
+    if (classification.intent === 'ACCOUNT_AND_BILLING') {
+      const scope: MemberDataScope =
+        (classification.entities?.scope as MemberDataScope | undefined) ??
+        'ACCOUNT';
+      return this.runMemberRecordReply(
+        scope,
+        actionContext,
+        classification,
+        transcriptText,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
+      );
+    }
+
+    if (classification.intent === 'HUMAN_HANDOFF') {
+      return this.runActionReply(
+        'ESCALATE_TO_HUMAN',
+        actionContext,
+        classification,
+        transcriptText,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
+      );
+    }
+
+    if (classification.intent === 'COMPLAINT_OR_FEEDBACK') {
+      return this.runActionReply(
+        'LOG_FEEDBACK',
+        actionContext,
+        classification,
+        transcriptText,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
+      );
+    }
+
+    if (classification.intent === 'ADMIN_DATA_REQUEST') {
+      // No action chosen, or the action fell through: never let the general
+      // persona answer a privileged request. Explain the verification path.
+      const reply =
+        language === 'sw'
+          ? 'Ufikiaji wa rekodi za mwanachama mwingine unahitaji uthibitisho. Tuma ADMIN kuanza, kisha tuma nambari ya simu ya mwanachama na ujibu kwa msimbo wa SMS.'
+          : 'Access to another member’s records needs verification. Send ADMIN to start, then send the member’s phone number and reply with the SMS code.';
+      return this.respond({
+        memberId: userId,
+        transcriptText,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
+        language,
+        intent: classification.intent,
+        confidence: classification.confidence,
+        reply,
+      });
+    }
+
+    return this.runConversationalReply(
+      classification,
+      actionContext,
       transcriptText,
-      language,
-      memberName,
+      senderPhone,
       sessionUuid,
+      detectedLanguage,
+      recentHistory,
     );
+  }
+
+  /**
+   * Run an LLM-proposed action only when it is in the closed registry and fits
+   * the classified intent. Returns null when the caller should use normal
+   * intent routing instead.
+   */
+  private async tryPlannedAction(
+    classification: IntentClassification,
+    ctx: BotActionContext,
+  ): Promise<BotActionResult | null> {
+    const action = classification.action;
+    if (!action || !this.actionRegistry.isKnown(action)) return null;
+
+    const allowedForIntent: Partial<Record<IntentType, BotActionName[]>> = {
+      AVAILABILITY_INQUIRY: ['GET_AVAILABILITY'],
+      BOOKING_SESSION: ['START_BOOKING'],
+      APPOINTMENT_MANAGEMENT: ['GET_MY_RECORDS'],
+      ACCOUNT_AND_BILLING: ['GET_MY_RECORDS'],
+      HUMAN_HANDOFF: ['ESCALATE_TO_HUMAN'],
+      COMPLAINT_OR_FEEDBACK: ['LOG_FEEDBACK'],
+      ADMIN_DATA_REQUEST: ['GET_MEMBER_RECORDS'],
+    };
+    const permitted = allowedForIntent[classification.intent] ?? [];
+    if (!permitted.includes(action)) {
+      this.logger.warn(
+        `Ignoring action ${action} for intent ${classification.intent} (not permitted)`,
+      );
+      return null;
+    }
+
+    return this.actionRegistry.execute(action, ctx);
+  }
+
+  private async runMemberRecordReply(
+    scope: MemberDataScope,
+    ctx: BotActionContext,
+    classification: IntentClassification,
+    transcriptText: string,
+    senderPhone: string,
+    sessionUuid: string,
+    detectedLanguage?: string,
+  ): Promise<PipelineExecutionResult> {
+    const reply = await this.memberData.handleRequest(
+      { id: ctx.memberId, phoneNumber: ctx.memberPhone },
+      scope,
+    );
+    return this.respond({
+      memberId: ctx.memberId,
+      transcriptText,
+      senderPhone,
+      sessionUuid,
+      detectedLanguage,
+      language: ctx.language,
+      intent: classification.intent,
+      confidence: classification.confidence,
+      reply,
+    });
+  }
+
+  private async runActionReply(
+    action: BotActionName,
+    ctx: BotActionContext,
+    classification: IntentClassification,
+    transcriptText: string,
+    senderPhone: string,
+    sessionUuid: string,
+    detectedLanguage?: string,
+  ): Promise<PipelineExecutionResult> {
+    const result = await this.actionRegistry.execute(action, ctx);
+    const reply =
+      result.reply ||
+      (ctx.language === 'sw'
+        ? 'Nimepokea ombi lako. Timu yetu itakufuata hivi karibuni.'
+        : 'I have received your request. Our team will follow up shortly.');
+    return this.respond({
+      memberId: ctx.memberId,
+      transcriptText,
+      senderPhone,
+      sessionUuid,
+      detectedLanguage,
+      language: ctx.language,
+      intent: classification.intent,
+      confidence: classification.confidence,
+      reply,
+    });
+  }
+
+  private async runConversationalReply(
+    classification: IntentClassification,
+    ctx: BotActionContext,
+    transcriptText: string,
+    senderPhone: string,
+    sessionUuid: string,
+    detectedLanguage?: string,
+    history?: ChatHistoryMessage[],
+  ): Promise<PipelineExecutionResult> {
+    const reply = await this.generateMemberReply(
+      ctx.memberId,
+      transcriptText,
+      ctx.language,
+      ctx.actor.displayName ?? null,
+      sessionUuid,
+      classification.intent,
+      history,
+    );
+    return this.respond({
+      memberId: ctx.memberId,
+      transcriptText,
+      senderPhone,
+      sessionUuid,
+      detectedLanguage,
+      language: ctx.language,
+      intent: classification.intent,
+      confidence: classification.confidence,
+      reply,
+    });
+  }
+
+  /** Persist the assistant turn and shape the pipeline result. */
+  private async respond(params: {
+    memberId: string;
+    transcriptText: string;
+    senderPhone: string;
+    sessionUuid: string;
+    detectedLanguage?: string;
+    language: 'en' | 'sw';
+    intent: IntentType;
+    confidence: number;
+    reply: string;
+  }): Promise<PipelineExecutionResult> {
+    const {
+      memberId,
+      transcriptText,
+      senderPhone,
+      sessionUuid,
+      detectedLanguage,
+      intent,
+      confidence,
+      reply,
+    } = params;
     await this.prisma.botMessageLog.create({
-      data: { memberId: userId, role: 'assistant', content: stewardReply },
+      data: { memberId, role: 'assistant', content: reply },
     });
     return {
       intakeUuid: sessionUuid,
       senderPhone,
       transcript: transcriptText,
       detectedLanguage,
-      intent: 'HEALTH_EDUCATION',
-      intentConfidence: classification.confidence,
-      healthEducationReply: stewardReply,
-      patientMessage: stewardReply,
+      intent,
+      intentConfidence: confidence,
+      ...(intent === 'HEALTH_EDUCATION' ||
+      intent === 'GENERAL_CONVERSATION' ||
+      intent === 'PRICING_AND_COVERAGE' ||
+      intent === 'CLINIC_INFO' ||
+      intent === 'PROCEDURE_EXPLAINER' ||
+      intent === 'PREPARATION_AND_AFTERCARE'
+        ? { healthEducationReply: reply }
+        : {}),
+      patientMessage: reply,
       status: 'completed',
     };
   }
@@ -420,8 +720,12 @@ export class VoicePipelineService {
 
   private async classifyIntent(
     transcript: string,
-  ): Promise<{ intent: IntentType; confidence: number }> {
-    const prompt = buildIntentClassificationPrompt(transcript);
+    history: ChatHistoryMessage[] = [],
+  ): Promise<IntentClassification> {
+    const historyText = history
+      .map((message) => `${message.role}: ${message.content}`)
+      .join('\n');
+    const prompt = buildIntentClassificationPrompt(transcript, historyText);
     try {
       const result = await this.llmProvider.generateCompletion({
         systemPrompt: INTENT_CLASSIFIER_SYSTEM_PROMPT,
@@ -429,90 +733,72 @@ export class VoicePipelineService {
         operation: 'voice_intent_classification',
       });
       const cleaned = this.extractJsonString(result);
-      const parsed = JSON.parse(cleaned) as {
-        intent?: string;
-        confidence?: unknown;
-      };
-      let intent: IntentType = 'HEALTH_EDUCATION';
-      if (parsed.intent === 'BOOKING_SESSION') intent = 'BOOKING_SESSION';
-      else if (parsed.intent === 'CLINICAL_INTAKE') intent = 'CLINICAL_INTAKE';
-      else if (parsed.intent === 'AVAILABILITY_INQUIRY')
-        intent = 'AVAILABILITY_INQUIRY';
+      const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+      const intent = normalizeIntent(parsed.intent) ?? 'HEALTH_EDUCATION';
+      const action = normalizeAction(parsed.action);
       const confidence =
-        typeof parsed.confidence === 'number' ? parsed.confidence : 0.95;
-      return { intent, confidence };
+        typeof parsed.confidence === 'number'
+          ? Math.min(Math.max(parsed.confidence, 0), 1)
+          : 0.8;
+      let entities = this.parseEntities(parsed.entities);
+      if (action === 'GET_MEMBER_RECORDS' && !entities?.memberPhone) {
+        const phone = this.extractPhone(transcript);
+        if (phone) {
+          entities ??= {};
+          entities.memberPhone = phone;
+        }
+      }
+      const reasoning =
+        typeof parsed.reasoning === 'string'
+          ? parsed.reasoning.slice(0, 200)
+          : undefined;
+      return { intent, confidence, action, entities, reasoning };
     } catch (error) {
       this.logger.warn(
         `Intent classification parsing failed, using fallback heuristic: ${error}`,
       );
-      const lower = transcript.toLowerCase();
-      const availabilityKeywords = [
-        'available',
-        'availability',
-        'open slot',
-        'open slots',
-        'free slot',
-        'free slots',
-        'free time',
-        'openings',
-        'opening',
-        'what time',
-        'what times',
-        'which slot',
-        'which slots',
-        'any slot',
-        'any slots',
-        'when are you open',
-        'when is the clinic open',
-        'working hours',
-        'office hours',
-        'nafasi gani',
-        'nafasi zipo',
-        'muda gani',
-        'kuna nafasi',
-        'mnafungua saa ngapi',
-      ];
-      const bookingKeywords = [
-        'book',
-        'schedule',
-        'appointment',
-        'reserve',
-        'session',
-        'miadi',
-        'panga',
-        'book me',
-        'i want to come',
-        'nataka kuja',
-      ];
-      const clinicalKeywords = [
-        'maumivu',
-        'jino',
-        'meno',
-        'pain',
-        'ache',
-        'hurt',
-        'bleed',
-        'damu',
-        'uvimbe',
-        'swelling',
-        'kuuma',
-        'tibu',
-      ];
-      const asksAvailability = availabilityKeywords.some((k) =>
-        lower.includes(k),
-      );
-      const asksBooking = bookingKeywords.some((k) => lower.includes(k));
-      if (asksAvailability && !asksBooking) {
-        return { intent: 'AVAILABILITY_INQUIRY', confidence: 0.85 };
-      }
-      if (asksBooking) {
-        return { intent: 'BOOKING_SESSION', confidence: 0.85 };
-      }
-      if (clinicalKeywords.some((k) => lower.includes(k))) {
-        return { intent: 'CLINICAL_INTAKE', confidence: 0.8 };
-      }
-      return { intent: 'HEALTH_EDUCATION', confidence: 0.8 };
+      return fallbackClassification(transcript);
     }
+  }
+
+  private parseEntities(raw: unknown): IntentEntities | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const source = raw as Record<string, unknown>;
+    const pick = (key: string): string | undefined => {
+      const value = source[key];
+      return typeof value === 'string' && value.trim()
+        ? value.trim()
+        : undefined;
+    };
+    const scopeRaw = pick('scope')?.toUpperCase();
+    const scopes: MemberDataScope[] = [
+      'ACCOUNT',
+      'PAYMENTS',
+      'APPOINTMENTS',
+      'VISITS',
+      'CLAIMS',
+    ];
+    const scope = scopes.includes(scopeRaw as MemberDataScope)
+      ? (scopeRaw as MemberDataScope)
+      : undefined;
+    const entities: IntentEntities = {
+      clinic: pick('clinic'),
+      doctor: pick('doctor'),
+      date: pick('date'),
+      time: pick('time'),
+      service: pick('service'),
+      memberPhone: pick('memberPhone'),
+      scope,
+    };
+    const hasValue = Object.values(entities).some((value) => value != null);
+    return hasValue ? entities : undefined;
+  }
+
+  private extractPhone(text: string): string | undefined {
+    const match = (text || '').match(
+      /(?:\+?254|0)?7\d{2}[\s-]?\d{3}[\s-]?\d{3}/,
+    );
+    return match?.[0]?.replace(/[^\d]/g, '');
   }
 
   private async executeBorderAgent(
@@ -554,15 +840,20 @@ export class VoicePipelineService {
     language: 'en' | 'sw',
     memberName: string | null,
     sessionUuid: string,
+    intent: IntentType = 'HEALTH_EDUCATION',
+    history?: ChatHistoryMessage[],
   ): Promise<string> {
-    const history = await this.loadChatHistory(memberId, sessionUuid);
+    const chatHistory =
+      history ?? (await this.loadChatHistory(memberId, sessionUuid));
     const { message } = await this.botAi.generateReply(
       transcriptText,
-      history,
+      chatHistory,
       'whatsapp_reply',
       {
         language,
         memberName,
+        intent,
+        intentGuidance: intentGuidance(intent),
       },
     );
     return message;
