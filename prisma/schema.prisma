@@ -1589,6 +1589,10 @@ model BotContextFile {
   contentType String
   byteSize    Int
   sha256      String
+  // Stable identity of the effective title + extracted text. Two uploads with
+  // the same title and content collapse onto one row even if the source bytes
+  // differ (PDF vs DOCX re-export, metadata-only changes).
+  dedupeKey   String? @unique
   // S3 key of the untouched original: raw/<sha256>/<filename>
   storageKey  String
   // S3 key of the extracted markdown: text/<sha256>/<filename>.md

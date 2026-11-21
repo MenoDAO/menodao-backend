@@ -203,6 +203,7 @@ export class AdminBrandContextController {
       updated: result.updated,
       deactivated: result.deactivated,
       skipped: result.skipped.length,
+      duplicate: result.duplicate,
     });
     return result;
   }

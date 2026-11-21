@@ -17,6 +17,8 @@ describe('ContextFileService (upload ingest)', () => {
     botContextFile: {
       create: jest.Mock<Promise<unknown>, [{ data: Record<string, unknown> }]>;
       delete: jest.Mock<Promise<unknown>, [{ where: { id: string } }]>;
+      findFirst: jest.Mock<Promise<unknown>, [unknown]>;
+      findUnique: jest.Mock<Promise<unknown>, [unknown]>;
     };
     botContextDocument: {
       findUnique: jest.Mock<Promise<unknown>, []>;
@@ -51,6 +53,12 @@ describe('ContextFileService (upload ingest)', () => {
         ),
         delete: jest.fn(({ where }: { where: { id: string } }) =>
           Promise.resolve({ id: where.id }),
+        ),
+        findFirst: jest.fn<Promise<unknown>, [unknown]>(() =>
+          Promise.resolve(null),
+        ),
+        findUnique: jest.fn<Promise<unknown>, [unknown]>(() =>
+          Promise.resolve(null),
         ),
       },
       botContextDocument: {
@@ -200,6 +208,92 @@ describe('ContextFileService (upload ingest)', () => {
       );
       expect(createdDocuments[0].kind).toBe('POLICY');
       expect(createdDocuments[0].active).toBe(false);
+    });
+  });
+
+  describe('duplicate prevention', () => {
+    it('does not save a second copy when title and content match', async () => {
+      const markdown = '# Voice\n\nWarm and plain.';
+      const first = await ingest('guide.md', markdown);
+      const firstRow = {
+        ...prisma.botContextFile.create.mock.calls[0][0].data,
+        id: 'file-1',
+      };
+      prisma.botContextFile.findFirst.mockResolvedValueOnce(firstRow);
+
+      const second = await ingest('guide.md', markdown);
+
+      expect(second.duplicate).toBe(true);
+      expect(second.fileId).toBe('file-1');
+      expect(second.sections).toBe(first.sections);
+      expect(second.created).toBe(0);
+      expect(putRaw).toHaveBeenCalledTimes(1);
+      expect(putText).toHaveBeenCalledTimes(1);
+      expect(prisma.botContextFile.create).toHaveBeenCalledTimes(1);
+      expect(createdDocuments).toHaveLength(1);
+    });
+
+    it('matches on title + content across different filenames and casing', async () => {
+      const markdown = '# Voice\n\nWarm and plain.';
+      await svc.ingest({
+        filename: 'guide.md',
+        contentType: 'text/markdown',
+        buffer: Buffer.from(markdown),
+        title: 'Voice Guide',
+      });
+      const firstRow = {
+        ...prisma.botContextFile.create.mock.calls[0][0].data,
+        id: 'file-1',
+      };
+      prisma.botContextFile.findFirst.mockResolvedValueOnce(firstRow);
+
+      const result = await svc.ingest({
+        filename: 'copy.md',
+        contentType: 'text/markdown',
+        buffer: Buffer.from(markdown),
+        title: 'voice guide',
+      });
+
+      expect(result.duplicate).toBe(true);
+      expect(result.filename).toBe('guide.md');
+      expect(prisma.botContextFile.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('still stores the same bytes under a different title', async () => {
+      const markdown = '# Voice\n\nWarm and plain.';
+      await ingest('guide.md', markdown);
+      const result = await svc.ingest({
+        filename: 'guide.md',
+        contentType: 'text/markdown',
+        buffer: Buffer.from(markdown),
+        title: 'A Different Guide',
+      });
+
+      expect(result.duplicate).toBe(false);
+      expect(prisma.botContextFile.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the winner when a concurrent insert hits the unique index', async () => {
+      prisma.botContextFile.create.mockRejectedValueOnce({ code: 'P2002' });
+      prisma.botContextFile.findUnique.mockResolvedValueOnce({
+        id: 'winner',
+        filename: 'guide.md',
+        sectionCount: 3,
+        storageKey: 'raw/winner/guide.md',
+        textStorageKey: 'text/winner/guide.md.md',
+      });
+
+      const result = await ingest('guide.md', '# Voice\n\nWarm.');
+
+      expect(result.duplicate).toBe(true);
+      expect(result.fileId).toBe('winner');
+      expect(result.sections).toBe(3);
+      expect(prisma.botContextFile.delete).not.toHaveBeenCalled();
+      // Our objects were not the winner's, so they must not be left behind.
+      expect(remove).toHaveBeenCalledWith(
+        putRaw.mock.calls[0][0],
+        putText.mock.calls[0][0],
+      );
     });
   });
 

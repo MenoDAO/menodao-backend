@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BrandContextService } from './brand-context.service';
 import { ContextFileStorageService } from './context-file-storage.service';
@@ -18,6 +19,52 @@ export interface ContextFileIngestResult {
   deactivated: number;
   /** Archive entries that could not be turned into text. */
   skipped: string[];
+  /** True when the upload matched an existing title + content and was skipped. */
+  duplicate: boolean;
+}
+
+interface ExistingContextFile {
+  id: string;
+  filename: string;
+  sectionCount: number;
+  storageKey?: string | null;
+  textStorageKey?: string | null;
+}
+
+/**
+ * Canonical form used only for duplicate detection. Extraction already
+ * normalises line endings; this folds repeated spaces and trailing blank
+ * lines so cosmetic re-exports do not create a new document. Content stays
+ * case-sensitive — capitalisation can carry meaning in a brand guide.
+ */
+export function normalizeDedupeText(value: string): string {
+  return (value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Titles are compared case-insensitively: "Guide" and "guide" are one file. */
+export function normalizeDedupeTitle(title: string): string {
+  return normalizeDedupeText(title).toLowerCase();
+}
+
+/** Stable identity for "same title, same content", independent of file bytes. */
+export function hashDedupeIdentity(title: string, markdown: string): string {
+  return createHash('sha256')
+    .update(
+      `${normalizeDedupeTitle(title)}\n\n${normalizeDedupeText(markdown)}`,
+    )
+    .digest('hex');
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
 }
 
 /**
@@ -40,6 +87,52 @@ export class ContextFileService {
     private readonly context: BrandContextService,
   ) {}
 
+  /**
+   * New uploads are matched by their title+content key. Rows written before
+   * that column existed are matched by their byte hash instead, with the title
+   * checked in JS because it was only stored when explicitly supplied.
+   */
+  private async findDuplicate(
+    dedupeKey: string,
+    sha256: string,
+    effectiveTitle: string,
+  ): Promise<ExistingContextFile | null> {
+    const byKey = await this.prisma.botContextFile.findFirst({
+      where: { dedupeKey },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (byKey) return byKey;
+
+    const legacy = await this.prisma.botContextFile.findFirst({
+      where: { dedupeKey: null, sha256 },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (
+      legacy &&
+      normalizeDedupeTitle(
+        legacy.title || titleFromFilename(legacy.filename),
+      ) === normalizeDedupeTitle(effectiveTitle)
+    ) {
+      return legacy;
+    }
+    return null;
+  }
+
+  private duplicateResult(
+    existing: ExistingContextFile,
+  ): ContextFileIngestResult {
+    return {
+      fileId: existing.id,
+      filename: existing.filename,
+      sections: existing.sectionCount,
+      created: 0,
+      updated: 0,
+      deactivated: 0,
+      skipped: [],
+      duplicate: true,
+    };
+  }
+
   async ingest(input: {
     filename: string;
     contentType: string;
@@ -59,6 +152,23 @@ export class ContextFileService {
     const rawKey = this.storage.rawKey(sha256, filename);
     const textKey = this.storage.textKey(sha256, filename);
     const markdown = renderExtractedText(filename, documents);
+    const effectiveTitle = input.title?.trim() || titleFromFilename(filename);
+    const dedupeKey = hashDedupeIdentity(effectiveTitle, markdown);
+
+    // 1b. Same title + same extracted content is the same document, even when
+    //     the bytes differ (re-exported PDF, DOCX metadata, different filename).
+    //     Check before any S3 write so a duplicate costs nothing.
+    const duplicate = await this.findDuplicate(
+      dedupeKey,
+      sha256,
+      effectiveTitle,
+    );
+    if (duplicate) {
+      this.logger.log(
+        `Skipped duplicate brand-context upload ${filename}: already stored as ${duplicate.filename}`,
+      );
+      return this.duplicateResult(duplicate);
+    }
 
     // 2. Raw bytes as they arrived, plus the text we derived from them.
     await this.storage.putRaw(rawKey, buffer, input.contentType);
@@ -93,7 +203,7 @@ export class ContextFileService {
       sections.push(...this.context.splitIntoSections(document.text, fallback));
     }
 
-    let fileRow: { id: string };
+    let fileRow: ExistingContextFile;
     try {
       // 4. Row first: sections reference it through fileId.
       fileRow = await this.prisma.botContextFile.create({
@@ -102,6 +212,7 @@ export class ContextFileService {
           contentType: input.contentType || 'application/octet-stream',
           byteSize: buffer.length,
           sha256,
+          dedupeKey,
           storageKey: rawKey,
           textStorageKey,
           status: 'EXTRACTED',
@@ -113,6 +224,21 @@ export class ContextFileService {
         },
       });
     } catch (error) {
+      // Two simultaneous uploads can pass the check above. The unique index
+      // decides the winner; the loser reports the stored document as duplicate
+      // and drops only the S3 objects the winner is not using.
+      if (isUniqueViolation(error)) {
+        const existing = await this.prisma.botContextFile
+          .findUnique({ where: { dedupeKey } })
+          .catch(() => null);
+        if (existing) {
+          await this.storage.remove(
+            existing.storageKey === rawKey ? null : rawKey,
+            existing.textStorageKey === textStorageKey ? null : textStorageKey,
+          );
+          return this.duplicateResult(existing);
+        }
+      }
       await this.storage.remove(rawKey, textStorageKey);
       throw error;
     }
@@ -147,6 +273,7 @@ export class ContextFileService {
         updated: result.updated,
         deactivated: result.deactivated,
         skipped,
+        duplicate: false,
       };
     } catch (error) {
       // Unwind: the upload never became retrievable, so neither should its
