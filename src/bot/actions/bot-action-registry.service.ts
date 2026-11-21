@@ -99,21 +99,37 @@ export class BotActionRegistryService {
       };
     }
 
-    switch (action) {
-      case 'GET_AVAILABILITY':
-        return this.getAvailability(ctx);
-      case 'START_BOOKING':
-        return { ok: true, action, reply: '', route: 'BOOKING' };
-      case 'GET_MY_RECORDS':
-        return this.getMyRecords(ctx);
-      case 'GET_MEMBER_RECORDS':
-        return this.getMemberRecords(ctx);
-      case 'ESCALATE_TO_HUMAN':
-        return this.escalate(ctx);
-      case 'LOG_FEEDBACK':
-        return this.logFeedback(ctx);
-      default:
-        return { ok: false, action, reply: '' };
+    try {
+      switch (action) {
+        case 'GET_AVAILABILITY':
+          return await this.getAvailability(ctx);
+        case 'START_BOOKING':
+          return { ok: true, action, reply: '', route: 'BOOKING' };
+        case 'GET_MY_RECORDS':
+          return await this.getMyRecords(ctx);
+        case 'GET_MEMBER_RECORDS':
+          return await this.getMemberRecords(ctx);
+        case 'ESCALATE_TO_HUMAN':
+          return await this.escalate(ctx);
+        case 'LOG_FEEDBACK':
+          return await this.logFeedback(ctx);
+        default:
+          return { ok: false, action, reply: '' };
+      }
+    } catch (error) {
+      this.logger.error(
+        `Bot action ${action} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return {
+        ok: false,
+        action,
+        reply:
+          ctx.language === 'sw'
+            ? 'Samahani, sikuweza kukamilisha hilo kwa sasa. Tafadhali jaribu tena baada ya dakika chache.'
+            : 'Sorry, I could not complete that right now. Please try again in a moment.',
+      };
     }
   }
 
