@@ -860,6 +860,12 @@ model Appointment {
   events    AppointmentEvent[]
   reminders AppointmentReminder[]
 
+  /// External calendar the appointment was pushed to (GOOGLE | MICROSOFT).
+  /// Populated by the calendar sync layer once a doctor/clinic is connected.
+  externalCalendarProvider String?     @default("NONE")
+  externalEventId          String?
+  calendarSyncedAt         DateTime?
+
   @@index([memberId, scheduledAt])
   @@index([clinicId, scheduledAt])
   @@index([status, scheduledAt])
@@ -956,6 +962,30 @@ model ClinicOperatingHour {
 
   @@unique([clinicId, dayOfWeek])
   @@index([clinicId])
+}
+
+/// OAuth2 token connection to an external calendar for a clinic or a single
+/// doctor (Google Calendar / Microsoft 365). Tokens are stored encrypted at
+/// rest; plaintext API keys only live in env and are never persisted.
+model CalendarConnection {
+  id               String   @id @default(uuid())
+  /// "DOCTOR" or "CLINIC"
+  ownerType        String
+  ownerId          String
+  provider         String // "GOOGLE" | "MICROSOFT"
+  calendarId       String?
+  accountEmail    String?
+  accessToken      String   @db.Text
+  refreshToken     String?  @db.Text
+  tokenExpiresAt   DateTime?
+  scopes           String?  @db.Text
+  connectedAt      DateTime @default(now())
+  lastSyncedAt     DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([ownerType, ownerId, provider])
+  @@index([ownerType, ownerId])
 }
 
 // ─── Champion Referral System ────────────────────────────────────────────────

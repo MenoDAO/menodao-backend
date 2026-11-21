@@ -17,6 +17,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
+import { CalendarSyncService } from '../../calendar/calendar-sync.service';
 import { AppointmentActor, AppointmentStatus } from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
@@ -44,6 +45,7 @@ import {
   t,
   ASK_SERVICE,
   ASK_SERVICE_CHOICE,
+  ASK_DOCTOR,
   ASK_DATE_TIME,
   ASK_NAME,
   ASK_CLINIC,
@@ -135,6 +137,10 @@ export interface BookingResult {
 type BotDoctor = {
   id: string;
   name: string;
+  title?: string | null;
+  specialty?: string | null;
+  isActive?: boolean;
+  clinicId?: string | null;
   consultationMinutes: number;
   bufferMinutes: number;
   availability: Array<{
@@ -169,6 +175,7 @@ export class BookingService {
     private readonly configService: ConfigService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
     private readonly smsService: SmsService,
+    private readonly calendarSync: CalendarSyncService,
   ) {
     this.cfg = this.loadConfig();
   }
@@ -234,12 +241,16 @@ export class BookingService {
   private getClinicDayWindows(
     clinic: BotClinic | null | undefined,
     isoWeekday: number,
+    doctorId?: string | null,
   ): Array<{ open: string; close: string }> {
     // Doctor availability takes precedence when any doctor has schedule for the day.
-    if (clinic?.doctors?.length) {
+    const doctors = doctorId
+      ? (clinic?.doctors ?? []).filter((d) => d.id === doctorId)
+      : (clinic?.doctors ?? []);
+    if (doctors.length > 0) {
       const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
       const windows: Array<{ open: string; close: string }> = [];
-      for (const doc of clinic.doctors) {
+      for (const doc of doctors) {
         for (const a of doc.availability) {
           if (a.isActive && a.dayOfWeek === jsDay) {
             windows.push({ open: a.startTime, close: a.endTime });
@@ -263,8 +274,9 @@ export class BookingService {
   private isClinicOpenOnDay(
     clinic: BotClinic | null | undefined,
     isoWeekday: number,
+    doctorId?: string | null,
   ): boolean {
-    return this.getClinicDayWindows(clinic, isoWeekday).length > 0;
+    return this.getClinicDayWindows(clinic, isoWeekday, doctorId).length > 0;
   }
 
   private validateSlotForClinic(
@@ -272,6 +284,7 @@ export class BookingService {
     timeHHmm: string,
     now: DateTime,
     clinic: BotClinic | null | undefined,
+    doctorId?: string | null,
   ): SlotValidationResult {
     const [hour, minute] = timeHHmm.split(':').map(Number);
     const candidate = DateTime.fromISO(dateIso, {
@@ -285,7 +298,7 @@ export class BookingService {
     if (candidate <= now) return 'PAST';
 
     const weekday = candidate.weekday;
-    const windows = this.getClinicDayWindows(clinic, weekday);
+    const windows = this.getClinicDayWindows(clinic, weekday, doctorId);
     if (windows.length === 0) return 'CLOSED_DAY';
 
     const slotEndMinutes = hour * 60 + minute + this.cfg.slotMinutes;
@@ -312,8 +325,9 @@ export class BookingService {
   private getClinicDaySlots(
     clinic: BotClinic | null | undefined,
     isoWeekday: number,
+    doctorId?: string | null,
   ): string[] {
-    const windows = this.getClinicDayWindows(clinic, isoWeekday);
+    const windows = this.getClinicDayWindows(clinic, isoWeekday, doctorId);
     const out: string[] = [];
     for (const w of windows) {
       const [openH, openM] = w.open.split(':').map(Number);
@@ -350,6 +364,9 @@ export class BookingService {
             select: {
               id: true,
               name: true,
+              title: true,
+              specialty: true,
+              isActive: true,
               consultationMinutes: true,
               bufferMinutes: true,
               availability: {
@@ -392,6 +409,9 @@ export class BookingService {
       doctors: c.doctors.map((d) => ({
         id: d.id,
         name: d.name,
+        title: d.title,
+        specialty: d.specialty,
+        isActive: d.isActive,
         consultationMinutes: d.consultationMinutes ?? 15,
         bufferMinutes: d.bufferMinutes ?? 5,
         availability: d.availability,
@@ -535,6 +555,7 @@ export class BookingService {
     const updates: Partial<{
       service: string;
       clinicId: string | null;
+      doctorId: string | null;
       date: string;
       time: string;
       clientName: string;
@@ -574,6 +595,27 @@ export class BookingService {
       resolvedClinic = clinics[0];
     } else if (draft.clinicId) {
       resolvedClinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+    }
+
+    // Doctor selection: when the clinic has several doctors, accept the reply
+    // to ASK_DOCTOR as either its 1-based number or a doctor-name match.
+    // Single-doctor clinics are auto-assigned; otherwise the missing-fields
+    // flow asks the member which doctor they prefer.
+    if (
+      resolvedClinic &&
+      resolvedClinic.doctors.length > 0 &&
+      !draft.doctorId &&
+      !updates.doctorId
+    ) {
+      const selected = this.parseDoctorSelection(
+        userMessage,
+        resolvedClinic.doctors,
+      );
+      if (selected) {
+        updates.doctorId = selected.id;
+      } else if (resolvedClinic.doctors.length === 1) {
+        updates.doctorId = resolvedClinic.doctors[0].id;
+      }
     }
 
     if (extraction.service) {
@@ -637,6 +679,7 @@ export class BookingService {
         mergedTime,
         now,
         clinicForValidation,
+        updates.doctorId ?? draft.doctorId ?? null,
       );
       if (validation !== 'OK') {
         await this.saveDraft(userId, updates);
@@ -681,18 +724,22 @@ export class BookingService {
     const meaningfulUpdate =
       !!updates.service ||
       !!updates.clinicId ||
+      !!updates.doctorId ||
       !!updates.date ||
       !!updates.time ||
       !!updates.clientName ||
       updates.status === 'COLLECTING';
     if (this.isAvailabilityQuestion(userMessage) && !meaningfulUpdate) {
       return {
-        reply: await this.describeAvailability(userMessage, effectiveLang),
+        reply: await this.describeAvailability(userMessage, effectiveLang, {
+          doctorId: updatedDraft.doctorId,
+          service: updatedDraft.service,
+        }),
         triageFlag: false,
       };
     }
 
-    const missing = this.collectMissingFields(updatedDraft);
+    const missing = this.collectMissingFields(updatedDraft, clinics);
     if (missing.length > 0) {
       if (missing.includes('clinic') && clinics.length === 0) {
         return {
@@ -720,11 +767,20 @@ export class BookingService {
       'Dr. Papi Dental Clinic';
     return {
       reply: t(READ_BACK, effectiveLang, {
-        service: updatedDraft.service!,
+        service: updatedDraft.service ?? '',
         date: this.formatDate(updatedDraft.date!, effectiveLang),
         time: this.format24hTime(updatedDraft.time!),
         clinic: resolvedClinicName,
         name: updatedDraft.clientName ?? memberName ?? 'there',
+        doctor:
+          updatedDraft.doctorId &&
+          clinics.find((c) => c.id === updatedDraft.clinicId)?.doctors.some(
+            (d) => d.id === updatedDraft.doctorId,
+          )
+            ? clinics
+                .find((c) => c.id === updatedDraft.clinicId)!
+                .doctors.find((d) => d.id === updatedDraft.doctorId)!.name
+            : '',
       }),
       triageFlag: false,
     };
@@ -734,6 +790,7 @@ export class BookingService {
     draft: {
       memberId: string;
       clinicId: string | null;
+      doctorId: string | null;
       service: string | null;
       date: string | null;
       time: string | null;
@@ -746,6 +803,8 @@ export class BookingService {
   ): Promise<{ reply: string; triageFlag: boolean }> {
     const scheduledAt = toScheduledAt(draft.date!, draft.time!, this.cfg);
     const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+    const doctorId = draft.doctorId;
+    const durationMinutes = this.getServiceDurationMinutes(draft.service);
 
     try {
       const appointment = await this.prisma.$transaction(async (tx) => {
@@ -781,18 +840,31 @@ export class BookingService {
         const taken = nearby.filter((row) =>
           this.overlaps(
             scheduledAt,
-            this.cfg.slotMinutes,
+            durationMinutes,
             row.scheduledAt,
             row.durationMinutes,
           ),
         ).length;
-        if (taken >= chairs) throw new Error('SLOT_CONFLICT');
+        if (doctorId) {
+          const doctorConflict = nearby.some(
+            (row) =>
+              scheduledAt.getTime() <
+                new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
+              new Date(row.scheduledAt).getTime() <
+                scheduledAt.getTime() + durationMinutes * 60_000,
+          );
+          if (doctorConflict) throw new Error('SLOT_CONFLICT');
+        } else if (taken >= chairs) {
+          throw new Error('SLOT_CONFLICT');
+        }
 
         const appt = await tx.appointment.create({
           data: {
             memberId: draft.memberId,
             clinicId: draft.clinicId,
+            doctorId: doctorId ?? undefined,
             scheduledAt,
+            durationMinutes,
             intakeReason: draft.service ?? 'General consultation',
             hasConsent: true,
             memberNotes: draft.rawDateMentioned
@@ -814,6 +886,24 @@ export class BookingService {
 
         return appt;
       });
+
+      // Best-effort push to the doctor's/clinic's connected external calendar.
+      try {
+        await this.calendarSync.createAppointmentEvent({
+          id: appointment.id,
+          scheduledAt,
+          durationMinutes,
+          doctorId,
+          clinicId: draft.clinicId!,
+          externalCalendarProvider: appointment.externalCalendarProvider,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `External calendar push failed for booking ${appointment.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
 
       // Notify clinic staff (doctor/physician) about the new booking —
       // general info only (member name + slot), no clinical details.
@@ -851,6 +941,8 @@ export class BookingService {
           draft.clinicId,
           scheduledAt,
           3,
+          doctorId,
+          durationMinutes,
         );
         const altText = alternatives
           .map(
@@ -919,6 +1011,7 @@ export class BookingService {
   async describeAvailability(
     message: string,
     lang: BookingLang = 'en',
+    options: { doctorId?: string | null; service?: string | null } = {},
   ): Promise<string> {
     const clinics = await this.loadClinics();
     if (clinics.length === 0) {
@@ -952,20 +1045,32 @@ export class BookingService {
           : `*${c.name}* — available slots:`;
       lines.push(header);
       let found = 0;
+      const slotDuration = options.service
+        ? this.getServiceDurationMinutes(options.service)
+        : this.cfg.slotMinutes;
       for (
         let dayOffset = 0;
         dayOffset < rangeDays && found < 12;
         dayOffset++
       ) {
         const day = start.plus({ days: dayOffset });
-        const daySlotsList = this.getClinicDaySlots(c, day.weekday);
+        const daySlotsList = this.getClinicDaySlots(
+          c,
+          day.weekday,
+          options.doctorId ?? null,
+        );
         if (daySlotsList.length === 0) continue;
         const dayIso = day.toISODate()!;
         const free: string[] = [];
         for (const slot of daySlotsList) {
           const candidate = toScheduledAt(dayIso, slot, this.cfg);
           if (DateTime.fromJSDate(candidate) <= now) continue;
-          const taken = await this.isSlotTaken(c.id, candidate);
+          const taken = await this.isSlotTaken(
+            c.id,
+            candidate,
+            options.doctorId ?? null,
+            slotDuration,
+          );
           if (!taken) free.push(this.format24hTime(slot));
           if (free.length >= 6) break;
         }
@@ -1027,47 +1132,99 @@ export class BookingService {
   private async isSlotTaken(
     clinicId: string,
     scheduledAt: Date,
+    doctorId: string | null = null,
+    durationMinutes: number = this.cfg.slotMinutes,
   ): Promise<boolean> {
+    const start = scheduledAt;
+    const end = new Date(scheduledAt.getTime() + durationMinutes * 60_000);
+    const windowStart = new Date(start.getTime() - durationMinutes * 60_000);
+    const windowEnd = new Date(end.getTime() + durationMinutes * 60_000);
+
+    const internalWhere: {
+      clinicId: string;
+      scheduledAt: { gte: Date; lt: Date };
+      status: { in: AppointmentStatus[] };
+      doctorId?: string;
+    } = {
+      clinicId,
+      scheduledAt: { gte: windowStart, lt: windowEnd },
+      status: {
+        in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
+      },
+    };
+    if (doctorId) internalWhere.doctorId = doctorId;
+
+    const internal = await this.prisma.appointment.findMany({
+      where: internalWhere as never,
+      select: { scheduledAt: true, durationMinutes: true },
+    });
+    const internalOverlap = internal.some(
+      (row) =>
+        start.getTime() <
+          new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
+        new Date(row.scheduledAt).getTime() < end.getTime(),
+    );
+
+    const externalBusy = doctorId
+      ? await this.getCalendarBusy(
+          'DOCTOR',
+          doctorId,
+          { from: windowStart, to: windowEnd },
+        )
+      : await this.getCalendarBusy('CLINIC', clinicId, { from: windowStart, to: windowEnd });
+    const externalOverlap = externalBusy.some(
+      (busy) =>
+        start.getTime() < busy.end.getTime() && busy.start.getTime() < end.getTime(),
+    );
+
+    if (doctorId) {
+      // Single-doctor booking: any overlap (internal or external) blocks the slot.
+      return internalOverlap || externalOverlap;
+    }
+
+    // Clinic-level booking: keep the chair-capacity semantics, and stay safe
+    // when an external calendar already occupies a doctor inside the window.
     const clinic = await this.prisma.clinic.findUnique({
       where: { id: clinicId },
       select: { activeDentalChairs: true },
     });
     const chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
-    const windowStart = new Date(
-      scheduledAt.getTime() - this.cfg.slotMinutes * 60_000,
-    );
-    const windowEnd = new Date(
-      scheduledAt.getTime() + this.cfg.slotMinutes * 60_000,
-    );
-    const nearby = await this.prisma.appointment.findMany({
-      where: {
-        clinicId,
-        scheduledAt: { gte: windowStart, lt: windowEnd },
-        status: {
-          in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
-        },
-      },
-      select: { scheduledAt: true, durationMinutes: true },
-    });
-    const taken = nearby.filter((row) =>
-      this.overlaps(
-        scheduledAt,
-        this.cfg.slotMinutes,
-        row.scheduledAt,
-        row.durationMinutes,
-      ),
+    const internalOverlaps = internal.filter(
+      (row) =>
+        start.getTime() <
+          new Date(row.scheduledAt.getTime() + row.durationMinutes * 60_000).getTime() &&
+        new Date(row.scheduledAt).getTime() < end.getTime(),
     ).length;
-    return taken >= chairs;
+    if (externalOverlap) return true;
+    return internalOverlaps >= chairs;
+  }
+
+  private async getCalendarBusy(
+    ownerType: 'DOCTOR' | 'CLINIC',
+    ownerId: string,
+    window: { from: Date; to: Date },
+  ): Promise<{ start: Date; end: Date }[]> {
+    const busy = await this.calendarSync.getBusyIntervals(
+      ownerType,
+      ownerId,
+      {
+        from: window.from,
+        to: window.to,
+        timeZone: this.cfg.timezone,
+      },
+    );
+    return busy;
   }
 
   async nextFreeSlots(
     clinicId: string | null,
     fromUtc: Date,
     count: number = 3,
+    doctorId: string | null = null,
+    durationMinutes: number = this.cfg.slotMinutes,
   ): Promise<DateTime[]> {
     const from = DateTime.fromJSDate(fromUtc).setZone(this.cfg.timezone);
     const results: DateTime[] = [];
-    let chairs = 1;
     let clinic: BotClinic | null = null;
     if (clinicId) {
       const row = await this.prisma.clinic.findUnique({
@@ -1081,6 +1238,9 @@ export class BookingService {
             select: {
               id: true,
               name: true,
+              title: true,
+              specialty: true,
+              isActive: true,
               consultationMinutes: true,
               bufferMinutes: true,
               availability: {
@@ -1105,7 +1265,6 @@ export class BookingService {
         },
       });
       if (row) {
-        chairs = Math.max(row.activeDentalChairs || 1, 1);
         clinic = {
           id: row.id,
           name: row.name,
@@ -1122,39 +1281,18 @@ export class BookingService {
     ) {
       const day = from.plus({ days: dayOffset });
       const dayIso = day.toISODate()!;
-      const slots = this.getClinicDaySlots(clinic, day.weekday);
+      const slots = this.getClinicDaySlots(clinic, day.weekday, doctorId);
       if (slots.length === 0) continue;
       for (const slot of slots) {
         if (results.length >= count) break;
         const candidate = toScheduledAt(dayIso, slot, this.cfg);
         const candidateDt = DateTime.fromJSDate(candidate);
         if (candidateDt <= DateTime.fromJSDate(fromUtc)) continue;
-        if (clinicId) {
-          const windowStart = new Date(
-            candidate.getTime() - this.cfg.slotMinutes * 60_000,
-          );
-          const windowEnd = new Date(
-            candidate.getTime() + this.cfg.slotMinutes * 60_000,
-          );
-          const nearby = await this.prisma.appointment.findMany({
-            where: {
-              clinicId,
-              scheduledAt: { gte: windowStart, lt: windowEnd },
-              status: {
-                in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
-              },
-            },
-            select: { scheduledAt: true, durationMinutes: true },
-          });
-          const taken = nearby.filter((row) =>
-            this.overlaps(
-              candidate,
-              this.cfg.slotMinutes,
-              row.scheduledAt,
-              row.durationMinutes,
-            ),
-          ).length;
-          if (taken >= chairs) continue;
+        if (
+          clinicId &&
+          (await this.isSlotTaken(clinicId, candidate, doctorId, durationMinutes))
+        ) {
+          continue;
         }
         results.push(DateTime.fromJSDate(candidate).setZone(this.cfg.timezone));
       }
@@ -1208,6 +1346,7 @@ export class BookingService {
     data: Partial<{
       service: string;
       clinicId: string | null;
+      doctorId: string | null;
       date: string;
       time: string;
       clientName: string;
@@ -1223,16 +1362,62 @@ export class BookingService {
     });
   }
 
-  private collectMissingFields(draft: {
-    service: string | null;
-    clinicId: string | null;
-    date: string | null;
-    time: string | null;
-    clientName: string | null;
-  }): string[] {
+  /**
+   * Resolve a doctor reply from ASK_DOCTOR: "2", "Dr. Achieng", "Achieng", …
+   * Only active doctors are selectable; fall back to all when none are active.
+   */
+  private parseDoctorSelection(text: string, doctors: BotDoctor[]): BotDoctor | null {
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) return null;
+    const active = doctors.filter((doctor) => doctor.isActive !== false);
+    const pool = active.length > 0 ? active : doctors;
+
+    const numbered = trimmed.match(/^(\d{1,2})\b/);
+    if (numbered) {
+      const index = Number(numbered[1]) - 1;
+      if (index >= 0 && index < pool.length) return pool[index];
+      return null;
+    }
+
+    const namePart = trimmed
+      .toLowerCase()
+      .replace(/^(dr|doctor)\.?\s+/, '')
+      .trim();
+    if (namePart.length < 3) return null;
+    return (
+      pool.find((doctor) => doctor.name.toLowerCase().includes(namePart)) ??
+      pool.find((doctor) => namePart.includes(doctor.name.toLowerCase())) ??
+      null
+    );
+  }
+
+  private collectMissingFields(
+    draft: {
+      service: string | null;
+      clinicId: string | null;
+      doctorId: string | null;
+      date: string | null;
+      time: string | null;
+      clientName: string | null;
+    },
+    clinics: BotClinic[],
+  ): string[] {
     const missing: string[] = [];
     if (!draft.service) missing.push('service');
     if (!draft.clinicId) missing.push('clinic');
+    const clinic =
+      draft.clinicId
+        ? clinics.find((c) => c.id === draft.clinicId) ?? null
+        : null;
+    const doctorValid = draft.doctorId
+      ? (clinic?.doctors ?? []).some(
+          (doctor) =>
+            doctor.id === draft.doctorId && doctor.isActive !== false,
+        )
+      : false;
+    if ((clinic?.doctors.length ?? 0) > 0 && !doctorValid) {
+      missing.push('doctor');
+    }
     if (!draft.date || !draft.time) missing.push('datetime');
     if (!draft.clientName) missing.push('name');
     return missing;
@@ -1244,6 +1429,7 @@ export class BookingService {
     draft: {
       service: string | null;
       clinicId: string | null;
+      doctorId: string | null;
       date: string | null;
       time: string | null;
       clientName: string | null;
@@ -1251,6 +1437,21 @@ export class BookingService {
     clinics: BotClinic[],
   ): string {
     switch (field) {
+      case 'doctor':
+        if (clinics.length === 0) return t(ASK_DOCTOR, lang);
+        if (draft.clinicId) {
+          const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+          const doctors =
+            clinic?.doctors.filter((d) => d.isActive !== false) ??
+            (clinic ? clinic.doctors : []);
+          if (doctors.length > 0) {
+            const doctorList = doctors
+              .map((d, i) => `${i + 1}. ${d.name}${d.specialty ? ` (${d.specialty})` : ''}`)
+              .join('\n');
+            return t(ASK_DOCTOR, lang, { doctorList });
+          }
+        }
+        return t(ASK_DOCTOR, lang);
       case 'service':
         if (clinics.length === 0) return t(ASK_SERVICE, lang);
         if (draft.clinicId) {

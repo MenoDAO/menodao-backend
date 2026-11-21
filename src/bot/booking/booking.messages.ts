@@ -47,6 +47,11 @@ export const ASK_CLINIC = msg(
   '🏥 Unataka kwenda kliniki ipi? Tafadhali chagua:\n{clinicList}', // needs native speaker review
 );
 
+export const ASK_DOCTOR = msg(
+  '🦷 Which doctor would you like? Please choose one:\n{doctorList}\n\nReply with the number or the doctor’s name.',
+  '🦷 Ni daktari gani unayependa? Tafadhali chagua:\n{doctorList}\n\nJibu kwa namba au jina la daktari.', // needs native speaker review
+);
+
 export const CLINIC_NOT_FOUND = msg(
   '🏥 I couldn\'t find a clinic matching "{name}". Please choose from the available clinics:\n{clinicList}',
   '🏥 Sikupata kliniki inayoitwa "{name}". Tafadhali chagua kliniki moja kati ya hizi:\n{clinicList}', // needs native speaker review
@@ -94,8 +99,8 @@ export const SLOT_TAKEN = msg(
 // ── Read-back / confirmation ──────────────────────────────────────────────────
 
 export const READ_BACK = msg(
-  '📋 Please confirm your appointment:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n\nIs everything correct? (Yes / No)\n\n_By replying Yes you consent to sharing these details with the clinic._',
-  '📋 Tafadhali thibitisha miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n\nJe, kila kitu ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo unakubali maelezo haya kushirikiwa na kliniki._', // needs native speaker review
+  '📋 Please confirm your appointment:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n🦷 *Doctor:* {doctor}\n\nIs everything correct? (Yes / No)\n\n_By replying Yes you consent to sharing these details with the clinic._',
+  '📋 Tafadhali thibitisha miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n🦷 *Daktari:* {doctor}\n\nJe, kila kitu ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo unakubali maelezo haya kushirikiwa na kliniki._', // needs native speaker review
 );
 
 export const BOOKING_AWAITING_CONFIRMATION = msg(

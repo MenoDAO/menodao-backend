@@ -204,6 +204,25 @@ export class AdminService implements OnModuleInit {
   }
 
   /**
+   * Admin lookup used by the calendar OAuth callback/state flow. Returns null
+   * for unknown or disabled admins so a forged state cannot mint tokens.
+   */
+  async getAdminForCalendarState(
+    adminId: string,
+  ): Promise<{
+    id: string;
+    username: string;
+    role: string;
+    isActive: boolean;
+  } | null> {
+    const admin = await this.prisma.adminUser.findUnique({
+      where: { id: adminId },
+      select: { id: true, username: true, role: true, isActive: true },
+    });
+    return admin;
+  }
+
+  /**
    * Get admin profile
    */
   async getProfile(adminId: string) {
