@@ -55,6 +55,27 @@ export function replyLanguage(language?: string | null): 'en' | 'sw' {
   return (language || '').trim().toLowerCase().startsWith('sw') ? 'sw' : 'en';
 }
 
+/**
+ * Known Swahili misspellings seen in generated replies. This is a small safety
+ * net for careless typos — the system prompt is the primary prevention.
+ */
+const SWAHILI_TYPO_CORRECTIONS: ReadonlyArray<[RegExp, string]> = [
+  [/\bkariba\b/gi, 'karibu'],
+];
+
+/** Normalise line endings and fix known Swahili typos without changing tone. */
+export function polishMemberReply(reply: string): string {
+  let text = (reply ?? '').replace(/\r\n/g, '\n').trim();
+  for (const [pattern, correction] of SWAHILI_TYPO_CORRECTIONS) {
+    text = text.replace(pattern, (match) =>
+      match[0] === match[0].toUpperCase()
+        ? correction.charAt(0).toUpperCase() + correction.slice(1)
+        : correction,
+    );
+  }
+  return text;
+}
+
 export interface DrPapiPromptContext {
   clinicContext: string;
   insuranceContext: string;
@@ -98,7 +119,7 @@ export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
   const language = replyLanguage(context.language);
   const languageDirective =
     language === 'sw'
-      ? 'The member\'s preferred language is Swahili (Kiswahili). Always reply in natural, warm Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to.'
+      ? `The member's preferred language is Swahili (Kiswahili). Always reply in natural, warm, everyday Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to. Use correct standard spellings: "karibu" — never "kariba" — plus "nambari", "tafadhali" and "samahani". Avoid literal translations and stiff, office-like phrasing.`
       : "The member's preferred language is English. Reply in clear, warm English. You may use a short Swahili greeting only if the member greets you in Swahili.";
   const nameDirective = context.memberName?.trim()
     ? `The member's name is ${context.memberName.trim()}. Greet them by name at most once, naturally, and do not overuse it.`
@@ -119,15 +140,16 @@ ${languageDirective}
 ${nameDirective}
 
 ${intentDirective}CONVERSATION STYLE (this is what makes you feel human):
-- Answer the member's actual question first, in the first sentence. Do not open with a menu or a generic acknowledgement.
+- Answer the member's actual question first, in the first sentence. Do not open with a menu, a canned acknowledgement, or a generic "how can I help".
 - Think before you answer: use the verified lists and retrieved documents, notice constraints (clinic hours, membership tier, safety red flags), and say what those constraints mean for *this* member.
 - If the member asks "can I…", "is it safe…", or "what should I do…", reason it through in one short sentence, then give the practical answer.
 - Read the recent history and never repeat your previous reply word for word. Vary your opener and sentence shape.
 - Ask at most one question per reply, and only when the answer genuinely depends on it. If you can help without asking, help.
-- When you ask the member to choose, ALWAYS list the options in the same message as a numbered list (2–5 options), each on its own line. Never say "choose one" or "what options" without showing the options.
+- Do not send numbered option menus or "Reply with 1/2/3" prompts. If you genuinely need to offer choices, put them in one natural sentence or a short comma-separated line and invite the member to answer in their own words.
+- For symptoms, be a caring person first: acknowledge the discomfort, ask one short triage question (how long, how bad, any swelling or bleeding), and do not mention booking, availability or prices until the member asks or you understand the problem.
 - Avoid canned acknowledgements such as "Asante, ujumbe wako umepokelewa" unless the member actually sent a voice note.
 - If you are unsure, say what you do know, name the uncertainty plainly, and offer the next step. Never invent a clinic, price, time, or policy.
-- If the member asks what they can choose, list the real clinics/services from the verified lists below.
+- If the member asks what they can choose, name the real clinics/services from the verified lists in a sentence, not a numbered menu.
 
 SAFETY RULES (STRICT):
 1. Never diagnose a condition or claim certainty about what is wrong with a patient's teeth or gums.
@@ -167,7 +189,7 @@ DISCLAIMER HANDLING:
  *   classification of incoming text/voice messages.
  */
 export const INTENT_CLASSIFIER_SYSTEM_PROMPT =
-  "You are MenoAI's routing layer for a Kenyan dental clinic. You infer what the member actually needs and return ONLY valid JSON. Never answer the member yourself.";
+  "You are MenoAI's routing layer for a Kenyan dental clinic. You infer what the member actually needs and return ONLY valid JSON. Never answer the member yourself. A symptom or worry about a tooth or gum is never a booking request.";
 
 /**
  * User Prompt Builder for Intent Classification.
@@ -193,7 +215,7 @@ ${historyBlock}INTENTS:
 - "BOOKING_SESSION": they want to create a specific appointment now (a date/time/service/clinic), or they are answering booking questions mid-flow.
 - "AVAILABILITY_INQUIRY": they ask which slots/times are free, when a clinic/doctor is open, or whether there is space on a day/week — without asking to lock a slot yet.
 - "APPOINTMENT_MANAGEMENT": they want to view, reschedule, or cancel an existing appointment, or check whether a booking went through.
-- "CLINICAL_INTAKE": they describe active personal pain, bleeding, swelling, trauma, or another symptom and are not asking for a specific slot.
+- "CLINICAL_INTAKE": they describe an active personal symptom (sore, aching, tender or sensitive tooth; bleeding or swollen gums; trauma; pus; difficulty eating/sleeping) and are not asking for a specific slot.
 - "HEALTH_EDUCATION": general oral-health question (brushing, flossing, diet, children's teeth, bad breath, prevention).
 - "PRICING_AND_COVERAGE": cost, fees, payment plans, insurance, membership tiers, or whether a treatment is covered.
 - "CLINIC_INFO": location, directions, branches, opening hours, phone/WhatsApp, parking, accessibility.
@@ -210,14 +232,14 @@ DISAMBIGUATION (apply in this order):
 2. If they complain or give deliberate feedback → COMPLAINT_OR_FEEDBACK.
 3. If they mention an existing appointment (cancel/move/status/did it go through) → APPOINTMENT_MANAGEMENT, not BOOKING_SESSION.
 4. If they ask for available times/slots/openings → AVAILABILITY_INQUIRY, even if they say "booking" in passing.
-5. If they ask for a specific slot and say "book me" → BOOKING_SESSION.
-6. If they describe their own active symptom → CLINICAL_INTAKE. If they ask a general "why/how" question → HEALTH_EDUCATION.
+5. If they ask for a specific slot and say "book me" → BOOKING_SESSION. A symptom on its own is never enough, even if they say it hurts.
+6. If they describe their own active symptom → CLINICAL_INTAKE. If they ask a general "why/how" question → HEALTH_EDUCATION. Never choose BOOKING_SESSION for a symptom-only message.
 7. If they ask what something costs or whether insurance covers it → PRICING_AND_COVERAGE. If they ask about their own paid balance → ACCOUNT_AND_BILLING.
 8. If the message is a staff lookup of someone else's record → ADMIN_DATA_REQUEST.
 
 ACTIONS (choose AT MOST ONE, only when the member clearly wants it executed now; otherwise null):
 - "GET_AVAILABILITY": show real free slots now.
-- "START_BOOKING": begin or continue the booking flow.
+- "START_BOOKING": begin or continue the booking flow. Never choose this for a symptom-only message; understand the problem first.
 - "GET_MY_RECORDS": fetch the sender's own records (payments, appointments, visits, claims, account). Set entities.scope.
 - "GET_MEMBER_RECORDS": a staff/admin lookup of another member. Set entities.memberPhone.
 - "ESCALATE_TO_HUMAN": create a human follow-up.

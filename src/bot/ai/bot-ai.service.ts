@@ -11,6 +11,7 @@ import {
   DR_PAPI_FALLBACK_REPLY,
   DR_PAPI_FALLBACK_REPLY_SW,
   buildDrPapiSystemPrompt,
+  polishMemberReply,
   replyLanguage,
 } from '../prompts';
 
@@ -90,8 +91,8 @@ export class BotAiService {
       rawReply =
         language === 'sw' ? DR_PAPI_FALLBACK_REPLY_SW : DR_PAPI_FALLBACK_REPLY;
     }
-    const message = rawReply;
-    const detectedLeadIntent = this.detectLeadIntent(userMessage, rawReply);
+    const message = polishMemberReply(rawReply);
+    const detectedLeadIntent = this.detectLeadIntent(userMessage, message);
     return { message, detectedLeadIntent };
   }
 

@@ -29,7 +29,10 @@ import type {
   IntentEntities,
   IntentType,
 } from '../intents/intent.types';
-import { fallbackClassification } from '../intents/intent-fallback';
+import {
+  fallbackClassification,
+  isSymptomOnlyMessage,
+} from '../intents/intent-fallback';
 import { BotActorService } from '../actions/bot-actor.service';
 import { BotActionRegistryService } from '../actions/bot-action-registry.service';
 import type {
@@ -71,11 +74,10 @@ export interface PipelineExecutionResult {
   error?: string;
 }
 
-const CLINICAL_RECEIPT = {
-  en: (name: string, symptom: string, voice: boolean) =>
-    `Thank you${name ? `, ${name}` : ''}. I've received your ${voice ? 'voice note' : 'message'} about ${symptom} and forwarded it to our clinical team (Dr. Ruwa). We will get back to you on this number to arrange a visit or give you further guidance.\n\nIf the pain or swelling gets worse, please go to the nearest clinic immediately.\n\n---\n*Dr. Papi Foundation*`,
-  sw: (name: string, symptom: string, voice: boolean) =>
-    `Asante${name ? `, ${name}` : ''}. Nimepokea ${voice ? 'ujumbe wako wa sauti' : 'ujumbe wako'} kuhusu ${symptom} na kuupeleka kwa timu yetu ya kliniki (Dr. Ruwa). Tutawasiliana nawe kupitia nambari hii kupanga muda wa kuonana na daktari au kukupa maelekezo zaidi.\n\nKama maumivu au uvimbe unaongezeka, tafadhali nenda kliniki iliyo karibu mara moja.\n\n---\n*Dr. Papi Foundation*`,
+/** Used only if the conversational triage reply cannot be generated. */
+const CLINICAL_FALLBACK_REPLY = {
+  en: `I'm sorry your tooth is hurting. How long has it been sore, and is there any swelling or bleeding? If the pain is severe, your face is swollen, or you can't breathe or swallow, please seek urgent care now.`,
+  sw: `Samahani jino lako linaumia. Limekuwa likiuma kwa muda gani, na kuna uvimbe au damu yoyote? Kama maumivu ni makali sana, uso umevimba, au unashindwa kupumua au kumeza, tafadhali nenda kwa huduma ya dharura sasa.`,
 } as const;
 
 const UNRESOLVED_MEMBER_MESSAGE =
@@ -149,7 +151,7 @@ export class VoicePipelineService {
   ): Promise<PipelineExecutionResult> {
     const sessionUuid = intakeUuid || randomUUID();
     this.logger.log(
-      `Routing message [${sessionUuid}]: "${transcriptText.substring(0, 60)}..."`,
+      `Routing ${isVoice ? 'voice note' : 'message'} [${sessionUuid}]: "${transcriptText.substring(0, 60)}..."`,
     );
 
     // Resolve existing Member by phone — no bot signup for known numbers.
@@ -318,11 +320,19 @@ export class VoicePipelineService {
             : 'NEW',
         },
       });
-      const clinicalReceipt = this.buildClinicalReceipt(
-        clinicalSchema,
+      const triageReply = await this.generateMemberReply(
+        userId,
+        transcriptText,
         language,
         memberName,
-        isVoice,
+        sessionUuid,
+        'CLINICAL_INTAKE',
+        recentHistory,
+      );
+      const clinicalReceipt = this.buildClinicalReceipt(
+        triageReply,
+        clinicalSchema,
+        language,
       );
       await this.prisma.botMessageLog.create({
         data: {
@@ -752,13 +762,49 @@ export class VoicePipelineService {
         typeof parsed.reasoning === 'string'
           ? parsed.reasoning.slice(0, 200)
           : undefined;
-      return { intent, confidence, action, entities, reasoning };
+      const classification = {
+        intent,
+        confidence,
+        action,
+        entities,
+        reasoning,
+      };
+      return this.applySymptomFirstGuard(transcript, classification);
     } catch (error) {
       this.logger.warn(
         `Intent classification parsing failed, using fallback heuristic: ${error}`,
       );
-      return fallbackClassification(transcript);
+      return this.applySymptomFirstGuard(
+        transcript,
+        fallbackClassification(transcript),
+      );
     }
+  }
+
+  /**
+   * A sore tooth is a question before it is a booking. Even if the classifier
+   * proposes START_BOOKING, a symptom-only message is routed to triage first.
+   */
+  private applySymptomFirstGuard(
+    transcript: string,
+    classification: IntentClassification,
+  ): IntentClassification {
+    if (
+      isSymptomOnlyMessage(transcript) &&
+      classification.intent !== 'CLINICAL_INTAKE'
+    ) {
+      this.logger.log(
+        `Symptom-first guard applied [${transcript.slice(0, 40)}]: ${classification.intent} -> CLINICAL_INTAKE`,
+      );
+      return {
+        ...classification,
+        intent: 'CLINICAL_INTAKE',
+        action: null,
+        confidence: Math.max(classification.confidence, 0.9),
+        reasoning: 'symptom_first',
+      };
+    }
+    return classification;
   }
 
   private parseEntities(raw: unknown): IntentEntities | undefined {
@@ -888,26 +934,26 @@ export class VoicePipelineService {
   }
 
   /**
-   * Language-, member-, and channel-aware clinical receipt. Replaces the old
-   * hard-coded Swahili voice-note acknowledgement with a reply that names the
-   * reported symptom and respects the member's preferred language.
+   * Adds an urgent-care line for red flags to the conversational triage reply.
+   * No receipt, signature or "we'll arrange a visit" promise — the member
+   * should feel heard first, not processed.
    */
   private buildClinicalReceipt(
+    triageReply: string,
     clinicalSchema: ClinicalIntakeSchema | null | undefined,
     language: 'en' | 'sw',
-    memberName: string | null,
-    isVoice: boolean,
   ): string {
-    const name = memberName?.trim() ?? '';
-    const symptom = clinicalSchema?.primary_symptom ?? 'dental concern';
-    const receipt =
-      language === 'sw'
-        ? CLINICAL_RECEIPT.sw(name, symptom, isVoice)
-        : CLINICAL_RECEIPT.en(name, symptom, isVoice);
+    const reply = triageReply.trim() || CLINICAL_FALLBACK_REPLY[language];
     if (clinicalSchema?.immediate_triage_flag) {
-      return `${receipt}\n\n🚨 Tafadhali nenda kliniki iliyo karibu au wasiliana na timu yetu ya haraka. / Please contact the nearest clinic or our urgent care team immediately.`;
+      const urgentLine =
+        language === 'sw'
+          ? '🚨 Usisubiri — nenda kliniki iliyo karibu au piga huduma ya dharura sasa.'
+          : "🚨 Don't wait — go to the nearest clinic or call emergency services now.";
+      return `${reply}\n\n${urgentLine}`;
     }
-    return receipt;
+    // Keep it to the conversational reply — no signature and no "forwarded to
+    // the team" promise, which felt like a brush-off when someone is in pain.
+    return reply;
   }
 
   private extractJsonString(raw: string): string {

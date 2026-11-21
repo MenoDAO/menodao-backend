@@ -216,7 +216,7 @@ export const INTENT_GUIDANCE: Record<IntentType, string> = {
   APPOINTMENT_MANAGEMENT:
     'They are asking about an existing appointment. Do not claim you changed or cancelled anything. Explain that you will verify them first, then help.',
   CLINICAL_INTAKE:
-    'Acknowledge the symptom briefly, ask one useful triage question, and advise urgent care for red flags. Never diagnose or prescribe.',
+    'Start with genuine empathy for the discomfort, then ask one short triage question (how long, how severe, swelling or bleeding). Do not mention booking, availability or prices until the member asks or you understand the problem. Advise urgent care for red flags. Never diagnose or prescribe.',
   HEALTH_EDUCATION:
     'Teach the concept in plain language, give one practical action, and avoid lecturing. No diagnosis or prescriptions.',
   PRICING_AND_COVERAGE:

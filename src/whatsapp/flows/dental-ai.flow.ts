@@ -233,7 +233,7 @@ export class DentalAiFlow {
    */
   private isFallbackResponse(response: string, language: 'en' | 'sw'): boolean {
     const fallbackEn = "I'm having trouble connecting right now";
-    const fallbackSw = 'Nina tatizo la kuunganika sasa hivi';
+    const fallbackSw = 'Nina tatizo la kuungana sasa hivi';
     return language === 'sw'
       ? response.includes(fallbackSw)
       : response.includes(fallbackEn);

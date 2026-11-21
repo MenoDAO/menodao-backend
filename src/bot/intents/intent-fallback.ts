@@ -70,8 +70,9 @@ const RULES: Rule[] = [
   {
     intent: 'CLINICAL_INTAKE',
     patterns: [
-      /\b(pain|ache|aching|hurts?|bleed(ing)?|swell(ing|ed)?|abscess|broken tooth|knocked out|trauma|sensitive|ulcer|pus)\b/,
-      /\b(maumivu|jino|meno|damu|uvimbe|kuuma|tibu|naniuma|linaniuma)\b/,
+      /\b(pain|ache|aching|hurts?|sore|tender|toothache|bleed(ing)?|swell(ing|ed)?|abscess|broken tooth|knocked out|trauma|sensitive|ulcer|pus)\b/,
+      /\b(tooth|teeth|gum|gums)\b.*\b(sore|hurt|ache|pain|bleed|swollen|sensitive)\b/,
+      /\b(maumivu|jino|jino linauma|meno|ufizi|damu|uvimbe|kuuma|tibu|naniuma|linaniuma|yananiuma)\b/,
       /\b(can'?t (eat|sleep|chew)|difficulty (eating|swallowing|breathing))\b/,
     ],
   },
@@ -131,6 +132,25 @@ const RULES: Rule[] = [
     ],
   },
 ];
+
+/**
+ * Explicit request to lock an appointment. If this is present, the member is
+ * allowed to skip triage and go straight to the booking state machine.
+ */
+const EXPLICIT_BOOKING_RE =
+  /\b(book|booking|schedule|reserve|appointment|miadi|nipange|nataka kuja|nafasi)\b/;
+
+const SYMPTOM_RE =
+  /\b(sore|aching|ache|pain|painful|hurts?|tender|toothache|bleed(ing)?|swell(ing|ed)?|sensitive|abscess|pus|trauma|maumivu|kuuma|naniuma|linaniuma|yananiuma|uvimbe|ufizi|damu)\b/;
+
+/**
+ * A symptom-only message must never be treated as a booking request. This is a
+ * deterministic guard over the LLM classifier, not a replacement for it.
+ */
+export function isSymptomOnlyMessage(transcript: string): boolean {
+  const text = (transcript ?? '').toLowerCase().trim();
+  return SYMPTOM_RE.test(text) && !EXPLICIT_BOOKING_RE.test(text);
+}
 
 const PHONE_RE = /(?:\+?254|0)?7\d{2}[\s-]?\d{3}[\s-]?\d{3}/;
 

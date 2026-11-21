@@ -1,4 +1,7 @@
-import { fallbackClassification } from './intent-fallback';
+import {
+  fallbackClassification,
+  isSymptomOnlyMessage,
+} from './intent-fallback';
 
 describe('fallbackClassification', () => {
   it('routes a slot question to availability, not booking', () => {
@@ -40,6 +43,20 @@ describe('fallbackClassification', () => {
     expect(result.intent).toBe('CLINICAL_INTAKE');
   });
 
+  it('treats a sore tooth as triage, never as a booking request', () => {
+    const result = fallbackClassification('my tooth is sore');
+    expect(result.intent).toBe('CLINICAL_INTAKE');
+    expect(result.action).toBeNull();
+  });
+
+  it('still allows an explicit booking when a symptom is mentioned', () => {
+    const result = fallbackClassification(
+      'My tooth is sore, book me a check-up tomorrow',
+    );
+    expect(result.intent).toBe('BOOKING_SESSION');
+    expect(result.action).toBe('START_BOOKING');
+  });
+
   it('escalates an explicit request for a person', () => {
     const result = fallbackClassification('Can I talk to a human please?');
     expect(result.intent).toBe('HUMAN_HANDOFF');
@@ -51,5 +68,18 @@ describe('fallbackClassification', () => {
     expect(result.intent).toBe('ADMIN_DATA_REQUEST');
     expect(result.action).toBe('GET_MEMBER_RECORDS');
     expect(result.entities?.memberPhone).toContain('0712');
+  });
+});
+
+describe('isSymptomOnlyMessage', () => {
+  it('recognises English and Swahili symptom descriptions', () => {
+    expect(isSymptomOnlyMessage('my tooth is sore')).toBe(true);
+    expect(isSymptomOnlyMessage('jino linaniuma')).toBe(true);
+  });
+
+  it('does not treat an explicit booking request as symptom-only', () => {
+    expect(
+      isSymptomOnlyMessage('my tooth is sore, I want to book an appointment'),
+    ).toBe(false);
   });
 });

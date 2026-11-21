@@ -17,6 +17,7 @@ import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.servi
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
+import { onboardingReprompt, onboardingWelcome } from './onboarding.messages';
 
 const WABOXAPP_INBOUND_DEDUPE_TTL_MS = 30_000;
 const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
@@ -31,19 +32,6 @@ const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_FALLBACK_REPLY =
   'Samahani, kuna hitilafu ya muda kwenye mfumo wetu. Tafadhali jaribu tena baada ya dakika chache. ' +
   'Sorry, we are having a temporary problem. Please try again in a few minutes.';
-
-const ONBOARDING_WELCOME_MENU =
-  'Kariba! 👋 Welcome to MenoDAO. MenoAI is here to help with your oral health.\n\n' +
-  'Reply with a number to choose:\n' +
-  '1️⃣ Book an appointment\n' +
-  '2️⃣ Health information / symptoms\n' +
-  '3️⃣ Help with my MenoDAO account';
-
-const ONBOARDING_MENU_PROMPT =
-  'Please reply with 1, 2 or 3 to continue:\n' +
-  '1️⃣ Book an appointment\n' +
-  '2️⃣ Health information / symptoms\n' +
-  '3️⃣ Help with my MenoDAO account';
 
 interface OnboardingMenuChoice {
   key: 'BOOKING' | 'HEALTH' | 'HELP';
@@ -475,9 +463,9 @@ export class BotGatewayService {
   }
 
   /**
-   * Onboarding state machine — drives a new member from the welcome menu to a
-   * resolved intent. The member's own words are handed to the AI pipeline once
-   * a menu option is recognised, so the rest of the bot behaves normally.
+   * First turn for a new WhatsApp contact. The welcome is a question, not a
+   * menu, and every reply after it is handed to the AI pipeline in the
+   * member's own words. Bare 1/2/3 shortcuts still work for returning users.
    */
   private async handleOnboardingTurn(params: {
     memberId: string;
@@ -502,31 +490,31 @@ export class BotGatewayService {
       });
       await this.sendTextSafely(
         recipientPhone,
-        ONBOARDING_WELCOME_MENU,
+        onboardingWelcome(preferredLanguage),
         chatContext,
       );
       return;
     }
 
     const choice = this.resolveMenuChoice(messageText);
-    if (!choice) {
+    const trimmedInput = (messageText ?? '').trim();
+    // A bare number carries no intent. Everything else — including "my tooth
+    // is sore" — goes to the pipeline exactly as the member wrote it.
+    const aiInput =
+      /^[123]$/.test(trimmedInput) && choice ? choice.phrase : trimmedInput;
+    if (!aiInput) {
       await this.sendTextSafely(
         recipientPhone,
-        ONBOARDING_MENU_PROMPT,
+        onboardingReprompt(preferredLanguage),
         chatContext,
       );
       return;
     }
 
     await this.onboardingService.setStep(memberId, 'MENU', {
-      choice: choice.key,
+      choice: choice?.key ?? 'FREE_TEXT',
       selectedAt: new Date().toISOString(),
     });
-
-    // A bare menu number carries no intent — use the canonical phrasing.
-    const aiInput = /^[123]$/.test(messageText.trim())
-      ? choice.phrase
-      : messageText;
 
     const replyText = await this.generateReplyText({
       memberId,

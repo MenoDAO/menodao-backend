@@ -946,12 +946,14 @@ export class BookingService {
           doctorId,
           durationMinutes,
         );
-        const altText = alternatives
-          .map(
-            (d) =>
-              `• ${this.format24hTime(d.toFormat('HH:mm'))} on ${this.formatDate(d.toISODate()!, lang)}`,
-          )
-          .join('\n');
+        const altText = this.humanizeList(
+          alternatives.map((d) => {
+            const time = this.format24hTime(d.toFormat('HH:mm'));
+            const date = this.formatDate(d.toISODate()!, lang);
+            return lang === 'sw' ? `${time}, ${date}` : `${time} on ${date}`;
+          }),
+          lang,
+        );
         return {
           reply: t(SLOT_TAKEN, lang, { alternatives: altText }),
           triageFlag: false,
@@ -1454,17 +1456,17 @@ export class BookingService {
             clinic?.doctors.filter((d) => d.isActive !== false) ??
             (clinic ? clinic.doctors : []);
           if (doctors.length > 0) {
-            const doctorList = doctors
-              .map(
-                (d, i) =>
-                  `${i + 1}. ${d.name}${d.specialty ? ` (${d.specialty})` : ''}`,
-              )
-              .join('\n');
+            const doctorList = this.humanizeList(
+              doctors.map(
+                (d) => `${d.name}${d.specialty ? ` (${d.specialty})` : ''}`,
+              ),
+              lang,
+            );
             return t(ASK_DOCTOR, lang, { doctorList });
           }
         }
         return t(ASK_DOCTOR, lang);
-      case 'service':
+      case 'service': {
         if (clinics.length === 0) return t(ASK_SERVICE, lang);
         if (draft.clinicId) {
           const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
@@ -1474,23 +1476,45 @@ export class BookingService {
               : Array.from(new Set(clinics.flatMap((c) => c.services)));
           if (services.length > 0) {
             return t(ASK_SERVICE_CHOICE, lang, {
-              serviceList: services.map((s, i) => `${i + 1}. ${s}`).join('\n'),
+              serviceList: this.humanizeList(services, lang),
             });
           }
         }
+        const allServices = clinics
+          .flatMap((c) => c.services)
+          .filter((s, i, arr) => arr.indexOf(s) === i);
+        const fallbackServices =
+          lang === 'sw'
+            ? [
+                'kusafisha meno',
+                'ukaguzi',
+                'kuziba jino',
+                "kung'oa jino",
+                'kupamba meno',
+                'X-ray',
+              ]
+            : [
+                'cleaning',
+                'check-up',
+                'filling',
+                'extraction',
+                'whitening',
+                'X-ray',
+              ];
         return t(ASK_SERVICE_CHOICE, lang, {
-          serviceList:
-            clinics
-              .flatMap((c) => c.services)
-              .filter((s, i, arr) => arr.indexOf(s) === i)
-              .map((s, i) => `${i + 1}. ${s}`)
-              .join('\n') ||
-            'Cleaning\nCheck-up\nFilling\nExtraction\nWhitening\nX-Ray',
+          serviceList: this.humanizeList(
+            allServices.length ? allServices : fallbackServices,
+            lang,
+          ),
         });
+      }
       case 'clinic':
         if (clinics.length === 0) return t(BOOKING_UNAVAILABLE, lang);
         return t(ASK_CLINIC, lang, {
-          clinicList: clinics.map((c, i) => `${i + 1}. ${c.name}`).join('\n'),
+          clinicList: this.humanizeList(
+            clinics.map((c) => c.name),
+            lang,
+          ),
         });
       case 'datetime':
         return t(ASK_DATE_TIME, lang);
@@ -1499,6 +1523,16 @@ export class BookingService {
       default:
         return t(ASK_SERVICE, lang);
     }
+  }
+
+  /** Turn a list into a sentence fragment instead of a numbered menu. */
+  private humanizeList(items: string[], lang: BookingLang = 'en'): string {
+    const joiner = lang === 'sw' ? 'na' : 'and';
+    const values = items.map((item) => item.trim()).filter(Boolean);
+    if (values.length === 0) return '';
+    if (values.length === 1) return values[0];
+    if (values.length === 2) return `${values[0]} ${joiner} ${values[1]}`;
+    return `${values.slice(0, -1).join(', ')} ${joiner} ${values[values.length - 1]}`;
   }
 
   private buildSlotError(

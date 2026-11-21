@@ -259,8 +259,8 @@ export class BotActionRegistryService {
     });
     const reply =
       ctx.language === 'sw'
-        ? 'Nimeelewa. Nimewasilisha ombi lako kwa timu yetu ya huduma, na mtu atakufuata kwa nambari hii. Kama ni dharura, tafadhali nenda kliniki iliyo karibu mara moja.'
-        : 'Understood — I have passed this to our service team and a person will follow up on this number. If this is urgent, please go to the nearest clinic right away.';
+        ? 'Sawa — nimewasilisha ombi lako kwa timu yetu, na mtu atakufuata kwa nambari hii. Kama ni dharura, tafadhali nenda kliniki iliyo karibu mara moja.'
+        : "Got it — I've passed this to our service team and someone will follow up on this number. If it's urgent, please go to the nearest clinic right away.";
     return { ok: true, action: 'ESCALATE_TO_HUMAN', reply };
   }
 
