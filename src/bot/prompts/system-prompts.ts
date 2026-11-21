@@ -163,8 +163,8 @@ DISCLAIMER HANDLING:
  * Used By: `VoicePipelineService.classifyIntent()`
  *
  * Purpose:
- *   Enforces strict, raw JSON output format for fast and reliable 3-way
- *   classification of incoming voice transcriptions.
+ *   Enforces strict, raw JSON output for intent + entity + bounded-action
+ *   classification of incoming text/voice messages.
  */
 export const INTENT_CLASSIFIER_SYSTEM_PROMPT =
   "You are MenoAI's routing layer for a Kenyan dental clinic. You infer what the member actually needs and return ONLY valid JSON. Never answer the member yourself.";
@@ -172,13 +172,13 @@ export const INTENT_CLASSIFIER_SYSTEM_PROMPT =
 /**
  * User Prompt Builder for Intent Classification.
  *
- * Origin: VoicePipelineService (`src/modules/voice-pipeline/voice-pipeline.service.ts`)
+ * Origin: VoicePipelineService (`src/bot/voice-pipeline/voice-pipeline.service.ts`)
  * Used By: `VoicePipelineService.classifyIntent()`
  *
- * Categories:
- *   1. "BOOKING_SESSION" - scheduling, rescheduling, confirming clinic appointments.
- *   2. "CLINICAL_INTAKE" - active pain, emergencies, swelling, bleeding symptoms.
- *   3. "HEALTH_EDUCATION" - general oral health, brushing, flossing, dental queries.
+ * Categories: the full taxonomy in `src/bot/intents/intent.types.ts` (booking,
+ * availability, appointment management, clinical intake, education, pricing,
+ * clinic info, procedure explainer, preparation/aftercare, account, human
+ * handoff, complaint/feedback, admin lookup, general conversation).
  */
 export function buildIntentClassificationPrompt(
   transcript: string,
