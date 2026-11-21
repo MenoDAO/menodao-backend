@@ -23,8 +23,8 @@ function msg(en: string, sw: string): BilingualMessage {
 // ── Field prompts ─────────────────────────────────────────────────────────────
 
 export const ASK_SERVICE = msg(
-  '🦷 What can I help with — a cleaning, check-up, filling, extraction, whitening, or X-ray?',
-  "🦷 Ni huduma gani unahitaji — kusafisha meno, ukaguzi, kuziba jino, kung'oa jino, kupamba meno, au X-ray?",
+  '🦷 What can I help with today? A cleaning, check-up, filling, extraction, whitening, or X-ray?',
+  "🦷 Ni huduma gani unahitaji leo? Kusafisha meno, ukaguzi, kuziba jino, kung'oa jino, kupamba meno, au X-ray?",
 );
 
 export const ASK_SERVICE_CHOICE = msg(
@@ -84,7 +84,7 @@ export const SLOT_CLOSED_DAY = msg(
 );
 
 export const SLOT_OUTSIDE_HOURS = msg(
-  "🕐 We're open {openTime} – {closeTime}. Could you choose a time in between?",
+  "🕐 We're open {openTime} to {closeTime}. Could you choose a time in between?",
   '🕐 Kliniki inafungua {openTime} hadi {closeTime}. Unaweza kuchagua wakati ndani ya hayo?',
 );
 
@@ -118,15 +118,15 @@ export const BOOKING_CONFIRMED = msg(
 // ── Emergency ────────────────────────────────────────────────────────────────
 
 export const EMERGENCY_GUIDANCE = msg(
-  "🚨 *This sounds urgent.* Please go to the nearest clinic now or call emergency services.\n\nOur clinic: {clinicName} — {clinicPhone}\n\nPlease don't wait. I'm flagging your message for urgent review.",
-  '🚨 *Hii inaonekana ya dharura.* Tafadhali nenda kliniki iliyo karibu sasa au piga huduma ya dharura.\n\nKliniki yetu: {clinicName} — {clinicPhone}\n\nUsisubiri. Nimeashiria ujumbe wako kwa tathmini ya haraka.',
+  "🚨 *This sounds urgent.* Please go to the nearest clinic now or call emergency services.\n\nOur clinic: {clinicName}. Call {clinicPhone}.\n\nPlease don't wait. I'm flagging your message for urgent review.",
+  '🚨 *Hii inaonekana ya dharura.* Tafadhali nenda kliniki iliyo karibu sasa au piga huduma ya dharura.\n\nKliniki yetu: {clinicName}. Piga {clinicPhone}.\n\nUsisubiri. Nimeashiria ujumbe wako kwa tathmini ya haraka.',
 );
 
 // ── Cancellation ─────────────────────────────────────────────────────────────
 
 export const BOOKING_CANCELLED = msg(
-  "👍 No problem — I've cancelled that booking request. Tell me if you want to start again.",
-  '👍 Sawa — nimeifuta ombi hilo la miadi. Niambie ukitaka kuanza tena.',
+  "👍 No problem, I've cancelled that booking request. Tell me if you want to start again.",
+  '👍 Sawa, nimeifuta ombi hilo la miadi. Niambie ukitaka kuanza tena.',
 );
 
 // ── Parse failure / retry ─────────────────────────────────────────────────────

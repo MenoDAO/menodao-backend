@@ -462,7 +462,7 @@ export class BookingService {
               `- ID: ${c.id} | Name: ${c.name} | Services: ${c.services.join(', ')}`,
           )
           .join('\n')
-      : 'No specific clinics configured — use "Dr. Papi Dental Clinic" as default.';
+      : 'No specific clinics configured. Use "Dr. Papi Dental Clinic" as default.';
 
     const history = recentLogs
       .reverse()
@@ -998,7 +998,7 @@ export class BookingService {
     }).format(scheduledAt);
     const message =
       `MenoDAO: New booking for ${memberName}` +
-      (service ? ` — ${service}` : '') +
+      (service ? `, ${service}` : '') +
       ` at ${clinic.name} on ${when}. Reply or open the staff area to review.`;
     const smsResult = await this.smsService.sendSms(clinic.ownerPhone, message);
     if (!smsResult.success) {
@@ -1045,8 +1045,8 @@ export class BookingService {
     for (const c of targetClinics) {
       const header =
         lang === 'sw'
-          ? `*${c.name}* — nafasi zinazopatikana:`
-          : `*${c.name}* — available slots:`;
+          ? `*${c.name}*: nafasi zinazopatikana:`
+          : `*${c.name}*: available slots:`;
       lines.push(header);
       let found = 0;
       const slotDuration = options.service

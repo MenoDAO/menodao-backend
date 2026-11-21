@@ -19,6 +19,8 @@ describe('Dr. Papi system prompt', () => {
     expect(prompt).not.toContain('ALWAYS list the options');
     expect(prompt).toContain('Do not send numbered option menus');
     expect(prompt).toContain('For symptoms, be a caring person first');
+    expect(prompt).toContain('Avoid em dashes');
+    expect(prompt).not.toContain('—');
   });
 
   it('keeps symptom-only messages out of booking in the classifier', () => {
@@ -29,6 +31,7 @@ describe('Dr. Papi system prompt', () => {
       'Never choose BOOKING_SESSION for a symptom-only message.',
     );
     expect(prompt).toContain('Never choose this for a symptom-only message');
+    expect(prompt).not.toContain('—');
   });
 
   it('guides clinical replies toward one empathetic triage question', () => {
@@ -50,5 +53,17 @@ describe('polishMemberReply', () => {
 
   it('normalises line endings without changing the message', () => {
     expect(polishMemberReply('  Habari\r\nKaribu  ')).toBe('Habari\nKaribu');
+  });
+
+  it('replaces spaced em dashes with ordinary punctuation', () => {
+    expect(polishMemberReply('Karibu — habari')).toBe('Karibu, habari');
+    expect(polishMemberReply('Open 08:00 — 17:00')).toBe('Open 08:00 to 17:00');
+    expect(polishMemberReply('Slots 3 — 5 are free')).toBe(
+      'Slots 3 to 5 are free',
+    );
+  });
+
+  it('keeps unspaced ranges intact', () => {
+    expect(polishMemberReply('Open 08:00—17:00')).toBe('Open 08:00—17:00');
   });
 });

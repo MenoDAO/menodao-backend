@@ -259,8 +259,8 @@ export class BotActionRegistryService {
     });
     const reply =
       ctx.language === 'sw'
-        ? 'Sawa — nimewasilisha ombi lako kwa timu yetu, na mtu atakufuata kwa nambari hii. Kama ni dharura, tafadhali nenda kliniki iliyo karibu mara moja.'
-        : "Got it — I've passed this to our service team and someone will follow up on this number. If it's urgent, please go to the nearest clinic right away.";
+        ? 'Sawa, nimewasilisha ombi lako kwa timu yetu, na mtu atakufuata kwa nambari hii. Kama ni dharura, tafadhali nenda kliniki iliyo karibu mara moja.'
+        : "Got it, I've passed this to our service team and someone will follow up on this number. If it's urgent, please go to the nearest clinic right away.";
     return { ok: true, action: 'ESCALATE_TO_HUMAN', reply };
   }
 
@@ -280,7 +280,7 @@ export class BotActionRegistryService {
     const reply =
       ctx.language === 'sw'
         ? 'Asante kwa kutuambia. Nimeandika maoni yako na timu yetu itayapitia. Kama kuna jambo la haraka, niambie.'
-        : 'Thank you for telling me — I have recorded this for the team to review. If there is something urgent you need right now, tell me and I will help.';
+        : 'Thank you for telling me. I have recorded this for the team to review. If there is something urgent you need right now, tell me and I will help.';
     return { ok: true, action: 'LOG_FEEDBACK', reply };
   }
 
@@ -368,7 +368,7 @@ export class BotActionRegistryService {
     const reply =
       ctx.language === 'sw'
         ? 'Samahani, sina ruhusa ya kufanya hivyo kwa akaunti hii. Kama wewe ni mfanyakazi, tumia hali ya admin kwa uthibitisho wa SMS.'
-        : 'Sorry — I do not have permission to do that for this account. If you are a staff member, use admin mode with the SMS verification.';
+        : 'Sorry, I do not have permission to do that for this account. If you are a staff member, use admin mode with the SMS verification.';
     return {
       ok: false,
       action,

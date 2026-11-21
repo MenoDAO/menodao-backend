@@ -24,7 +24,7 @@ export const BOT_INTENT_DEFINITIONS = {
   },
   AVAILABILITY_INQUIRY: {
     description:
-      'The user asks which times/slots are free, when a clinic or doctor is open, or whether there is space on a day/week — without asking to lock a specific slot yet.',
+      'The user asks which times/slots are free, when a clinic or doctor is open, or whether there is space on a day/week, without asking to lock a specific slot yet.',
     examples: [
       'what slots are open at Mikindani this week?',
       'are you free tomorrow afternoon?',
@@ -79,7 +79,7 @@ export const BOT_INTENT_DEFINITIONS = {
   },
   PROCEDURE_EXPLAINER: {
     description:
-      'The user asks what a named procedure is, why it is done, how long it takes, or what to expect — without describing their own active emergency.',
+      'The user asks what a named procedure is, why it is done, how long it takes, or what to expect, without describing their own active emergency.',
     examples: [
       'what happens during a root canal?',
       'is scaling painful?',

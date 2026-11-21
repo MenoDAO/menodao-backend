@@ -434,7 +434,7 @@ export class BrandContextService {
     const content = (input.content ?? '').trim();
     if (!content) {
       throw new BadRequestException(
-        'A context document needs content — type it here, or upload a file instead.',
+        'A context document needs content. Type it here, or upload a file instead.',
       );
     }
     const created = await this.prisma.botContextDocument.create({
@@ -601,7 +601,7 @@ export class BrandContextService {
         : this.splitIntoSections(input.content ?? '', input.title);
     if (sections.length === 0) {
       throw new BadRequestException(
-        'Nothing to import — the document has no content.',
+        'Nothing to import. The document has no content.',
       );
     }
     const externalId =

@@ -575,11 +575,11 @@ export class AdminWhatsappAccessService {
       ? `…${member.phoneNumber.slice(-4)}`
       : 'no phone';
     const membership = member.subscription
-      ? `${this.titleCase(member.subscription.tier)} — ${
+      ? `${this.titleCase(member.subscription.tier)}, ${
           member.subscription.isActive ? 'Active' : 'Not active'
         }`
       : 'No membership';
-    return `Member: ${name} (${phone}) — ${membership}`;
+    return `Member: ${name} (${phone}). ${membership}.`;
   }
 
   private adminMenu(admin: AdminWhatsappActor): string {

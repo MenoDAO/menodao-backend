@@ -57,13 +57,13 @@ export function replyLanguage(language?: string | null): 'en' | 'sw' {
 
 /**
  * Known Swahili misspellings seen in generated replies. This is a small safety
- * net for careless typos — the system prompt is the primary prevention.
+ * net for careless typos. The system prompt is the primary prevention.
  */
 const SWAHILI_TYPO_CORRECTIONS: ReadonlyArray<[RegExp, string]> = [
   [/\bkariba\b/gi, 'karibu'],
 ];
 
-/** Normalise line endings and fix known Swahili typos without changing tone. */
+/** Normalise line endings, fix known typos and replace showy em dashes. */
 export function polishMemberReply(reply: string): string {
   let text = (reply ?? '').replace(/\r\n/g, '\n').trim();
   for (const [pattern, correction] of SWAHILI_TYPO_CORRECTIONS) {
@@ -73,6 +73,12 @@ export function polishMemberReply(reply: string): string {
         : correction,
     );
   }
+  text = text
+    .replace(
+      /(\b\d{1,2}:\d{2}\b|\b\d{1,2}\b)\s+—\s+(\b\d{1,2}:\d{2}\b|\b\d{1,2}\b)/g,
+      '$1 to $2',
+    )
+    .replace(/\s+—\s+/g, ', ');
   return text;
 }
 
@@ -119,7 +125,7 @@ export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
   const language = replyLanguage(context.language);
   const languageDirective =
     language === 'sw'
-      ? `The member's preferred language is Swahili (Kiswahili). Always reply in natural, warm, everyday Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to. Use correct standard spellings: "karibu" — never "kariba" — plus "nambari", "tafadhali" and "samahani". Avoid literal translations and stiff, office-like phrasing.`
+      ? `The member's preferred language is Swahili (Kiswahili). Always reply in natural, warm, everyday Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to. Use correct standard spellings such as "karibu" (never "kariba"), "nambari", "tafadhali" and "samahani". Avoid literal translations and stiff, office-like phrasing.`
       : "The member's preferred language is English. Reply in clear, warm English. You may use a short Swahili greeting only if the member greets you in Swahili.";
   const nameDirective = context.memberName?.trim()
     ? `The member's name is ${context.memberName.trim()}. Greet them by name at most once, naturally, and do not overuse it.`
@@ -150,6 +156,7 @@ ${intentDirective}CONVERSATION STYLE (this is what makes you feel human):
 - Avoid canned acknowledgements such as "Asante, ujumbe wako umepokelewa" unless the member actually sent a voice note.
 - If you are unsure, say what you do know, name the uncertainty plainly, and offer the next step. Never invent a clinic, price, time, or policy.
 - If the member asks what they can choose, name the real clinics/services from the verified lists in a sentence, not a numbered menu.
+- Use ordinary punctuation. Avoid em dashes; a comma, full stop, colon, or a new short sentence almost always reads better. Only use one if no ordinary punctuation works.
 
 SAFETY RULES (STRICT):
 1. Never diagnose a condition or claim certainty about what is wrong with a patient's teeth or gums.
@@ -207,13 +214,13 @@ export function buildIntentClassificationPrompt(
   recentHistory?: string,
 ): string {
   const historyBlock = recentHistory?.trim()
-    ? `RECENT CONVERSATION (oldest first — use it to resolve short replies like "yes", "the second one", "that one"):\n${recentHistory.trim()}\n\n`
+    ? `RECENT CONVERSATION (oldest first, use it to resolve short replies like "yes", "the second one", "that one"):\n${recentHistory.trim()}\n\n`
     : '';
   return `Classify the member's message into exactly one intent, and optionally choose one bounded action that should run now.
 
 ${historyBlock}INTENTS:
 - "BOOKING_SESSION": they want to create a specific appointment now (a date/time/service/clinic), or they are answering booking questions mid-flow.
-- "AVAILABILITY_INQUIRY": they ask which slots/times are free, when a clinic/doctor is open, or whether there is space on a day/week — without asking to lock a slot yet.
+- "AVAILABILITY_INQUIRY": they ask which slots/times are free, when a clinic/doctor is open, or whether there is space on a day/week, without asking to lock a slot yet.
 - "APPOINTMENT_MANAGEMENT": they want to view, reschedule, or cancel an existing appointment, or check whether a booking went through.
 - "CLINICAL_INTAKE": they describe an active personal symptom (sore, aching, tender or sensitive tooth; bleeding or swollen gums; trauma; pus; difficulty eating/sleeping) and are not asking for a specific slot.
 - "HEALTH_EDUCATION": general oral-health question (brushing, flossing, diet, children's teeth, bad breath, prevention).
@@ -335,6 +342,7 @@ VOICE & STYLE (this is what matters most):
 - Vary your phrasing. Never reuse the same opener, filler, or "I can help you with X" sentence twice in a conversation.
 - Use the user's name when you know it, and their language/register. Keep it to 3-5 short, spoken-friendly sentences.
 - No bullet walls, no heavy markdown, no "As an AI…" filler. One clear next step or question at the end.
+- Use ordinary punctuation and avoid em dashes. Commas, full stops and short sentences sound more human.
 
 CORE OBJECTIVES:
 1. Demystify dental care: Explain concepts simply (e.g., how plaque forms, why gums bleed, what a composite filling is, how baby teeth should be cleaned).
@@ -378,7 +386,7 @@ Your only job is to extract what the user explicitly stated in the current messa
 
 CRITICAL RULES:
 1. Return null for ANY field the user did not clearly state in THIS turn. NEVER guess or invent values.
-2. Do not default to "tomorrow" or "09:00" if no date/time was given — return null instead.
+2. Do not default to "tomorrow" or "09:00" if no date/time was given, return null instead.
 3. preferredDate MUST be YYYY-MM-DD resolved against the supplied date anchors, or null.
 4. preferredTime MUST be 24-hour HH:mm format, or null.
 5. There is no phone field. The phone is always taken from the WhatsApp sender ID.
@@ -386,7 +394,7 @@ CRITICAL RULES:
 7. action DECLINE is for no/hapana/cancel responses.
 8. triageFlag is true ONLY for: difficulty breathing or swallowing, severe facial swelling closing an eye, uncontrolled bleeding, or trauma.
 9. The model must NOT diagnose, prescribe, or give medical advice.
-10. Output ONLY valid JSON — no markdown fences, no extra text.`;
+10. Output ONLY valid JSON, no markdown fences, no extra text.`;
 
 export interface BookingExtractionPromptContext {
   todayIso: string;
@@ -416,7 +424,7 @@ export function buildBookingExtractionPrompt(
 AVAILABLE CLINICS (use the exact clinic name if the user refers to one):
 ${context.clinicContext}
 
-CURRENT BOOKING DRAFT (fields already collected — only update fields the user mentions in this turn):
+CURRENT BOOKING DRAFT (fields already collected, only update fields the user mentions in this turn):
 ${context.currentDraft}
 
 RECENT CONVERSATION HISTORY (last 4 messages for context):

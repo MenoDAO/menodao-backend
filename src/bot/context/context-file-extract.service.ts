@@ -248,7 +248,7 @@ export class ContextFileExtractService {
       // The floor exists to catch empty extraction, not to judge short pages.
       if (text.replace(/\s/g, '').length < 10) {
         throw new BadRequestException(
-          `"${filename}" has no extractable text — it looks like a scanned or ` +
+          `"${filename}" has no extractable text. It looks like a scanned or ` +
             'image-only PDF. Run it through OCR (or export a text layer) first.',
         );
       }

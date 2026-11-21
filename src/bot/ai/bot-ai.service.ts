@@ -191,7 +191,7 @@ export class BotAiService {
                   .filter((tier): tier is string => typeof tier === 'string')
                   .join(', ')
               : '';
-            return `- ${p.name} (${p.code}) — KES ${p.cost} — covered tiers: ${
+            return `- ${p.name} (${p.code}): KES ${p.cost}, covered tiers: ${
               tiers || 'see membership terms'
             }`;
           })

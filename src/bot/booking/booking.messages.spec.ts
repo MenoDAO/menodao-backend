@@ -1,3 +1,4 @@
+import * as bookingMessages from './booking.messages';
 import {
   ASK_CLINIC,
   ASK_DOCTOR,
@@ -20,5 +21,18 @@ describe('booking messages', () => {
   it('uses natural Swahili phrasing', () => {
     expect(ASK_SERVICE_CHOICE.sw).toContain('Huduma zilizopo ni');
     expect(ASK_DOCTOR.sw).toContain('Unaweza pia kunitajia jina lake tu.');
+  });
+
+  it('uses ordinary punctuation instead of dashes', () => {
+    const copy = Object.values(bookingMessages)
+      .flatMap((value) =>
+        value && typeof value === 'object' && 'en' in value && 'sw' in value
+          ? [String(value.en), String(value.sw)]
+          : [],
+      )
+      .join('\n');
+
+    expect(copy).not.toContain('—');
+    expect(copy).not.toContain('–');
   });
 });

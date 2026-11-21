@@ -391,9 +391,9 @@ export class BotMemberDataService {
 
     const lines = recent.map(
       (item) =>
-        `• ${this.monthLabel(item.month)} — ${this.money(item.amount)} — ${this.titleCase(
+        `• ${this.monthLabel(item.month)}: ${this.money(item.amount)}, ${this.titleCase(
           item.status.replace(/_/g, ' ').toLowerCase(),
-        )}`,
+        )}.`,
     );
 
     if (completed.length === 0) {
@@ -485,9 +485,9 @@ export class BotMemberDataService {
   }): string {
     const frequency =
       subscription.paymentFrequency === 'ANNUAL' ? 'year' : 'month';
-    return `Membership: ${this.titleCase(subscription.tier)} — ${
+    return `Membership: ${this.titleCase(subscription.tier)}, ${
       subscription.isActive ? 'Active' : 'Not active'
-    } · ${this.money(subscription.monthlyAmount)} per ${frequency}.`;
+    }, ${this.money(subscription.monthlyAmount)} per ${frequency}.`;
   }
 
   private async buildAppointmentsReply(memberId: string): Promise<string> {
@@ -522,7 +522,7 @@ export class BotMemberDataService {
       lines.push('Upcoming:');
       for (const item of upcoming) {
         lines.push(
-          `• ${this.dateTimeLabel(item.scheduledAt)} — ${item.clinic?.name ?? 'MenoDAO clinic'} (${this.appointmentStatus(item.status)})`,
+          `• ${this.dateTimeLabel(item.scheduledAt)}, ${item.clinic?.name ?? 'MenoDAO clinic'} (${this.appointmentStatus(item.status)})`,
         );
       }
     }
@@ -531,7 +531,7 @@ export class BotMemberDataService {
       lines.push('Recent:');
       for (const item of past.slice(0, 4)) {
         lines.push(
-          `• ${this.dateTimeLabel(item.scheduledAt)} — ${item.clinic?.name ?? 'MenoDAO clinic'} (${this.appointmentStatus(item.status)})`,
+          `• ${this.dateTimeLabel(item.scheduledAt)}, ${item.clinic?.name ?? 'MenoDAO clinic'} (${this.appointmentStatus(item.status)})`,
         );
       }
     }
@@ -566,11 +566,10 @@ export class BotMemberDataService {
         .map((item) => item.procedure?.name)
         .filter((name): name is string => Boolean(name))
         .join(', ');
-      const cost =
-        visit.totalCost > 0 ? ` — ${this.money(visit.totalCost)}` : '';
-      return `• ${this.dateLabel(visit.checkedInAt)} — ${clinic}${
-        procedures ? ` — ${procedures}` : ''
-      }${cost}`;
+      const parts = [this.dateLabel(visit.checkedInAt), clinic];
+      if (procedures) parts.push(procedures);
+      if (visit.totalCost > 0) parts.push(this.money(visit.totalCost));
+      return `• ${parts.join(', ')}.`;
     });
 
     return [
@@ -600,11 +599,11 @@ export class BotMemberDataService {
 
     const lines = claims.map(
       (claim) =>
-        `• ${this.dateLabel(claim.createdAt)} — ${this.titleCase(
+        `• ${this.dateLabel(claim.createdAt)}, ${this.titleCase(
           claim.claimType.replace(/_/g, ' ').toLowerCase(),
-        )} — ${this.money(claim.amount)} — ${this.titleCase(
+        )}, ${this.money(claim.amount)}, ${this.titleCase(
           claim.status.toLowerCase(),
-        )}`,
+        )}.`,
     );
     return ['Here are your claims:', '', ...lines].join('\n');
   }
@@ -646,7 +645,7 @@ export class BotMemberDataService {
       ? `...${member.phoneNumber.slice(-4)}`
       : 'not set';
     const tier = member.subscription
-      ? `${this.titleCase(member.subscription.tier)} — ${
+      ? `${this.titleCase(member.subscription.tier)}, ${
           member.subscription.isActive ? 'Active' : 'Not active'
         }`
       : 'No membership on record';

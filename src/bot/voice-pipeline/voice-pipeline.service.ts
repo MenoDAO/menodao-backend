@@ -947,8 +947,8 @@ export class VoicePipelineService {
     if (clinicalSchema?.immediate_triage_flag) {
       const urgentLine =
         language === 'sw'
-          ? '🚨 Usisubiri — nenda kliniki iliyo karibu au piga huduma ya dharura sasa.'
-          : "🚨 Don't wait — go to the nearest clinic or call emergency services now.";
+          ? '🚨 Usisubiri. Nenda kliniki iliyo karibu au piga huduma ya dharura sasa.'
+          : "🚨 Don't wait. Go to the nearest clinic or call emergency services now.";
       return `${reply}\n\n${urgentLine}`;
     }
     // Keep it to the conversational reply — no signature and no "forwarded to
