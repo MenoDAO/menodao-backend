@@ -488,6 +488,20 @@ export class BookingService {
       );
     }
 
+    const meaningfulUpdate =
+      !!updates.service ||
+      !!updates.clinicId ||
+      !!updates.date ||
+      !!updates.time ||
+      !!updates.clientName ||
+      updates.status === 'COLLECTING';
+    if (this.isAvailabilityQuestion(userMessage) && !meaningfulUpdate) {
+      return {
+        reply: await this.describeAvailability(userMessage, effectiveLang),
+        triageFlag: false,
+      };
+    }
+
     const missing = this.collectMissingFields(updatedDraft);
     if (missing.length > 0) {
       if (missing.includes('clinic') && clinics.length === 0) {
@@ -706,6 +720,154 @@ export class BookingService {
         `Staff booking notification SMS failed for ${clinic.ownerPhone}: ${smsResult.error}`,
       );
     }
+  }
+
+  /**
+   * Answer an availability question (e.g. "what open slots are available at
+   * Mikindani clinic this week?") without creating or advancing a booking draft.
+   */
+  async describeAvailability(
+    message: string,
+    lang: BookingLang = 'en',
+  ): Promise<string> {
+    const clinics = await this.loadClinics();
+    if (clinics.length === 0) {
+      return t(BOOKING_UNAVAILABLE, lang);
+    }
+
+    const lower = message.toLowerCase();
+    const clinic =
+      clinics.find((c) => lower.includes(c.name.toLowerCase())) ??
+      this.fuzzyMatchClinic(
+        clinics.find((c) =>
+          c.name
+            .toLowerCase()
+            .split(/\s+/)
+            .some((tok) => tok.length > 3 && lower.includes(tok)),
+        )?.name ?? '',
+        clinics,
+      ) ??
+      (clinics.length === 1 ? clinics[0] : null);
+
+    const now = nairobiNow(this.cfg);
+    const rangeDays = this.inferAvailabilityRangeDays(lower);
+    const start = now.startOf('day');
+    const lines: string[] = [];
+
+    const targetClinics = clinic ? [clinic] : clinics.slice(0, 3);
+    for (const c of targetClinics) {
+      const header =
+        lang === 'sw'
+          ? `*${c.name}* — nafasi zinazopatikana:`
+          : `*${c.name}* — available slots:`;
+      lines.push(header);
+      let found = 0;
+      for (
+        let dayOffset = 0;
+        dayOffset < rangeDays && found < 12;
+        dayOffset++
+      ) {
+        const day = start.plus({ days: dayOffset });
+        if (!this.cfg.openDays.includes(day.weekday)) continue;
+        const daySlotsList = daySlots(this.cfg);
+        const dayIso = day.toISODate()!;
+        const free: string[] = [];
+        for (const slot of daySlotsList) {
+          const candidate = toScheduledAt(dayIso, slot, this.cfg);
+          if (DateTime.fromJSDate(candidate) <= now) continue;
+          const taken = await this.isSlotTaken(c.id, candidate);
+          if (!taken) free.push(this.format24hTime(slot));
+          if (free.length >= 6) break;
+        }
+        if (free.length > 0) {
+          const dayLabel = this.formatDate(dayIso, lang);
+          lines.push(`• ${dayLabel}: ${free.join(', ')}`);
+          found += free.length;
+        }
+      }
+      if (found === 0) {
+        lines.push(
+          lang === 'sw'
+            ? '• Hakuna nafasi wazi katika kipindi hiki. Jaribu siku nyingine.'
+            : '• No open slots in that window. Try another day or ask me to check further ahead.',
+        );
+      }
+      if (!clinic && targetClinics.length > 1) lines.push('');
+    }
+
+    if (!clinic && clinics.length > 1) {
+      lines.push(
+        lang === 'sw'
+          ? 'Taja kliniki (kwa mfano Mikindani au Palm Beach) ili nikupe nafasi maalum.'
+          : 'Mention a clinic name (for example Mikindani or Palm Beach) and I can narrow it down for you.',
+      );
+    } else {
+      lines.push(
+        lang === 'sw'
+          ? 'Ukitaka, niambie siku na saa unayopendelea nami nikuandikie miadi.'
+          : 'If you want, tell me the day and time you prefer and I can book it for you.',
+      );
+    }
+    return lines.join('\n').trim();
+  }
+
+  private inferAvailabilityRangeDays(lower: string): number {
+    if (/\btoday\b|\bleo\b/.test(lower)) return 1;
+    if (/\btomorrow\b|\bkesho\b/.test(lower)) return 2;
+    if (/\bthis week\b|\bwiki hii\b/.test(lower)) return 7;
+    if (/\bnext week\b|\bwki ijayo\b|\bwkijayo\b/.test(lower)) return 14;
+    if (/\bweek\b|\bwki\b/.test(lower)) return 7;
+    return 7;
+  }
+
+  private isAvailabilityQuestion(message: string): boolean {
+    const lower = message.toLowerCase();
+    const asksAvailability =
+      /\b(available|availability|open slots?|free slots?|openings?|when are you open|working hours|office hours|what times?|which slots?|any slots?)\b/.test(
+        lower,
+      ) ||
+      /(nafasi gani|nafasi zipo|kuna nafasi|mnafungua|muda gani)/.test(lower);
+    const asksToBook =
+      /\b(book|schedule|reserve|sign me up|panga|weka miadi|nataka kuja)\b/.test(
+        lower,
+      );
+    return asksAvailability && !asksToBook;
+  }
+
+  private async isSlotTaken(
+    clinicId: string,
+    scheduledAt: Date,
+  ): Promise<boolean> {
+    const clinic = await this.prisma.clinic.findUnique({
+      where: { id: clinicId },
+      select: { activeDentalChairs: true },
+    });
+    const chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
+    const windowStart = new Date(
+      scheduledAt.getTime() - this.cfg.slotMinutes * 60_000,
+    );
+    const windowEnd = new Date(
+      scheduledAt.getTime() + this.cfg.slotMinutes * 60_000,
+    );
+    const nearby = await this.prisma.appointment.findMany({
+      where: {
+        clinicId,
+        scheduledAt: { gte: windowStart, lt: windowEnd },
+        status: {
+          in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
+        },
+      },
+      select: { scheduledAt: true, durationMinutes: true },
+    });
+    const taken = nearby.filter((row) =>
+      this.overlaps(
+        scheduledAt,
+        this.cfg.slotMinutes,
+        row.scheduledAt,
+        row.durationMinutes,
+      ),
+    ).length;
+    return taken >= chairs;
   }
 
   async nextFreeSlots(

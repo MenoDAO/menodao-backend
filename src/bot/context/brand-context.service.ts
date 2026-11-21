@@ -539,6 +539,21 @@ export class BrandContextService {
     this.logger.log(`Context document deleted: ${id}`);
   }
 
+  async removeMany(ids: string[]): Promise<{ deleted: number }> {
+    const unique = [
+      ...new Set(ids.filter((id) => typeof id === 'string' && id)),
+    ];
+    if (unique.length === 0) return { deleted: 0 };
+    const result = await this.prisma.botContextDocument.deleteMany({
+      where: { id: { in: unique } },
+    });
+    if (result.count > 0) this.invalidateCache();
+    this.logger.log(
+      `Context documents bulk-deleted: ${result.count}/${unique.length}`,
+    );
+    return { deleted: result.count };
+  }
+
   /**
    * Bulk import that splits a long guide into retrievable sections.
    *

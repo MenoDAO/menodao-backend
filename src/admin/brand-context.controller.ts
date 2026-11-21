@@ -36,6 +36,7 @@ import { AuditLogService } from './audit-log.service';
 import { CapabilityGuard } from './guards/capabilities.guard';
 import { Capability } from './guards/capabilities';
 import {
+  BulkDeleteBrandContextDto,
   CreateBrandContextDocumentDto,
   ImportBrandContextDto,
   PreviewBrandContextDto,
@@ -241,6 +242,22 @@ export class AdminBrandContextController {
   async deleteDocument(@Param('id') id: string, @Request() req: AdminRequest) {
     await this.contextService.remove(id);
     await this.audit(req, 'DELETE_BRAND_CONTEXT_DOCUMENT', id, {});
+  }
+
+  @Post('documents/bulk-delete')
+  @Roles('SUPER_ADMIN')
+  @Capability('brand_context.write')
+  @ApiOperation({ summary: 'Bulk delete context documents' })
+  async bulkDeleteDocuments(
+    @Body() dto: BulkDeleteBrandContextDto,
+    @Request() req: AdminRequest,
+  ) {
+    const result = await this.contextService.removeMany(dto.ids);
+    await this.audit(req, 'BULK_DELETE_BRAND_CONTEXT_DOCUMENTS', 'bulk', {
+      requested: dto.ids.length,
+      deleted: result.deleted,
+    });
+    return result;
   }
 
   @Post('import')

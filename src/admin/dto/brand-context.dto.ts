@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -239,4 +241,16 @@ export class UploadBrandContextFileDto {
   )
   @IsBoolean()
   active?: boolean;
+}
+
+export class BulkDeleteBrandContextDto {
+  @ApiProperty({
+    description: 'Context document IDs to delete',
+    type: [String],
+    example: ['ck...1', 'ck...2'],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  ids: string[];
 }

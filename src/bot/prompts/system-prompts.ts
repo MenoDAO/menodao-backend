@@ -171,16 +171,20 @@ export const INTENT_CLASSIFIER_SYSTEM_PROMPT =
  */
 export function buildIntentClassificationPrompt(transcript: string): string {
   return `Classify the following transcribed user message into exactly one category:
-1. "BOOKING_SESSION": The user wants to schedule, book, or request a specific appointment slot with a dentist (e.g. "I want to book an appointment tomorrow at 10am", "schedule a dental cleaning", "can I book for next Monday", "naomba kupanga miadi ya kuona daktari kesho", "I'd like to make an appointment").
-2. "CLINICAL_INTAKE": The user is describing active personal pain, a dental emergency, severe symptoms such as toothache, bleeding, broken teeth, swelling, or trauma — WITHOUT explicitly requesting to schedule a specific time slot.
-3. "HEALTH_EDUCATION": The user is asking a general educational question about oral hygiene, brushing, flossing, children's teeth, food/diet effects, or how common dental procedures work.
+1. "BOOKING_SESSION": The user wants to schedule, book, reschedule, or confirm a specific appointment (e.g. "I want to book an appointment tomorrow at 10am", "schedule a dental cleaning", "can I book for next Monday", "naomba kupanga miadi ya kuona daktari kesho"). They are taking action to make a booking.
+2. "AVAILABILITY_INQUIRY": The user is asking what times/slots are available, when a clinic/doctor is open, or whether there is space on a given day/week — WITHOUT asking to book a specific slot right now (e.g. "what open slots are available at Mikindani clinic this week?", "when are you free tomorrow?", "mna nafasi gani wiki hii?").
+3. "CLINICAL_INTAKE": The user is describing active personal pain, a dental emergency, severe symptoms such as toothache, bleeding, broken teeth, swelling, or trauma — WITHOUT explicitly requesting to schedule a specific time slot.
+4. "HEALTH_EDUCATION": The user is asking a general educational question about oral hygiene, brushing, flossing, children's teeth, food/diet effects, or how common dental procedures work.
 
-IMPORTANT: If the user is describing symptoms AND requesting a specific appointment time/date, classify as BOOKING_SESSION.
+IMPORTANT:
+- If the user is describing symptoms AND requesting a specific appointment time/date, classify as BOOKING_SESSION.
+- If the user asks for available slots/times/openings, classify as AVAILABILITY_INQUIRY (even if they mention "booking" or "appointment" in passing).
+- If they ask for availability AND clearly say "book me..." for a specific slot, classify as BOOKING_SESSION.
 
 Transcript: "${transcript}"
 
 Output format: ONLY a valid raw JSON object, without markdown formatting or code fences:
-{"intent": "BOOKING_SESSION" | "CLINICAL_INTAKE" | "HEALTH_EDUCATION", "confidence": 0.95}`;
+{"intent": "BOOKING_SESSION" | "AVAILABILITY_INQUIRY" | "CLINICAL_INTAKE" | "HEALTH_EDUCATION", "confidence": 0.95}`;
 }
 
 // ============================================================================

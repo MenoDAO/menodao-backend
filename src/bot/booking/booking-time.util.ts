@@ -12,7 +12,7 @@ export const DEFAULT_TZ = 'Africa/Nairobi';
 export const DEFAULT_OPEN_DAYS = [1, 2, 3, 4, 5, 6]; // Mon–Sat
 export const DEFAULT_OPEN_TIME = '08:00';
 export const DEFAULT_CLOSE_TIME = '17:00';
-export const DEFAULT_SLOT_MINUTES = 30;
+export const DEFAULT_SLOT_MINUTES = 20; // 15 min consultation + 5 min buffer
 
 export interface BookingConfig {
   timezone: string;

@@ -22,7 +22,8 @@ import { CareEventType, CarePrivacyClass } from '@prisma/client';
 export type IntentType =
   | 'CLINICAL_INTAKE'
   | 'HEALTH_EDUCATION'
-  | 'BOOKING_SESSION';
+  | 'BOOKING_SESSION'
+  | 'AVAILABILITY_INQUIRY';
 
 export interface ClinicalIntakeSchema {
   primary_symptom: string;
@@ -175,26 +176,18 @@ export class VoicePipelineService {
     const existingDraft = await this.prisma.botBookingDraft.findUnique({
       where: { memberId: userId },
     });
-
+    let hasActiveDraft = false;
     if (existingDraft) {
       if (this.bookingService.isDraftFresh(existingDraft)) {
+        hasActiveDraft = true;
+      } else {
         this.logger.log(
-          `[${sessionUuid}] Active booking draft found — routing to handleDraftTurn()`,
+          `[${sessionUuid}] Stale booking draft found — deleting and re-classifying`,
         );
-        return this.runBookingDraftTurn(
-          transcriptText,
-          e164,
-          userId,
-          sessionUuid,
-          detectedLanguage,
-          language,
-          memberName,
-        );
+        await this.prisma.botBookingDraft.delete({
+          where: { memberId: userId },
+        });
       }
-      this.logger.log(
-        `[${sessionUuid}] Stale booking draft found — deleting and re-classifying`,
-      );
-      await this.prisma.botBookingDraft.delete({ where: { memberId: userId } });
     }
 
     const classification = await this.classifyIntent(transcriptText);
@@ -202,7 +195,23 @@ export class VoicePipelineService {
       `Intent classified [${sessionUuid}]: ${classification.intent} (${classification.confidence})`,
     );
 
-    if (classification.intent === 'BOOKING_SESSION') {
+    if (classification.intent === 'AVAILABILITY_INQUIRY') {
+      return this.runAvailabilityInquiry(
+        transcriptText,
+        e164,
+        userId,
+        sessionUuid,
+        detectedLanguage,
+        language,
+        memberName,
+        hasActiveDraft,
+      );
+    }
+
+    if (classification.intent === 'BOOKING_SESSION' || hasActiveDraft) {
+      // Fresh draft: let the booking state machine handle the turn (confirm,
+      // decline, provide details) even if the classifier wavered. Availability
+      // questions are already handled above.
       return this.runBookingDraftTurn(
         transcriptText,
         e164,
@@ -283,6 +292,41 @@ export class VoicePipelineService {
       intentConfidence: classification.confidence,
       healthEducationReply: stewardReply,
       patientMessage: stewardReply,
+      status: 'completed',
+    };
+  }
+
+  private async runAvailabilityInquiry(
+    transcriptText: string,
+    senderPhone: string,
+    userId: string,
+    sessionUuid: string,
+    detectedLanguage: string | undefined,
+    language: 'en' | 'sw',
+    memberName: string | null,
+    hasActiveDraft: boolean,
+  ): Promise<PipelineExecutionResult> {
+    const reply = await this.bookingService.describeAvailability(
+      transcriptText,
+      language,
+    );
+    const suffix = hasActiveDraft
+      ? language === 'sw'
+        ? '\n\n(Ukiwa tayari kuendelea na miadi uliyokuwa ukiweka, niambie tu.)'
+        : "\n\n(If you'd like to continue with the booking you started, just tell me.)"
+      : '';
+    const finalReply = `${reply}${suffix}`;
+    await this.prisma.botMessageLog.create({
+      data: { memberId: userId, role: 'assistant', content: finalReply },
+    });
+    return {
+      intakeUuid: sessionUuid,
+      senderPhone,
+      transcript: transcriptText,
+      detectedLanguage,
+      intent: 'AVAILABILITY_INQUIRY',
+      intentConfidence: 0.9,
+      patientMessage: finalReply,
       status: 'completed',
     };
   }
@@ -392,6 +436,8 @@ export class VoicePipelineService {
       let intent: IntentType = 'HEALTH_EDUCATION';
       if (parsed.intent === 'BOOKING_SESSION') intent = 'BOOKING_SESSION';
       else if (parsed.intent === 'CLINICAL_INTAKE') intent = 'CLINICAL_INTAKE';
+      else if (parsed.intent === 'AVAILABILITY_INQUIRY')
+        intent = 'AVAILABILITY_INQUIRY';
       const confidence =
         typeof parsed.confidence === 'number' ? parsed.confidence : 0.95;
       return { intent, confidence };
@@ -400,6 +446,32 @@ export class VoicePipelineService {
         `Intent classification parsing failed, using fallback heuristic: ${error}`,
       );
       const lower = transcript.toLowerCase();
+      const availabilityKeywords = [
+        'available',
+        'availability',
+        'open slot',
+        'open slots',
+        'free slot',
+        'free slots',
+        'free time',
+        'openings',
+        'opening',
+        'what time',
+        'what times',
+        'which slot',
+        'which slots',
+        'any slot',
+        'any slots',
+        'when are you open',
+        'when is the clinic open',
+        'working hours',
+        'office hours',
+        'nafasi gani',
+        'nafasi zipo',
+        'muda gani',
+        'kuna nafasi',
+        'mnafungua saa ngapi',
+      ];
       const bookingKeywords = [
         'book',
         'schedule',
@@ -408,9 +480,9 @@ export class VoicePipelineService {
         'session',
         'miadi',
         'panga',
-        'slot',
-        'nafasi',
-        'tarehe',
+        'book me',
+        'i want to come',
+        'nataka kuja',
       ];
       const clinicalKeywords = [
         'maumivu',
@@ -426,7 +498,14 @@ export class VoicePipelineService {
         'kuuma',
         'tibu',
       ];
-      if (bookingKeywords.some((k) => lower.includes(k))) {
+      const asksAvailability = availabilityKeywords.some((k) =>
+        lower.includes(k),
+      );
+      const asksBooking = bookingKeywords.some((k) => lower.includes(k));
+      if (asksAvailability && !asksBooking) {
+        return { intent: 'AVAILABILITY_INQUIRY', confidence: 0.85 };
+      }
+      if (asksBooking) {
         return { intent: 'BOOKING_SESSION', confidence: 0.85 };
       }
       if (clinicalKeywords.some((k) => lower.includes(k))) {
