@@ -35,7 +35,19 @@ export class OpenAiProvider implements ILlmProvider {
   }
 
   async generateCompletion(options: GenerateResponseOptions): Promise<string> {
-    const { systemPrompt, userPrompt, history = [], responseFormat } = options;
+    const { systemPrompt, userPrompt, history = [], responseFormat, images } =
+      options;
+
+    const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+      { type: 'text', text: userPrompt },
+      ...(images ?? []).map((image) => ({
+        type: 'image_url' as const,
+        image_url: {
+          url: `data:${image.mimeType};base64,${image.base64}`,
+          detail: 'high' as const,
+        },
+      })),
+    ];
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -46,7 +58,10 @@ export class OpenAiProvider implements ILlmProvider {
             content: turn.content,
           }) as OpenAI.Chat.Completions.ChatCompletionMessageParam,
       ),
-      { role: 'user', content: userPrompt },
+      {
+        role: 'user',
+        content: images?.length ? userContent : userPrompt,
+      },
     ];
 
     try {

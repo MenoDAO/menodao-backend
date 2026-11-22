@@ -13,7 +13,9 @@ export interface AuditLogEntry {
     | 'BRAND_CONTEXT'
     | 'WHATSAPP_INSTANCE'
     | 'BOT_CHAT'
-    | 'ADMIN_USER';
+    | 'ADMIN_USER'
+    | 'FIELD_CONTRIBUTOR'
+    | 'FIELD_SUBMISSION';
   targetId: string;
   reason: string;
   metadata?: any;

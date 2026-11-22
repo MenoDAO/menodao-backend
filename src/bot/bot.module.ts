@@ -17,6 +17,7 @@ import { BotChatModule } from './chat/bot-chat.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
 import { BotActionsModule } from './actions/bot-actions.module';
+import { FieldDataModule } from './field-data/field-data.module';
 
 const logger = new Logger('BotModule');
 
@@ -65,6 +66,7 @@ const whatsappProviderFactory: Provider = {
     BrandContextModule,
     BotChatModule,
     BotActionsModule,
+    FieldDataModule,
   ],
   controllers: [BotGatewayController],
   providers: [

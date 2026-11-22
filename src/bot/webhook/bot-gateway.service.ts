@@ -14,6 +14,7 @@ import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
+import { FieldDataService } from '../field-data/field-data.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -68,6 +69,7 @@ export class BotGatewayService {
     private readonly chatService: BotChatService,
     private readonly memberDataService: BotMemberDataService,
     private readonly adminAccess: AdminWhatsappAccessService,
+    private readonly fieldDataService: FieldDataService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -199,7 +201,8 @@ export class BotGatewayService {
     const contactName = data.pushName || data.name || undefined;
     const messageText = this.extractFlaresendMessageText(data as any);
     const isAudio = Boolean(data.message?.audioMessage);
-    if (!isAudio && !messageText) return;
+    const fieldMedia = this.extractFlaresendFieldMedia(data.message);
+    if (!isAudio && !fieldMedia && !messageText) return;
 
     // FlareSend retries a delivery when it does not see a fast 2xx, and the
     // controller acknowledges before processing finishes. Drop repeats so a
@@ -254,8 +257,10 @@ export class BotGatewayService {
           });
         }
 
-        const audioSource = await this.extractFlaresendAudioSource(
+        const audioSource = await this.flaresendClient.downloadMediaDescriptor(
           data.message?.audioMessage,
+          data.id,
+          data.message?.audioMessage?.mimetype || 'audio/ogg',
         );
         if (audioSource) {
           try {
@@ -299,6 +304,17 @@ export class BotGatewayService {
         );
         return;
       }
+      if (fieldMedia) {
+        await this.handleFlaresendFieldMedia({
+          payload,
+          data,
+          whatsappId,
+          phoneHint,
+          contactName,
+          fieldMedia,
+        });
+        return;
+      }
       if (!messageText) return;
       await this.handleUserTextMessage({
         senderId: whatsappId,
@@ -312,6 +328,136 @@ export class BotGatewayService {
       // Let the next retry try again rather than swallowing the message.
       this.recentFlaresendInboundMessages.delete(dedupeKey);
       throw error;
+    }
+  }
+
+  private extractFlaresendFieldMedia(message: any):
+    | {
+        kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+        descriptor: any;
+        mimeType: string;
+        caption?: string | null;
+      }
+    | null {
+    if (!message || typeof message !== 'object') return null;
+    const candidates: Array<{
+      key: string;
+      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+      mime: string;
+    }> = [
+      { key: 'imageMessage', kind: 'IMAGE', mime: 'image/jpeg' },
+      { key: 'videoMessage', kind: 'VIDEO', mime: 'video/mp4' },
+      { key: 'documentMessage', kind: 'DOCUMENT', mime: 'application/octet-stream' },
+    ];
+    for (const candidate of candidates) {
+      let descriptor = message[candidate.key];
+      if (!descriptor || typeof descriptor !== 'object') {
+        // Some FlareSend versions use a flat `{ type: "image", url: ... }`.
+        const type = typeof message.type === 'string' ? message.type.toLowerCase() : '';
+        if (type !== candidate.kind.toLowerCase() && !(candidate.kind === 'DOCUMENT' && type === 'document')) continue;
+        descriptor = message;
+      }
+      const mimeType =
+        typeof descriptor.mimetype === 'string' && descriptor.mimetype
+          ? descriptor.mimetype
+          : typeof descriptor.mimeType === 'string' && descriptor.mimeType
+            ? descriptor.mimeType
+            : candidate.mime;
+      return {
+        kind: candidate.kind,
+        descriptor,
+        mimeType,
+        caption:
+          typeof descriptor.caption === 'string' && descriptor.caption.trim()
+            ? descriptor.caption.trim()
+            : null,
+      };
+    }
+    return null;
+  }
+
+  private async handleFlaresendFieldMedia(params: {
+    payload: FlaresendWebhookPayload;
+    data: any;
+    whatsappId: string;
+    phoneHint?: string;
+    contactName?: string;
+    fieldMedia: {
+      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+      descriptor: any;
+      mimeType: string;
+      caption?: string | null;
+    };
+  }): Promise<void> {
+    const { payload, data, whatsappId, phoneHint, contactName, fieldMedia } = params;
+    const member = await this.identity.resolveMember({
+      phoneDigitsFallback: this.isLid(whatsappId)
+        ? (phoneHint ?? undefined)
+        : whatsappId,
+      whatsappId,
+    });
+    const recipientPhone =
+      member?.phoneNumber ?? (this.isLid(whatsappId) ? undefined : whatsappId);
+
+    if (member) {
+      await this.chatService.recordInbound({
+        contactId: whatsappId,
+        contactName,
+        memberId: member.id,
+        content: `[field ${fieldMedia.kind.toLowerCase()} received]`,
+        contentType: fieldMedia.kind,
+        providerMessageId: data.id ?? null,
+        instanceProviderId: payload.instanceId ?? null,
+      });
+    }
+
+    const media = await this.flaresendClient.downloadMediaDescriptor(
+      fieldMedia.descriptor,
+      data.id,
+      fieldMedia.mimeType,
+    );
+    if (!media) {
+      if (recipientPhone) {
+        await this.sendTextSafely(
+          recipientPhone,
+          'Samahani, hatukuweza kupakua faili hii. Tafadhali tuma tena. ' +
+            'Sorry, we could not download this file. Please send it again.',
+          member
+            ? {
+                memberId: member.id,
+                contactId: whatsappId,
+                instanceProviderId: payload.instanceId,
+              }
+            : undefined,
+        );
+      }
+      return;
+    }
+
+    const result = await this.fieldDataService.ingestMedia({
+      phoneCandidates: [whatsappId, phoneHint, member?.phoneNumber],
+      memberId: member?.id,
+      providerMessageId: data.id ?? null,
+      whatsappId,
+      kind: fieldMedia.kind,
+      mimeType: media.mimeType,
+      buffer: media.buffer,
+      caption: fieldMedia.caption ?? null,
+      originalFilename: media.originalFilename,
+    });
+
+    if (recipientPhone) {
+      await this.sendTextSafely(
+        recipientPhone,
+        result.reply,
+        member
+          ? {
+              memberId: member.id,
+              contactId: whatsappId,
+              instanceProviderId: payload.instanceId,
+            }
+          : undefined,
+      );
     }
   }
 
