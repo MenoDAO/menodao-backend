@@ -400,6 +400,110 @@ export class StatsService {
   /**
    * Get detailed SMS metrics: all-time total, daily breakdown, by-status
    */
+  async getVoiceMetrics(days: number = 30) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const events = await this.prisma.careEvent.findMany({
+      where: {
+        type: 'AI_CONVERSATION_STARTED',
+        source: 'bot-voice-pipeline',
+        occurredAt: { gte: since },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 500,
+    });
+
+    const voiceEvents = events.filter((event) => {
+      const metadata = event.metadata as Record<string, unknown> | null;
+      return metadata?.isVoice === true;
+    });
+
+    const byDayMap = new Map<
+      string,
+      { count: number; confidenceTotal: number; confidenceCount: number }
+    >();
+    let confidenceTotal = 0;
+    let confidenceCount = 0;
+    let lowConfidenceCount = 0;
+
+    for (const event of voiceEvents) {
+      const day = event.occurredAt.toISOString().slice(0, 10);
+      const bucket = byDayMap.get(day) ?? {
+        count: 0,
+        confidenceTotal: 0,
+        confidenceCount: 0,
+      };
+      bucket.count += 1;
+      const metadata = (event.metadata as Record<string, unknown> | null) ?? {};
+      const confidence =
+        typeof metadata.intentConfidence === 'number'
+          ? metadata.intentConfidence
+          : null;
+      if (confidence !== null) {
+        bucket.confidenceTotal += confidence;
+        bucket.confidenceCount += 1;
+        confidenceTotal += confidence;
+        confidenceCount += 1;
+      }
+      if (metadata.lowConfidence === true) lowConfidenceCount += 1;
+      byDayMap.set(day, bucket);
+    }
+
+    const byDay = Array.from(byDayMap.entries())
+      .map(([date, bucket]) => ({
+        date,
+        count: bucket.count,
+        avgConfidence:
+          bucket.confidenceCount > 0
+            ? Number(
+                (bucket.confidenceTotal / bucket.confidenceCount).toFixed(3),
+              )
+            : null,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return {
+      days,
+      totalVoiceConversations: voiceEvents.length,
+      averageConfidence:
+        confidenceCount > 0
+          ? Number((confidenceTotal / confidenceCount).toFixed(3))
+          : null,
+      lowConfidenceCount,
+      byDay,
+      recent: voiceEvents.slice(0, 50).map((event) => {
+        const metadata =
+          (event.metadata as Record<string, unknown> | null) ?? {};
+        return {
+          id: event.id,
+          occurredAt: event.occurredAt,
+          memberId: event.memberId,
+          sessionId: event.sessionId,
+          isVoice: metadata.isVoice === true,
+          transcriptLength:
+            typeof metadata.transcriptLength === 'number'
+              ? metadata.transcriptLength
+              : null,
+          detectedLanguage:
+            typeof metadata.detectedLanguage === 'string'
+              ? metadata.detectedLanguage
+              : null,
+          intent: typeof metadata.intent === 'string' ? metadata.intent : null,
+          intentConfidence:
+            typeof metadata.intentConfidence === 'number'
+              ? metadata.intentConfidence
+              : null,
+          action: typeof metadata.action === 'string' ? metadata.action : null,
+          audioDuration:
+            typeof metadata.audioDuration === 'number'
+              ? metadata.audioDuration
+              : null,
+        };
+      }),
+    };
+  }
+
   async getSmsMetrics(days: number = 30) {
     const now = new Date();
     const startDate = new Date(now);
