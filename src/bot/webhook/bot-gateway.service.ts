@@ -253,9 +253,42 @@ export class BotGatewayService {
             instanceProviderId: payload.instanceId ?? null,
           });
         }
+
+        const audioSource = await this.extractFlaresendAudioSource(
+          data.message?.audioMessage,
+        );
+        if (audioSource) {
+          try {
+            const result = await this.voicePipelineService.processVoicePipeline(
+              audioSource.buffer,
+              recipientPhone,
+              undefined,
+              member?.preferredLanguage,
+              data.id,
+            );
+            await this.sendTextSafely(
+              recipientPhone,
+              result.patientMessage ||
+                this.voiceFallback(member?.preferredLanguage),
+              member
+                ? {
+                    memberId: member.id,
+                    contactId: whatsappId,
+                    instanceProviderId: payload.instanceId,
+                  }
+                : undefined,
+            );
+            return;
+          } catch (error) {
+            this.logger.error(
+              `FlareSend audio handling failed for ${recipientPhone}: ${error}`,
+            );
+          }
+        }
+
         await this.sendTextSafely(
           recipientPhone,
-          'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!',
+          this.voiceFallback(member?.preferredLanguage),
           member
             ? {
                 memberId: member.id,
@@ -311,12 +344,19 @@ export class BotGatewayService {
     const normalizedPhone = this.normalizePhoneNumber(message.from);
     if (message.type === 'audio' && message.audio?.id) {
       try {
+        const member = await this.identity.resolveMember({
+          phoneDigitsFallback: normalizedPhone,
+          whatsappId: normalizedPhone,
+        });
         const audioBuffer = await this.metaApiClient.downloadMedia(
           message.audio.id,
         );
         const result = await this.voicePipelineService.processVoicePipeline(
           audioBuffer,
           normalizedPhone,
+          undefined,
+          member?.preferredLanguage,
+          message.audio.id,
         );
         const replyText =
           result.patientMessage || 'Ujumbe wako wa sauti umepokelewa. Asante!';
@@ -698,5 +738,62 @@ export class BotGatewayService {
       return normalized;
     }
     return undefined;
+  }
+
+  private async extractFlaresendAudioSource(
+    audio: any,
+  ): Promise<{ buffer: Buffer; mediaId?: string } | null> {
+    if (!audio || typeof audio !== 'object') return null;
+
+    const mediaId =
+      typeof audio.id === 'string'
+        ? audio.id
+        : typeof audio.mediaId === 'string'
+          ? audio.mediaId
+          : undefined;
+
+    if (typeof audio.data === 'string' && audio.data.trim()) {
+      try {
+        return { buffer: Buffer.from(audio.data.trim(), 'base64'), mediaId };
+      } catch {
+        return null;
+      }
+    }
+    if (typeof audio.base64 === 'string' && audio.base64.trim()) {
+      try {
+        return { buffer: Buffer.from(audio.base64.trim(), 'base64'), mediaId };
+      } catch {
+        return null;
+      }
+    }
+
+    const url =
+      typeof audio.url === 'string'
+        ? audio.url
+        : typeof audio.mediaUrl === 'string'
+          ? audio.mediaUrl
+          : typeof audio.downloadUrl === 'string'
+            ? audio.downloadUrl
+            : null;
+
+    if (url) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const arrayBuffer = await response.arrayBuffer();
+        return { buffer: Buffer.from(arrayBuffer), mediaId };
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  private voiceFallback(preferredLanguage?: string | null): string {
+    if ((preferredLanguage || '').toLowerCase().startsWith('sw')) {
+      return 'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!';
+    }
+    return 'Sorry, voice notes are not available on this channel right now. Please type your message or call the clinic. Thank you!';
   }
 }

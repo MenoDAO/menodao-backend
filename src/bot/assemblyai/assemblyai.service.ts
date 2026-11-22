@@ -18,6 +18,13 @@ export interface TranscriptionResult {
 
 import axios from 'axios';
 
+export interface TranscriptionOptions {
+  /** Preferred member language: 'en' or 'sw'. Used as a hint, not a hard lock. */
+  languageHint?: string | null;
+  /** Extra domain vocabulary to boost for this clinic/member. */
+  keyterms?: string[];
+}
+
 @Injectable()
 export class AssemblyAiService {
   private readonly logger = new Logger(AssemblyAiService.name);
@@ -41,8 +48,63 @@ export class AssemblyAiService {
   /**
    * Transcribes an audio file from a Buffer, readable stream, or public URL.
    */
+  private static readonly DEFAULT_KEYTERMS = [
+    'dental',
+    'dentist',
+    'tooth',
+    'teeth',
+    'cavity',
+    'caries',
+    'filling',
+    'root canal',
+    'extraction',
+    'gum',
+    'gums',
+    'gingivitis',
+    'periodontitis',
+    'plaque',
+    'tartar',
+    'crown',
+    'bridge',
+    'implant',
+    'denture',
+    'orthodontics',
+    'braces',
+    'whitening',
+    'bleeding',
+    'swelling',
+    'abscess',
+    'x-ray',
+    'molar',
+    'incisor',
+    'canine',
+    'enamel',
+    'fluoride',
+    'checkup',
+    'cleaning',
+    'sensitivity',
+    'MenoDAO',
+    'Dr Papi',
+    'clinic',
+    'appointment',
+    'booking',
+    'insurance',
+    'package',
+    'bronze',
+    'silver',
+    'gold',
+    'member',
+    'meno',
+    'daktari',
+    'ugonjwa',
+    'maumivu',
+    'kliniki',
+    'tiba',
+  ];
+
   async transcribeAudio(
     audioSource: Buffer | string,
+    options: TranscriptionOptions = {},
   ): Promise<TranscriptionResult> {
     if (!this.client) {
       throw new Error(
@@ -50,7 +112,20 @@ export class AssemblyAiService {
       );
     }
 
-    this.logger.log('Submitting audio to AssemblyAI for transcription...');
+    const languageHint = this.normalizeLanguageHint(options.languageHint);
+    const keyterms = Array.from(
+      new Set([
+        ...AssemblyAiService.DEFAULT_KEYTERMS,
+        ...(options.keyterms ?? []),
+      ]),
+    )
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .slice(0, 200);
+
+    this.logger.log(
+      `Submitting audio to AssemblyAI for transcription (hint=${languageHint ?? 'auto'}, keyterms=${keyterms.length})...`,
+    );
 
     try {
       const transcript = await this.client.transcripts.transcribe({
@@ -58,6 +133,9 @@ export class AssemblyAiService {
         // 'best' selects AssemblyAI's highest-accuracy universal model and
         // supports keyterms_prompt (Slam-1 uses a different `prompt` field).
         speech_model: 'best',
+        language_code: languageHint ?? undefined,
+        // Keep auto-detection enabled even with a hint so mixed
+        // Swahili/English audio is not forced into one language.
         language_detection: true,
         punctuate: true,
         format_text: true,
@@ -66,59 +144,7 @@ export class AssemblyAiService {
         // Domain vocabulary: AssemblyAI boosts these tokens, which is the
         // biggest single accuracy gain for dental/clinic conversations
         // without paying for a custom model or a second service.
-        keyterms_prompt: [
-          'dental',
-          'dentist',
-          'tooth',
-          'teeth',
-          'cavity',
-          'caries',
-          'filling',
-          'root canal',
-          'extraction',
-          'gum',
-          'gums',
-          'gingivitis',
-          'periodontitis',
-          'plaque',
-          'tartar',
-          'crown',
-          'bridge',
-          'implant',
-          'denture',
-          'orthodontics',
-          'braces',
-          'whitening',
-          'bleeding',
-          'swelling',
-          'abscess',
-          'x-ray',
-          'molar',
-          'incisor',
-          'canine',
-          'enamel',
-          'fluoride',
-          'checkup',
-          'cleaning',
-          'sensitivity',
-          'MenoDAO',
-          'Dr Papi',
-          'clinic',
-          'appointment',
-          'booking',
-          'insurance',
-          'package',
-          'bronze',
-          'silver',
-          'gold',
-          'member',
-          'meno',
-          'daktari',
-          'ugonjwa',
-          'maumivu',
-          'kliniki',
-          'tiba',
-        ],
+        keyterms_prompt: keyterms,
       });
 
       if (transcript.status === 'error') {
@@ -153,6 +179,21 @@ export class AssemblyAiService {
       );
       throw error;
     }
+  }
+
+  private normalizeLanguageHint(value?: string | null): string | null {
+    const normalized = (value || '').trim().toLowerCase();
+    if (
+      normalized === 'sw' ||
+      normalized === 'swahili' ||
+      normalized === 'kiswahili'
+    ) {
+      return 'sw';
+    }
+    if (normalized === 'en' || normalized === 'english') {
+      return 'en';
+    }
+    return null;
   }
 
   /**

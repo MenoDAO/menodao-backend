@@ -5,6 +5,7 @@ import { AssemblyAiService } from '../assemblyai/assemblyai.service';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from '../ai/interfaces/llm-provider.interface';
 import { randomUUID } from 'crypto';
+import { normalizeVoiceTranscript } from './voice-transcript.util';
 import { BookingService } from '../booking/booking.service';
 import { BotAiService } from '../ai/bot-ai.service';
 import type { ChatHistoryMessage } from '../ai/interfaces/llm-provider.interface';
@@ -86,6 +87,11 @@ const UNRESOLVED_MEMBER_MESSAGE =
 @Injectable()
 export class VoicePipelineService {
   private readonly logger = new Logger(VoicePipelineService.name);
+  private readonly voiceResultCache = new Map<
+    string,
+    { result: PipelineExecutionResult; expiresAt: number }
+  >();
+  private voiceKeytermsCache?: { terms: string[]; expiresAt: number };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -105,26 +111,82 @@ export class VoicePipelineService {
     audioSource: Buffer | string,
     senderPhone: string = 'simulator-user',
     intakeUuid?: string,
+    languageHint?: string | null,
+    mediaId?: string | null,
   ): Promise<PipelineExecutionResult> {
+    const cacheKey = mediaId ? `voice:${mediaId}` : null;
+    if (cacheKey) {
+      const cached = this.voiceResultCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        this.logger.log(`Using cached voice transcript for media ${mediaId}`);
+        return cached.result;
+      }
+    }
+
     const sessionUuid = intakeUuid || randomUUID();
     this.logger.log(
       `Starting voice pipeline execution [${sessionUuid}] for ${senderPhone}`,
     );
     try {
-      const sttResult =
-        await this.assemblyAiService.transcribeAudio(audioSource);
+      const keyterms = await this.loadVoiceKeyterms();
+      const sttResult = await this.assemblyAiService.transcribeAudio(
+        audioSource,
+        {
+          languageHint,
+          keyterms,
+        },
+      );
       const transcript = sttResult.text;
       if (!transcript || transcript.trim().length === 0) {
         throw new Error('Received empty transcript from audio source.');
       }
-      return await this.processTextPipeline(
+
+      // Avoid acting on very uncertain transcripts. Echoing the heard text
+      // lets the member correct us without forcing every voice note through
+      // a confirmation step.
+      if (sttResult.confidence !== undefined && sttResult.confidence < 0.5) {
+        const result: PipelineExecutionResult = {
+          intakeUuid: sessionUuid,
+          senderPhone,
+          transcript,
+          detectedLanguage: sttResult.languageCode || languageHint || undefined,
+          intent: 'GENERAL_CONVERSATION',
+          intentConfidence: sttResult.confidence,
+          patientMessage:
+            languageHint === 'sw'
+              ? `Samahani, sikusikia vizuri. Umesema: "${transcript}". Tafadhali rudia au andika kwa maneno.`
+              : `Sorry, I didn't catch that clearly. I heard: "${transcript}". Please repeat or type your message.`,
+          status: 'failed',
+          error: 'LOW_CONFIDENCE_TRANSCRIPTION',
+        };
+        return result;
+      }
+
+      const result = await this.processTextPipeline(
         transcript,
         senderPhone,
         sessionUuid,
-        sttResult.languageCode,
+        sttResult.languageCode || languageHint || undefined,
         senderPhone,
+        sttResult.duration,
         true,
       );
+
+      if (sttResult.confidence !== undefined && sttResult.confidence < 0.75) {
+        const echoPrefix =
+          (sttResult.languageCode || languageHint) === 'sw'
+            ? 'Nimesikia'
+            : 'I heard';
+        result.patientMessage = `${echoPrefix}: "${transcript}"\n\n${result.patientMessage}`;
+      }
+
+      if (cacheKey) {
+        this.voiceResultCache.set(cacheKey, {
+          result,
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        });
+      }
+      return result;
     } catch (error) {
       this.logger.error(`Voice pipeline error [${sessionUuid}]: ${error}`);
       return {
@@ -147,11 +209,15 @@ export class VoicePipelineService {
     intakeUuid?: string,
     detectedLanguage?: string,
     whatsappId: string = senderPhone,
+    audioDuration?: number,
     isVoice = false,
   ): Promise<PipelineExecutionResult> {
+    const workingTranscript = isVoice
+      ? normalizeVoiceTranscript(transcriptText)
+      : transcriptText;
     const sessionUuid = intakeUuid || randomUUID();
     this.logger.log(
-      `Routing ${isVoice ? 'voice note' : 'message'} [${sessionUuid}]: "${transcriptText.substring(0, 60)}..."`,
+      `Routing ${isVoice ? 'voice note' : 'message'} [${sessionUuid}]: "${workingTranscript.substring(0, 60)}..."`,
     );
 
     // Resolve existing Member by phone — no bot signup for known numbers.
@@ -166,7 +232,7 @@ export class VoicePipelineService {
       return {
         intakeUuid: sessionUuid,
         senderPhone,
-        transcript: transcriptText,
+        transcript: workingTranscript,
         detectedLanguage,
         intent: 'HEALTH_EDUCATION',
         intentConfidence: 0,
@@ -184,16 +250,8 @@ export class VoicePipelineService {
       data: {
         memberId: userId,
         role: 'user',
-        content: `[Session: ${sessionUuid}] ${transcriptText}`,
+        content: `[Session: ${sessionUuid}] ${workingTranscript}`,
       },
-    });
-
-    void this.careEvents?.track({
-      type: CareEventType.AI_CONVERSATION_STARTED,
-      memberId: userId,
-      sessionId: sessionUuid,
-      source: 'bot-voice-pipeline',
-      privacyClass: CarePrivacyClass.ANALYTICS,
     });
 
     const existingDraft = await this.prisma.botBookingDraft.findUnique({
@@ -215,13 +273,30 @@ export class VoicePipelineService {
 
     const recentHistory = await this.loadChatHistory(userId, sessionUuid);
     const classification = await this.classifyIntent(
-      transcriptText,
+      workingTranscript,
       recentHistory,
     );
     this.logger.log(
       `Intent classified [${sessionUuid}]: ${classification.intent} (${classification.confidence})` +
         (classification.action ? ` action=${classification.action}` : ''),
     );
+
+    void this.careEvents?.track({
+      type: CareEventType.AI_CONVERSATION_STARTED,
+      memberId: userId,
+      sessionId: sessionUuid,
+      source: isVoice ? 'bot-voice-pipeline' : 'bot-text-pipeline',
+      privacyClass: CarePrivacyClass.ANALYTICS,
+      metadata: {
+        isVoice,
+        transcriptLength: workingTranscript.length,
+        detectedLanguage: detectedLanguage || null,
+        intent: classification.intent,
+        intentConfidence: classification.confidence,
+        action: classification.action,
+        audioDuration: audioDuration || null,
+      },
+    });
 
     // Resolve the sender once. An admin phone is only privileged after the
     // explicit ADMIN + SMS verification flow, so normal chat stays member-level.
@@ -237,7 +312,7 @@ export class VoicePipelineService {
       memberPhone: e164,
       senderId: whatsappId,
       language,
-      message: transcriptText,
+      message: workingTranscript,
       sessionId: sessionUuid,
       entities: classification.entities,
     };
@@ -249,7 +324,7 @@ export class VoicePipelineService {
     if (planned) {
       if (planned.route === 'BOOKING') {
         return this.runBookingDraftTurn(
-          transcriptText,
+          workingTranscript,
           e164,
           userId,
           sessionUuid,
@@ -261,7 +336,7 @@ export class VoicePipelineService {
       if (planned.reply) {
         return this.respond({
           memberId: userId,
-          transcriptText,
+          transcriptText: workingTranscript,
           senderPhone,
           sessionUuid,
           detectedLanguage,
@@ -275,7 +350,7 @@ export class VoicePipelineService {
 
     if (classification.intent === 'AVAILABILITY_INQUIRY') {
       return this.runAvailabilityInquiry(
-        transcriptText,
+        workingTranscript,
         e164,
         userId,
         sessionUuid,
@@ -294,7 +369,7 @@ export class VoicePipelineService {
       // Side questions (pricing, directions, symptoms) are answered instead of
       // being swallowed by the booking state machine.
       return this.runBookingDraftTurn(
-        transcriptText,
+        workingTranscript,
         e164,
         userId,
         sessionUuid,
@@ -305,7 +380,7 @@ export class VoicePipelineService {
     }
 
     if (classification.intent === 'CLINICAL_INTAKE') {
-      const clinicalSchema = await this.executeBorderAgent(transcriptText);
+      const clinicalSchema = await this.executeBorderAgent(workingTranscript);
       await this.prisma.botLead.create({
         data: {
           memberId: userId,
@@ -322,7 +397,7 @@ export class VoicePipelineService {
       });
       const triageReply = await this.generateMemberReply(
         userId,
-        transcriptText,
+        workingTranscript,
         language,
         memberName,
         sessionUuid,
@@ -352,7 +427,7 @@ export class VoicePipelineService {
       return {
         intakeUuid: sessionUuid,
         senderPhone,
-        transcript: transcriptText,
+        transcript: workingTranscript,
         detectedLanguage,
         intent: 'CLINICAL_INTAKE',
         intentConfidence: classification.confidence,
@@ -367,7 +442,7 @@ export class VoicePipelineService {
         'APPOINTMENTS',
         actionContext,
         classification,
-        transcriptText,
+        workingTranscript,
         senderPhone,
         sessionUuid,
         detectedLanguage,
@@ -382,7 +457,7 @@ export class VoicePipelineService {
         scope,
         actionContext,
         classification,
-        transcriptText,
+        workingTranscript,
         senderPhone,
         sessionUuid,
         detectedLanguage,
@@ -394,7 +469,7 @@ export class VoicePipelineService {
         'ESCALATE_TO_HUMAN',
         actionContext,
         classification,
-        transcriptText,
+        workingTranscript,
         senderPhone,
         sessionUuid,
         detectedLanguage,
@@ -406,7 +481,7 @@ export class VoicePipelineService {
         'LOG_FEEDBACK',
         actionContext,
         classification,
-        transcriptText,
+        workingTranscript,
         senderPhone,
         sessionUuid,
         detectedLanguage,
@@ -422,7 +497,7 @@ export class VoicePipelineService {
           : 'Access to another member’s records needs verification. Send ADMIN to start, then send the member’s phone number and reply with the SMS code.';
       return this.respond({
         memberId: userId,
-        transcriptText,
+        transcriptText: workingTranscript,
         senderPhone,
         sessionUuid,
         detectedLanguage,
@@ -436,7 +511,7 @@ export class VoicePipelineService {
     return this.runConversationalReply(
       classification,
       actionContext,
-      transcriptText,
+      workingTranscript,
       senderPhone,
       sessionUuid,
       detectedLanguage,
@@ -726,6 +801,82 @@ export class VoicePipelineService {
       patientMessage: reply,
       status: 'completed',
     };
+  }
+
+  private async loadVoiceKeyterms(): Promise<string[]> {
+    const now = Date.now();
+    if (this.voiceKeytermsCache && this.voiceKeytermsCache.expiresAt > now) {
+      return this.voiceKeytermsCache.terms;
+    }
+
+    try {
+      const [clinics, procedures] = await Promise.all([
+        this.prisma.clinic.findMany({
+          where: { status: 'APPROVED' },
+          select: {
+            name: true,
+            subCounty: true,
+            doctors: {
+              where: { isActive: true },
+              select: { name: true, specialty: true },
+            },
+          },
+        }),
+        this.prisma.procedure.findMany({
+          where: { isActive: true },
+          select: { name: true },
+        }),
+      ]);
+
+      const terms = new Set<string>([
+        'MenoDAO',
+        'Dr Papi',
+        'dental',
+        'clinic',
+        'appointment',
+        'booking',
+        'insurance',
+        'member',
+        'kesho',
+        'leo',
+        'asubuhi',
+        'mchana',
+        'jioni',
+        'usiku',
+      ]);
+
+      for (const clinic of clinics) {
+        if (clinic.name) terms.add(clinic.name);
+        if (clinic.subCounty) terms.add(clinic.subCounty);
+        for (const doctor of clinic.doctors ?? []) {
+          if (doctor.name) terms.add(doctor.name);
+          if (doctor.specialty) terms.add(doctor.specialty);
+        }
+      }
+      for (const procedure of procedures) {
+        if (procedure.name) terms.add(procedure.name);
+      }
+
+      const result = Array.from(terms)
+        .map((term) => term.trim())
+        .filter(Boolean)
+        .slice(0, 200);
+      this.voiceKeytermsCache = {
+        terms: result,
+        expiresAt: now + 5 * 60 * 1000,
+      };
+      return result;
+    } catch (error) {
+      this.logger.warn(`Could not load dynamic voice keyterms: ${error}`);
+      return [
+        'MenoDAO',
+        'Dr Papi',
+        'dental',
+        'clinic',
+        'appointment',
+        'booking',
+      ];
+    }
   }
 
   private async classifyIntent(

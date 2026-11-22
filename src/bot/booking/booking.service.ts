@@ -40,6 +40,7 @@ import {
   snapToSlot,
 } from './booking-time.util';
 import type { SlotValidationResult } from './booking-time.util';
+import { parseBookingDateTime } from './swahili-datetime.util';
 import {
   BookingLang,
   t,
@@ -651,13 +652,34 @@ export class BookingService {
       }
     }
 
-    if (extraction.preferredDate) {
-      updates.date = extraction.preferredDate;
+    const parsedDateTime = parseBookingDateTime(
+      userMessage,
+      nairobiNow(this.cfg),
+      this.cfg.timezone,
+    );
+
+    const extractionDateIsValid =
+      !!extraction.preferredDate &&
+      /^\d{4}-\d{2}-\d{2}$/.test(extraction.preferredDate);
+    const extractionTimeIsValid =
+      !!extraction.preferredTime &&
+      /^\d{2}:\d{2}$/.test(extraction.preferredTime);
+
+    if (extractionDateIsValid) {
+      updates.date = extraction.preferredDate!;
       if (extraction.rawDateMentioned)
         updates.rawDateMentioned = extraction.rawDateMentioned;
+    } else if (parsedDateTime.dateIso) {
+      updates.date = parsedDateTime.dateIso;
+      updates.rawDateMentioned = parsedDateTime.rawDate ?? userMessage;
     }
-    if (extraction.preferredTime) {
-      updates.time = extraction.preferredTime;
+
+    if (extractionTimeIsValid) {
+      updates.time = extraction.preferredTime!;
+      if (draft.status === 'AWAITING_CONFIRMATION')
+        updates.status = 'COLLECTING';
+    } else if (parsedDateTime.timeHHmm) {
+      updates.time = parsedDateTime.timeHHmm;
       if (draft.status === 'AWAITING_CONFIRMATION')
         updates.status = 'COLLECTING';
     }
