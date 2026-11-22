@@ -59,6 +59,7 @@ model Member {
   botLlmLogs        BotLlmCallLog[]
   botChatThreads    BotChatThread[]
   botDataAccessSessions BotDataAccessSession[]
+  fieldSubmissions  FieldSubmission[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -1326,6 +1327,82 @@ model BotMessageLog {
 
   @@index([memberId])
   @@index([createdAt])
+}
+
+/// WhatsApp field-data collection is restricted to an explicit health-personnel
+/// allowlist. Phone numbers are stored as E.164 digits so a JID or a typed "+"
+/// cannot create a second identity.
+model FieldContributor {
+  id           String                @id @default(uuid())
+  phoneNumber  String                @unique
+  displayName  String
+  role         FieldContributorRole  @default(HEALTH_PERSONNEL)
+  organization String?
+  isActive     Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  submissions FieldSubmission[]
+
+  @@index([isActive])
+  @@index([role, isActive])
+}
+
+enum FieldContributorRole {
+  DOCTOR
+  PHYSICIAN
+  HEALTH_PERSONNEL
+  NURSE
+}
+
+/// One inbound WhatsApp media item. Raw bytes stay encrypted in S3; only the
+/// model extraction and review metadata are stored here. Nothing is shown to
+/// ordinary members — the bot only acknowledges receipt.
+model FieldSubmission {
+  id                String               @id @default(uuid())
+  contributorId     String
+  contributor       FieldContributor     @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  memberId          String?
+  member            Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  providerMessageId String?              @unique
+  whatsappId        String?
+  kind              FieldMediaKind
+  mimeType          String
+  fileKey           String
+  fileSize          Int
+  originalFilename  String?
+  caption           String?              @db.Text
+  status            FieldSubmissionStatus @default(PENDING)
+  confidence        Float?
+  extracted         Json?
+  summary           String?              @db.Text
+  parseError        String?              @db.Text
+  missingFields     String[]             @default([])
+  needsAdminReview  Boolean              @default(false)
+  reviewedAt        DateTime?
+  reviewerAdminId   String?
+  reviewNotes       String?              @db.Text
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@index([contributorId, createdAt])
+  @@index([needsAdminReview, status])
+}
+
+enum FieldMediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+}
+
+enum FieldSubmissionStatus {
+  PENDING
+  PARSED
+  NEEDS_REVIEW
+  PROCESSED
+  REJECTED
 }
 
 /// OTP-gated access to a member's own records from WhatsApp. A session is

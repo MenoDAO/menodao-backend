@@ -25,6 +25,8 @@ import { AdminUsersController } from './admin-users.controller';
 import { CapabilityGuard } from './guards/capabilities.guard';
 import { CalendarModule } from '../calendar/calendar.module';
 import { AdminCalendarController } from '../calendar/calendar.controller';
+import { FieldDataModule } from '../bot/field-data/field-data.module';
+import { FieldDataController } from './field-data.controller';
 
 @Global()
 @Module({
@@ -38,6 +40,7 @@ import { AdminCalendarController } from '../calendar/calendar.controller';
     BotChatModule,
     WhatsappClientsModule,
     CalendarModule,
+    FieldDataModule,
   ],
   controllers: [
     AdminController,
@@ -50,6 +53,7 @@ import { AdminCalendarController } from '../calendar/calendar.controller';
     AdminBotChatController,
     AdminBookingController,
     AdminCalendarController,
+    FieldDataController,
   ],
   providers: [
     AdminService,
