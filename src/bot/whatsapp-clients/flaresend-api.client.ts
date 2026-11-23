@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- provider payloads are untyped JSON */
+import { createDecipheriv, createHmac, hkdfSync } from 'crypto';
 import {
   Injectable,
   Logger,
@@ -624,10 +625,65 @@ export class FlaresendApiClient implements IWhatsappClient {
     return head.startsWith('{') || head.startsWith('[') || head.startsWith('<');
   }
 
+  private whatsappMediaInfo(mimeType: string): string {
+    const mime = (mimeType || '').toLowerCase();
+    if (mime.startsWith('image/')) return 'WhatsApp Image Keys';
+    if (mime.startsWith('video/')) return 'WhatsApp Video Keys';
+    if (mime.startsWith('audio/')) return 'WhatsApp Audio Keys';
+    return 'WhatsApp Document Keys';
+  }
+
+  /**
+   * WhatsApp CDN media is encrypted. If the descriptor carries a mediaKey
+   * (Baileys-style), decrypt before handing to STT/vision.
+   */
+  private maybeDecryptWhatsappMedia(
+    buffer: Buffer,
+    descriptor: Record<string, any>,
+    mimeType: string,
+  ): Buffer {
+    const mediaKeyRaw = descriptor?.mediaKey ?? descriptor?.mediakey;
+    if (!mediaKeyRaw) return buffer;
+    try {
+      const mediaKey = Buffer.isBuffer(mediaKeyRaw)
+        ? mediaKeyRaw
+        : Array.isArray(mediaKeyRaw)
+          ? Buffer.from(mediaKeyRaw)
+          : typeof mediaKeyRaw === 'object' && mediaKeyRaw?.type === 'Buffer'
+            ? Buffer.from(mediaKeyRaw.data)
+            : Buffer.from(String(mediaKeyRaw), 'base64');
+      if (mediaKey.length !== 32) return buffer;
+      const info = this.whatsappMediaInfo(mimeType);
+      const expanded = Buffer.from(hkdfSync('sha256', mediaKey, Buffer.alloc(0), info, 112));
+      const iv = expanded.subarray(0, 16);
+      const cipherKey = expanded.subarray(16, 48);
+      const macKey = expanded.subarray(48, 80);
+      if (buffer.length <= 10) return buffer;
+      const file = buffer.subarray(0, buffer.length - 10);
+      const mac = buffer.subarray(buffer.length - 10);
+      const expectedMac = createHmac('sha256', macKey)
+        .update(Buffer.concat([iv, file]))
+        .digest()
+        .subarray(0, 10);
+      if (!mac.equals(expectedMac)) {
+        this.logger.warn('WhatsApp media MAC mismatch; using original buffer');
+        return buffer;
+      }
+      const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
+      return Buffer.concat([decipher.update(file), decipher.final()]);
+    } catch (error) {
+      this.logger.warn(
+        `WhatsApp media decrypt failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return buffer;
+    }
+  }
+
   private async resolveDownloadedBuffer(
     buffer: Buffer,
     contentType: string | undefined,
     expectedMimeType: string,
+    descriptor: Record<string, any> = {},
   ): Promise<{ buffer: Buffer; mimeType: string } | null> {
     const mime = (contentType || '').split(';')[0].trim().toLowerCase();
     const isTextLike =
@@ -635,7 +691,12 @@ export class FlaresendApiClient implements IWhatsappClient {
       mime.startsWith('text/') ||
       this.looksLikeTextPayload(buffer);
     if (!isTextLike) {
-      return { buffer, mimeType: mime || expectedMimeType };
+      const out = this.maybeDecryptWhatsappMedia(
+        buffer,
+        descriptor,
+        mime || expectedMimeType,
+      );
+      return { buffer: out, mimeType: mime || expectedMimeType };
     }
 
     // Some FlareSend endpoints return JSON containing a signed URL or base64.
@@ -667,11 +728,12 @@ export class FlaresendApiClient implements IWhatsappClient {
             });
         const b = resp ? Buffer.from(resp.data) : Buffer.alloc(0);
         if (b.length > 0 && !this.looksLikeTextPayload(b)) {
+          const mime =
+            (resp?.headers['content-type'] as string | undefined)?.split(';')[0] ||
+            expectedMimeType;
           return {
-            buffer: b,
-            mimeType:
-              (resp?.headers['content-type'] as string | undefined)?.split(';')[0] ||
-              expectedMimeType,
+            buffer: this.maybeDecryptWhatsappMedia(b, descriptor, mime),
+            mimeType: mime,
           };
         }
       }
@@ -684,12 +746,13 @@ export class FlaresendApiClient implements IWhatsappClient {
           : base64Value;
         const b = Buffer.from(cleaned.replace(/\s/g, ''), 'base64');
         if (b.length > 0) {
+          const mime =
+            (typeof obj.mimetype === 'string' && obj.mimetype) ||
+            (typeof obj.mimeType === 'string' && obj.mimeType) ||
+            expectedMimeType;
           return {
-            buffer: b,
-            mimeType:
-              (typeof obj.mimetype === 'string' && obj.mimetype) ||
-              (typeof obj.mimeType === 'string' && obj.mimeType) ||
-              expectedMimeType,
+            buffer: this.maybeDecryptWhatsappMedia(b, descriptor, mime),
+            mimeType: mime,
           };
         }
       }
@@ -812,6 +875,7 @@ export class FlaresendApiClient implements IWhatsappClient {
             buffer,
             response?.headers['content-type'] as string | undefined,
             mimeType,
+            descriptor,
           );
           if (resolved) {
             return {
@@ -839,6 +903,7 @@ export class FlaresendApiClient implements IWhatsappClient {
               buffer,
               response?.headers['content-type'] as string | undefined,
               mimeType,
+              descriptor,
             );
             if (resolved) {
               return {
