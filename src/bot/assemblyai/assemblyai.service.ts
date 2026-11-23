@@ -123,6 +123,44 @@ export class AssemblyAiService {
       .filter(Boolean)
       .slice(0, 200);
 
+    if (Buffer.isBuffer(audioSource)) {
+      const head = audioSource.subarray(0, 16).toString('hex');
+      const looksText = audioSource
+        .subarray(0, 64)
+        .toString('utf8')
+        .trimStart()
+        .startsWith('{') ||
+        audioSource
+          .subarray(0, 64)
+          .toString('utf8')
+          .trimStart()
+          .toLowerCase()
+          .startsWith('<');
+      const hasKnownAudioMagic =
+        audioSource.length > 4 &&
+        (head.startsWith('4f676753') || // Ogg
+          head.startsWith('52494646') || // RIFF/WAV
+          head.startsWith('494433') || // ID3
+          head.startsWith('664c6143') || // fLaC
+          head.startsWith('1a45dfa3') || // WEBM/EBML
+          head.startsWith('2321414d52') || // #!AMR
+          (audioSource[0] === 0xff && (audioSource[1] & 0xe0) === 0xe0) || // MP3/AAC frame sync
+          audioSource.subarray(4, 8).toString('hex') === '66747970'); // ftyp
+      if (looksText) {
+        throw new Error(
+          `Unsupported audio payload (bytes=${audioSource.length}, head=${head})`,
+        );
+      }
+      if (!hasKnownAudioMagic) {
+        this.logger.warn(
+          `Unrecognized audio magic for transcription (bytes=${audioSource.length}, head=${head})`,
+        );
+      }
+      this.logger.log(
+        `Audio buffer accepted for transcription (bytes=${audioSource.length}, head=${head.slice(0, 8)})`,
+      );
+    }
+
     this.logger.log(
       `Submitting audio to AssemblyAI for transcription (hint=${languageHint ?? 'auto'}, keyterms=${keyterms.length})...`,
     );

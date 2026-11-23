@@ -619,6 +619,86 @@ export class FlaresendApiClient implements IWhatsappClient {
     );
   }
 
+  private looksLikeTextPayload(buffer: Buffer): boolean {
+    const head = buffer.subarray(0, 96).toString('utf8').trimStart().toLowerCase();
+    return head.startsWith('{') || head.startsWith('[') || head.startsWith('<');
+  }
+
+  private async resolveDownloadedBuffer(
+    buffer: Buffer,
+    contentType: string | undefined,
+    expectedMimeType: string,
+  ): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    const mime = (contentType || '').split(';')[0].trim().toLowerCase();
+    const isTextLike =
+      mime.includes('json') ||
+      mime.startsWith('text/') ||
+      this.looksLikeTextPayload(buffer);
+    if (!isTextLike) {
+      return { buffer, mimeType: mime || expectedMimeType };
+    }
+
+    // Some FlareSend endpoints return JSON containing a signed URL or base64.
+    try {
+      const parsed = JSON.parse(buffer.toString('utf8'));
+      const obj =
+        parsed && typeof parsed === 'object'
+          ? ((parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed) as Record<
+              string,
+              any
+            >)
+          : null;
+      if (!obj) return null;
+      const url = [
+        obj.url,
+        obj.mediaUrl,
+        obj.downloadUrl,
+        obj.fileUrl,
+        obj.signedUrl,
+        obj.link,
+      ].find((v): v is string => typeof v === 'string' && /^https?:\/\//i.test(v));
+      if (url && this.isSafeMediaUrl(url)) {
+        const resp = this.isOwnBaseUrl(url)
+          ? await this.getWithMediaHeaders(url)
+          : await axios.get<ArrayBuffer>(url, {
+              responseType: 'arraybuffer',
+              timeout: 30_000,
+              maxContentLength: 30 * 1024 * 1024,
+            });
+        const b = resp ? Buffer.from(resp.data) : Buffer.alloc(0);
+        if (b.length > 0 && !this.looksLikeTextPayload(b)) {
+          return {
+            buffer: b,
+            mimeType:
+              (resp?.headers['content-type'] as string | undefined)?.split(';')[0] ||
+              expectedMimeType,
+          };
+        }
+      }
+      const base64Value = [obj.base64, obj.data, obj.file, obj.media].find(
+        (v): v is string => typeof v === 'string' && v.length > 32 && !/^https?:\/\//i.test(v),
+      );
+      if (base64Value) {
+        const cleaned = base64Value.includes(',')
+          ? base64Value.slice(base64Value.indexOf(',') + 1)
+          : base64Value;
+        const b = Buffer.from(cleaned.replace(/\s/g, ''), 'base64');
+        if (b.length > 0) {
+          return {
+            buffer: b,
+            mimeType:
+              (typeof obj.mimetype === 'string' && obj.mimetype) ||
+              (typeof obj.mimeType === 'string' && obj.mimeType) ||
+              expectedMimeType,
+          };
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   /**
    * Downloads inbound media using any of the shapes FlareSend/Baileys payloads
    * use in practice: a signed URL, inline base64, or a media id that can be
@@ -728,13 +808,18 @@ export class FlaresendApiClient implements IWhatsappClient {
             });
         const buffer = response ? Buffer.from(response.data) : Buffer.alloc(0);
         if (buffer.length > 0) {
-          return {
+          const resolved = await this.resolveDownloadedBuffer(
             buffer,
-            mimeType:
-              (response?.headers['content-type'] as string | undefined)?.split(';')[0] ||
-              mimeType,
-            originalFilename: this.mediaFilename(descriptor, mimeType),
-          };
+            response?.headers['content-type'] as string | undefined,
+            mimeType,
+          );
+          if (resolved) {
+            return {
+              buffer: resolved.buffer,
+              mimeType: resolved.mimeType || mimeType,
+              originalFilename: this.mediaFilename(descriptor, mimeType),
+            };
+          }
         }
       } catch (error) {
         this.logger.warn(
@@ -750,13 +835,18 @@ export class FlaresendApiClient implements IWhatsappClient {
           const response = await this.getWithMediaHeaders(url);
           const buffer = response ? Buffer.from(response.data) : Buffer.alloc(0);
           if (buffer.length > 0) {
-            return {
+            const resolved = await this.resolveDownloadedBuffer(
               buffer,
-              mimeType:
-                (response?.headers['content-type'] as string | undefined)?.split(';')[0] ||
-                mimeType,
-              originalFilename: this.mediaFilename(descriptor, mimeType),
-            };
+              response?.headers['content-type'] as string | undefined,
+              mimeType,
+            );
+            if (resolved) {
+              return {
+                buffer: resolved.buffer,
+                mimeType: resolved.mimeType || mimeType,
+                originalFilename: this.mediaFilename(descriptor, mimeType),
+              };
+            }
           }
         } catch (error) {
           this.logger.debug(
