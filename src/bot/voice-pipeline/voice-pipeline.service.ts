@@ -216,7 +216,9 @@ export class VoicePipelineService {
       } else if (lower.includes('timeout')) {
         stage = 'timeout';
       }
-      const headMatch = message.match(/\[head=([a-f0-9]+)(?:\s+wa=([a-z-]+))?\]/i);
+      const headMatch = message.match(
+        /\[head=([a-f0-9]+)(?:\s+wa=([a-z-]+))?(?:\s+len=(\d+))?\]/i,
+      );
       const safeDetail = message
         .toLowerCase()
         .replace(/[^a-z0-9 ]+/g, ' ')
@@ -225,8 +227,9 @@ export class VoicePipelineService {
         .slice(0, 4)
         .join('-')
         .slice(0, 24);
-      const headSuffix = headMatch ? `-${headMatch[1].slice(0, 12)}` : '';
+      const headSuffix = headMatch ? `-${headMatch[1].slice(0, 16)}` : '';
       const waSuffix = headMatch?.[2] ? `-${headMatch[2].slice(0, 12)}` : '';
+      const lenSuffix = headMatch?.[3] ? `-l${headMatch[3].slice(0, 7)}` : '';
       this.logger.error(
         `Voice pipeline error [${sessionUuid}] stage=${stage}: ${message}`,
       );
@@ -238,7 +241,7 @@ export class VoicePipelineService {
         intentConfidence: 0,
         patientMessage:
           'Samahani, hatukuweza kusikiliza ujumbe wako vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno.' +
-          ` (ref: voice-${stage}${safeDetail ? `:${safeDetail}` : ''}${headSuffix}${waSuffix})`,
+          ` (ref: voice-${stage}${safeDetail ? `:${safeDetail}` : ''}${headSuffix}${waSuffix}${lenSuffix})`,
         status: 'failed',
         error: message,
       };
