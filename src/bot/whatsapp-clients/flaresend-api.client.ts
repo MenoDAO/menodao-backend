@@ -644,7 +644,12 @@ export class FlaresendApiClient implements IWhatsappClient {
   ): Buffer {
     const mediaKeyRaw = descriptor?.mediaKey ?? descriptor?.mediakey;
     if (!mediaKeyRaw) {
-      (buffer as any)._waDecrypt = 'no-key';
+      const keys = Object.keys(descriptor || {})
+        .filter((k) => /key|enc|sha256|direct/i.test(k))
+        .slice(0, 2)
+        .join('+')
+        .slice(0, 16);
+      (buffer as any)._waDecrypt = keys ? `no-key-${keys}` : 'no-key';
       return buffer;
     }
     try {
@@ -655,7 +660,10 @@ export class FlaresendApiClient implements IWhatsappClient {
           : typeof mediaKeyRaw === 'object' && mediaKeyRaw?.type === 'Buffer'
             ? Buffer.from(mediaKeyRaw.data)
             : Buffer.from(String(mediaKeyRaw), 'base64');
-      if (mediaKey.length !== 32) return buffer;
+      if (mediaKey.length !== 32) {
+        (buffer as any)._waDecrypt = `bad-keylen-${mediaKey.length}`;
+        return buffer;
+      }
       const info = this.whatsappMediaInfo(mimeType);
       const expanded = Buffer.from(hkdfSync('sha256', mediaKey, Buffer.alloc(0), info, 112));
       const iv = expanded.subarray(0, 16);
