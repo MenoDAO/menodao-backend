@@ -54,10 +54,10 @@ export class GeminiProvider implements ILlmProvider {
     const primary =
       this.configService.get<string>('BOT_GEMINI_MODEL') ??
       this.configService.get<string>('GEMINI_MODEL') ??
-      'gemini-3.5-flash-lite';
+      'gemini-2.5-flash-lite';
     const fallbacks = (
       this.configService.get<string>('GEMINI_FALLBACK_MODELS') ??
-      'gemini-flash-lite-latest,gemini-3.1-flash-lite,gemini-3.5-flash'
+      'gemini-flash-latest,gemini-2.5-flash,gemini-flash-lite-latest'
     )
       .split(',')
       .map((name) => name.trim())
