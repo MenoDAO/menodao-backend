@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PiiSanitizer } from '../privacy/pii-sanitizer';
 import type {
   ChatHistoryMessage,
   ILlmProvider,
@@ -72,14 +73,27 @@ export class BotAiService {
     );
     const contextBlock =
       this.contextService.renderPromptBlock(retrievedContext);
+
+    // Workstream 2: Sanitize user prompt and history before LLM call
+    const rawUserPrompt = contextBlock
+      ? `${contextBlock}\n\nUser question: ${userMessage}`
+      : userMessage;
+    const sanitizedUserPrompt = PiiSanitizer.sanitizeForLlm(rawUserPrompt, {
+      fullName: options.memberName,
+    });
+    const sanitizedHistory = history.map((item) => ({
+      ...item,
+      content: PiiSanitizer.sanitizeForLlm(item.content, {
+        fullName: options.memberName,
+      }),
+    }));
+
     let rawReply: string;
     try {
       rawReply = await this.llmProvider.generateCompletion({
         systemPrompt,
-        userPrompt: contextBlock
-          ? `${contextBlock}\n\nUser question: ${userMessage}`
-          : userMessage,
-        history,
+        userPrompt: sanitizedUserPrompt,
+        history: sanitizedHistory,
         operation,
       });
     } catch (error) {
@@ -91,7 +105,8 @@ export class BotAiService {
       rawReply =
         language === 'sw' ? DR_PAPI_FALLBACK_REPLY_SW : DR_PAPI_FALLBACK_REPLY;
     }
-    const message = polishMemberReply(rawReply);
+    const firstName = options.memberName?.trim().split(/\s+/)[0] ?? null;
+    const message = polishMemberReply(rawReply, firstName);
     const detectedLeadIntent = this.detectLeadIntent(userMessage, message);
     return { message, detectedLeadIntent };
   }

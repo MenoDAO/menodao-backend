@@ -59,6 +59,8 @@ export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
   private readonly recentWaboxappInboundMessages = new Map<string, number>();
   private readonly recentFlaresendInboundMessages = new Map<string, number>();
+  private readonly recentUnmatchedReplies = new Map<string, number>();
+  private readonly UNMATCHED_REPLY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   constructor(
     private readonly prisma: PrismaService,
@@ -263,6 +265,25 @@ export class BotGatewayService {
           data.message?.audioMessage?.mimetype || 'audio/ogg',
         );
         if (audioSource) {
+          // Enforce 10 MB audio size limit
+          if (audioSource.buffer && audioSource.buffer.length > 10 * 1024 * 1024) {
+            const limitMsg =
+              member?.preferredLanguage === 'sw'
+                ? 'Ujumbe wako wa sauti ni mrefu mno. Tafadhali tuma ujumbe mfupi wa sauti (chini ya dakika 2) au uandike kwa maandishi ili tukusaidie.'
+                : 'Your voice note is too long. Please send a shorter voice note (under 2 minutes) or type a message so we can assist you.';
+            await this.sendTextSafely(
+              recipientPhone,
+              limitMsg,
+              member
+                ? {
+                    memberId: member.id,
+                    contactId: whatsappId,
+                    instanceProviderId: payload.instanceId,
+                  }
+                : undefined,
+            );
+            return;
+          }
           try {
             const result = await this.voicePipelineService.processVoicePipeline(
               audioSource.buffer,
@@ -578,7 +599,16 @@ export class BotGatewayService {
       whatsappId: senderId,
       contactName,
     });
-    if (!member) return;
+    if (!member) {
+      // Per v2 spec (Workstream 2 & 9): Never call LLM for unmatched senders.
+      this.logger.warn(
+        `Unmatched sender ${senderId} - NO LLM call made per v2 spec.`,
+      );
+      if (fallbackPhone && !this.isLid(senderId)) {
+        await this.sendStaticUnmatchedAutoReply(fallbackPhone);
+      }
+      return;
+    }
 
     const chatContext: ChatContext = {
       memberId: member.id,
@@ -596,23 +626,6 @@ export class BotGatewayService {
       providerMessageId: messageId || null,
       instanceProviderId,
     });
-
-    // New / unverified WhatsApp numbers start in the onboarding state machine;
-    // known (verified) members proceed straight to the AI reply path.
-    if (!member.isVerified) {
-      const session = await this.onboardingService.getSession(member.id);
-      if (!session || session.status === 'IN_PROGRESS') {
-        await this.handleOnboardingTurn({
-          memberId: member.id,
-          recipientPhone: member.phoneNumber,
-          messageText,
-          senderId,
-          chatContext,
-          preferredLanguage: member.preferredLanguage ?? 'en',
-        });
-        return;
-      }
-    }
 
     // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
     // verification code only while a pending challenge exists for this member.
@@ -639,6 +652,7 @@ export class BotGatewayService {
       return;
     }
 
+    // Direct conversational AI pipeline — no menu gates!
     const replyText = await this.generateReplyText({
       memberId: member.id,
       recipientPhone: member.phoneNumber,
@@ -649,99 +663,23 @@ export class BotGatewayService {
   }
 
   /**
-   * First turn for a new WhatsApp contact. The welcome is a question, not a
-   * menu, and every reply after it is handed to the AI pipeline in the
-   * member's own words. Bare 1/2/3 shortcuts still work for returning users.
+   * Static auto-reply for unregistered senders (Workstream 9).
+   * Sent at most once per 24 hours per phone number.
    */
-  private async handleOnboardingTurn(params: {
-    memberId: string;
-    recipientPhone: string;
-    messageText: string;
-    senderId: string;
-    chatContext: ChatContext;
-    preferredLanguage?: string;
-  }): Promise<void> {
-    const { memberId, recipientPhone, messageText, chatContext } = params;
-    const preferredLanguage = params.preferredLanguage ?? 'en';
-    const session = await this.onboardingService.start(
-      memberId,
-      preferredLanguage,
-    );
+  private async sendStaticUnmatchedAutoReply(phone: string): Promise<void> {
+    const now = Date.now();
+    const expiresAt = this.recentUnmatchedReplies.get(phone);
+    if (expiresAt && expiresAt > now) return;
 
-    if (session.step === 'WELCOME') {
-      await this.onboardingService.setStep(memberId, 'INTEREST', {
-        source: 'welcome',
-        language: preferredLanguage,
-        welcomeSentAt: new Date().toISOString(),
-      });
-      await this.sendTextSafely(
-        recipientPhone,
-        onboardingWelcome(preferredLanguage),
-        chatContext,
-      );
-      return;
+    this.recentUnmatchedReplies.set(phone, now + this.UNMATCHED_REPLY_TTL_MS);
+    const msg =
+      'Karibu MenoDAO! Nambari hii haijasajiliwa kwenye mfumo wetu. Tafadhali tembelea https://app.menodao.org au wasiliana na kliniki yetu ili upate huduma.\n\n' +
+      'Welcome to MenoDAO! This phone number is not registered in our system. Please visit https://app.menodao.org or contact our clinic to access care.';
+    try {
+      await this.whatsappClient.sendTextMessage(phone, msg);
+    } catch (e) {
+      this.logger.warn(`Failed to send unmatched auto-reply to ${phone}: ${e}`);
     }
-
-    const choice = this.resolveMenuChoice(messageText);
-    const trimmedInput = (messageText ?? '').trim();
-    // A bare number carries no intent. Everything else — including "my tooth
-    // is sore" — goes to the pipeline exactly as the member wrote it.
-    const aiInput =
-      /^[123]$/.test(trimmedInput) && choice ? choice.phrase : trimmedInput;
-    if (!aiInput) {
-      await this.sendTextSafely(
-        recipientPhone,
-        onboardingReprompt(preferredLanguage),
-        chatContext,
-      );
-      return;
-    }
-
-    await this.onboardingService.setStep(memberId, 'MENU', {
-      choice: choice?.key ?? 'FREE_TEXT',
-      selectedAt: new Date().toISOString(),
-    });
-
-    const replyText = await this.generateReplyText({
-      memberId,
-      recipientPhone,
-      messageText: aiInput,
-      senderId: params.senderId,
-    });
-    await this.sendTextSafely(recipientPhone, replyText, chatContext);
-    await this.onboardingService.complete(memberId);
-  }
-
-  private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {
-    const text = (messageText ?? '').trim().toLowerCase();
-    if (!text) return null;
-    if (
-      /^(1|book|booking|appointment|miadi|ninapenda kupanga|book\s+appointment)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'BOOKING',
-        phrase: 'I want to book an appointment at a MenoDAO clinic.',
-      };
-    }
-    if (
-      /^(2|health|info|information|symptom|symptoms|pain|toothache|afya|maumivu)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'HEALTH',
-        phrase: 'I have a question about my dental health.',
-      };
-    }
-    if (/^(3|help|support|account|memb|msaada)/.test(text)) {
-      return {
-        key: 'HELP',
-        phrase: 'I need help with my MenoDAO account.',
-      };
-    }
-    return null;
   }
 
   /** Shared reply generation: static override (if configured) or the AI pipeline. */

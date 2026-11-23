@@ -13,11 +13,13 @@
  *   unverified stub members; staff verify later) — the REST path in
  *   AppointmentsService keeps the strict active-subscription guard.
  */
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
 import { CalendarSyncService } from '../../calendar/calendar-sync.service';
+import { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
+import { PiiSanitizer } from '../privacy/pii-sanitizer';
 import { AppointmentActor, AppointmentStatus } from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
@@ -89,10 +91,6 @@ class BookingExtractionResult {
     'UNRELATED',
   ])
   action!: BookingAction;
-
-  @IsOptional()
-  @IsString()
-  clientName?: string | null;
 
   @IsOptional()
   @IsString()
@@ -177,6 +175,7 @@ export class BookingService {
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
     private readonly smsService: SmsService,
     private readonly calendarSync: CalendarSyncService,
+    @Optional() private readonly flaresendClient?: FlaresendApiClient,
   ) {
     this.cfg = this.loadConfig();
   }
@@ -500,9 +499,12 @@ export class BookingService {
     let extraction: BookingExtractionResult | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        const sanitizedUserPrompt = PiiSanitizer.sanitizeForLlm(userMessage, {
+          fullName: memberName,
+        });
         const raw = await this.llmProvider.generateCompletion({
           systemPrompt,
-          userPrompt: userMessage,
+          userPrompt: sanitizedUserPrompt,
           responseFormat: 'json',
           operation: 'booking_extraction',
         });
@@ -715,12 +717,8 @@ export class BookingService {
       }
     }
 
-    if (extraction.clientName) {
-      updates.clientName = extraction.clientName;
-      await this.prisma.member.update({
-        where: { id: userId },
-        data: { fullName: extraction.clientName },
-      });
+    if (!draft.clientName && memberName) {
+      updates.clientName = memberName;
     }
 
     await this.saveDraft(userId, updates);
@@ -937,6 +935,71 @@ export class BookingService {
         draft.service ?? null,
         scheduledAt,
       );
+
+      // Workstream 9: Schedule 24h and 2h reminders via FlareSend
+      if (this.flaresendClient && senderPhone) {
+        const appointmentTime = scheduledAt.getTime();
+        const nowMs = Date.now();
+        const clinicName = clinic?.name ?? 'MenoHub Clinic';
+
+        // 24 hours before
+        const reminder24h = new Date(appointmentTime - 24 * 60 * 60 * 1000);
+        if (reminder24h.getTime() > nowMs) {
+          const body24h =
+            lang === 'sw'
+              ? `Kikumbusho: Una miadi ya meno kesho saa ${this.format24hTime(draft.time!)} kwenye ${clinicName}. Tafadhali fika dakika 10 kabla.`
+              : `Reminder: You have a dental appointment tomorrow at ${this.format24hTime(draft.time!)} at ${clinicName}. Please arrive 10 minutes early.`;
+          this.flaresendClient
+            .scheduleTextMessage(senderPhone, body24h, reminder24h)
+            .then(async (taskId) => {
+              if (taskId) {
+                await this.prisma.appointmentReminder
+                  .create({
+                    data: {
+                      appointmentId: appointment.id,
+                      kind: 'DAY_BEFORE',
+                      channel: 'SMS',
+                      recipient: senderPhone,
+                      status: 'SCHEDULED',
+                    },
+                  })
+                  .catch(() => null);
+              }
+            })
+            .catch((err) =>
+              this.logger.warn(`Failed scheduling 24h reminder: ${err}`),
+            );
+        }
+
+        // 2 hours before
+        const reminder2h = new Date(appointmentTime - 2 * 60 * 60 * 1000);
+        if (reminder2h.getTime() > nowMs) {
+          const body2h =
+            lang === 'sw'
+              ? `Kikumbusho: Miadi yako ya meno kwenye ${clinicName} ni leo saa ${this.format24hTime(draft.time!)}. Tunakutakia safari njema!`
+              : `Reminder: Your dental appointment at ${clinicName} is today at ${this.format24hTime(draft.time!)}. See you soon!`;
+          this.flaresendClient
+            .scheduleTextMessage(senderPhone, body2h, reminder2h)
+            .then(async (taskId) => {
+              if (taskId) {
+                await this.prisma.appointmentReminder
+                  .create({
+                    data: {
+                      appointmentId: appointment.id,
+                      kind: 'HOUR_BEFORE',
+                      channel: 'SMS',
+                      recipient: senderPhone,
+                      status: 'SCHEDULED',
+                    },
+                  })
+                  .catch(() => null);
+              }
+            })
+            .catch((err) =>
+              this.logger.warn(`Failed scheduling 2h reminder: ${err}`),
+            );
+        }
+      }
 
       return {
         reply: t(BOOKING_CONFIRMED, lang, {
@@ -1452,7 +1515,6 @@ export class BookingService {
       missing.push('doctor');
     }
     if (!draft.date || !draft.time) missing.push('datetime');
-    if (!draft.clientName) missing.push('name');
     return missing;
   }
 
@@ -1540,8 +1602,6 @@ export class BookingService {
         });
       case 'datetime':
         return t(ASK_DATE_TIME, lang);
-      case 'name':
-        return t(ASK_NAME, lang);
       default:
         return t(ASK_SERVICE, lang);
     }

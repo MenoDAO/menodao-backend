@@ -1,3 +1,5 @@
+import { PiiSanitizer } from '../privacy/pii-sanitizer';
+
 /**
  * ============================================================================
  * CENTRALIZED SYSTEM PROMPTS & LLM INSTRUCTIONS
@@ -63,8 +65,11 @@ const SWAHILI_TYPO_CORRECTIONS: ReadonlyArray<[RegExp, string]> = [
   [/\bkariba\b/gi, 'karibu'],
 ];
 
-/** Normalise line endings, fix known typos and replace showy em dashes. */
-export function polishMemberReply(reply: string): string {
+/** Normalise line endings, fix known typos, resolve placeholders, and replace showy em dashes. */
+export function polishMemberReply(
+  reply: string,
+  firstName?: string | null,
+): string {
   let text = (reply ?? '').replace(/\r\n/g, '\n').trim();
   for (const [pattern, correction] of SWAHILI_TYPO_CORRECTIONS) {
     text = text.replace(pattern, (match) =>
@@ -73,6 +78,8 @@ export function polishMemberReply(reply: string): string {
         : correction,
     );
   }
+  // Workstream 2: Resolve {{first_name}} placeholder securely from DB
+  text = PiiSanitizer.resolvePlaceholders(text, firstName);
   text = text
     .replace(
       /(\b\d{1,2}:\d{2}\b|\b\d{1,2}\b)\s+—\s+(\b\d{1,2}:\d{2}\b|\b\d{1,2}\b)/g,
@@ -127,9 +134,8 @@ export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string {
     language === 'sw'
       ? `The member's preferred language is Swahili (Kiswahili). Always reply in natural, warm, everyday Swahili, even if they write a short English word such as "hello" or "ok". Only switch to English if they explicitly ask you to. Use correct standard spellings such as "karibu" (never "kariba"), "nambari", "tafadhali" and "samahani". Avoid literal translations and stiff, office-like phrasing.`
       : "The member's preferred language is English. Reply in clear, warm English. You may use a short Swahili greeting only if the member greets you in Swahili.";
-  const nameDirective = context.memberName?.trim()
-    ? `The member's name is ${context.memberName.trim()}. Greet them by name at most once, naturally, and do not overuse it.`
-    : '';
+  const nameDirective =
+    'You may include the placeholder token "{{first_name}}" at most once in your reply (for example in a warm greeting: "Karibu {{first_name}}!" or "Hi {{first_name}}!"). Never use any real member names directly or invent one.';
   const intentDirective = context.intentGuidance?.trim()
     ? `WHAT THIS TURN NEEDS:\n${context.intentGuidance.trim()}\n\n`
     : '';
@@ -433,7 +439,6 @@ ${context.recentHistory}
 Extract from the user's latest message and return ONLY this JSON:
 {
   "action": "PROVIDE_DETAILS | CONFIRM | DECLINE | CANCEL_BOOKING | UNRELATED",
-  "clientName": null,
   "service": null,
   "clinicName": null,
   "preferredDate": null,

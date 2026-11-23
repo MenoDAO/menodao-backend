@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AssemblyAiService } from '../assemblyai/assemblyai.service';
+import { PiiSanitizer } from '../privacy/pii-sanitizer';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from '../ai/interfaces/llm-provider.interface';
 import { randomUUID } from 'crypto';
@@ -886,7 +887,12 @@ export class VoicePipelineService {
     const historyText = history
       .map((message) => `${message.role}: ${message.content}`)
       .join('\n');
-    const prompt = buildIntentClassificationPrompt(transcript, historyText);
+    const sanitizedTranscript = PiiSanitizer.sanitizeForLlm(transcript);
+    const sanitizedHistory = PiiSanitizer.sanitizeForLlm(historyText);
+    const prompt = buildIntentClassificationPrompt(
+      sanitizedTranscript,
+      sanitizedHistory,
+    );
     try {
       const result = await this.llmProvider.generateCompletion({
         systemPrompt: INTENT_CLASSIFIER_SYSTEM_PROMPT,
@@ -1002,7 +1008,8 @@ export class VoicePipelineService {
     transcript: string,
   ): Promise<ClinicalIntakeSchema> {
     const systemPrompt = BORDER_AGENT_SYSTEM_PROMPT;
-    const userPrompt = buildBorderAgentUserPrompt(transcript);
+    const sanitizedTranscript = PiiSanitizer.sanitizeForLlm(transcript);
+    const userPrompt = buildBorderAgentUserPrompt(sanitizedTranscript);
     try {
       const response = await this.llmProvider.generateCompletion({
         systemPrompt,

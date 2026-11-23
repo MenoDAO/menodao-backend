@@ -24,4 +24,19 @@ export interface IWhatsappClient {
    * @param mediaId The provider-specific media identifier.
    */
   downloadMedia(mediaId: string): Promise<Buffer>;
+
+  /**
+   * Schedules a text message to be sent at a specific future date and time.
+   * @param to Phone number in international format.
+   * @param body The text message content.
+   * @param sendAt The Date when the message should be sent.
+   * @returns The scheduled task ID or null if unsupported/failed.
+   */
+  scheduleTextMessage?(to: string, body: string, sendAt: Date): Promise<string | null>;
+
+  /**
+   * Cancels a previously scheduled message task by ID.
+   * @param taskId The task ID returned when scheduling.
+   */
+  cancelScheduledMessage?(taskId: string): Promise<void>;
 }

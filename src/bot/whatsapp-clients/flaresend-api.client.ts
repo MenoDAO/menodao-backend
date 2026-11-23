@@ -772,4 +772,59 @@ export class FlaresendApiClient implements IWhatsappClient {
     const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
     return `field-upload.${extension}`;
   }
+
+  /**
+   * Schedules a text message via POST /schedule-message.
+   * sendAt format expected by FlareSend: YYYY-MM-DD HH:mm:ss
+   */
+  async scheduleTextMessage(
+    to: string,
+    body: string,
+    sendAt: Date,
+  ): Promise<string | null> {
+    const recipient = this.formatRecipient(to);
+    if (!recipient) {
+      this.logger.error('Cannot schedule message: invalid recipient phone.');
+      return null;
+    }
+    const token = await this.resolveSendToken();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const sendAtStr = `${sendAt.getFullYear()}-${pad(sendAt.getMonth() + 1)}-${pad(sendAt.getDate())} ${pad(sendAt.getHours())}:${pad(sendAt.getMinutes())}:${pad(sendAt.getSeconds())}`;
+
+    try {
+      const response = await this.http.post<{ success?: boolean; task_id?: string; id?: string }>(
+        '/schedule-message',
+        {
+          recipients: [recipient],
+          type: 'text',
+          text: body,
+          sendAt: sendAtStr,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      return response.data?.task_id || response.data?.id || 'scheduled';
+    } catch (error) {
+      this.logger.warn(`Failed to schedule FlareSend message: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Cancels a scheduled message via DELETE /schedule-message/:id.
+   */
+  async cancelScheduledMessage(taskId: string): Promise<void> {
+    if (!taskId) return;
+    try {
+      const token = await this.resolveSendToken();
+      await this.http.delete(`/schedule-message/${taskId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (error) {
+      this.logger.warn(`Failed to cancel scheduled FlareSend message ${taskId}: ${error}`);
+    }
+  }
 }

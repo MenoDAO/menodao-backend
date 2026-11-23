@@ -23,7 +23,9 @@
     "prisma:migrate": "prisma migrate deploy",
     "migrate:validate": "node scripts/validate-database.js",
     "migrate:deploy": "npm run migrate:validate && prisma migrate deploy",
-    "db:validate": "node scripts/validate-database.js"
+    "db:validate": "node scripts/validate-database.js",
+    "eval": "node scripts/run-eval.js",
+    "eval:improve": "node scripts/run-improve.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1172.0",
