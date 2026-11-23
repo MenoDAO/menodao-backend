@@ -212,6 +212,51 @@ export class FlaresendApiClient implements IWhatsappClient {
     return { Authorization: `Bearer ${await this.getBearerToken()}` };
   }
 
+  /**
+   * Media downloads are instance-scoped. Try the configured instance key first
+   * and the account session JWT second, because different FlareSend versions
+   * accept one or the other on their media endpoint.
+   */
+  private async mediaHeaderCandidates(): Promise<Array<Record<string, string>>> {
+    const candidates: Array<Record<string, string>> = [];
+    try {
+      const token = await this.resolveSendToken();
+      if (token) candidates.push({ Authorization: `Bearer ${token}` });
+    } catch {
+      /* fall through to the account session */
+    }
+    try {
+      const session = await this.accountHeaders();
+      if (!candidates.some((item) => item.Authorization === session.Authorization)) {
+        candidates.push(session);
+      }
+    } catch {
+      /* the first candidate may still work */
+    }
+    return candidates.length ? candidates : [{}];
+  }
+
+  private async getWithMediaHeaders(
+    url: string,
+    timeout = 30_000,
+  ): Promise<AxiosResponse<ArrayBuffer> | null> {
+    for (const headers of await this.mediaHeaderCandidates()) {
+      try {
+        return await axios.get<ArrayBuffer>(url, {
+          responseType: 'arraybuffer',
+          timeout,
+          maxContentLength: 30 * 1024 * 1024,
+          headers,
+        });
+      } catch (error) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (status === 401 || status === 403) continue;
+        throw error;
+      }
+    }
+    return null;
+  }
+
   private isUnauthorized(error: unknown): boolean {
     return axios.isAxiosError(error) && error.response?.status === 401;
   }
@@ -635,7 +680,7 @@ export class FlaresendApiClient implements IWhatsappClient {
       }
     }
 
-    const candidateUrls = [
+    const rawUrls = [
       descriptor.url,
       descriptor.mediaUrl,
       descriptor.media_url,
@@ -644,7 +689,29 @@ export class FlaresendApiClient implements IWhatsappClient {
       descriptor.link,
       descriptor.fileUrl,
       descriptor.signedUrl,
-    ].filter((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value.trim()));
+      descriptor.directPath,
+      descriptor.file?.url,
+      descriptor.media?.url,
+      descriptor.audio?.url,
+    ];
+    const candidateUrls = [
+      ...new Set(
+        rawUrls
+          .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+          .map((value) => {
+            const trimmed = value.trim();
+            if (trimmed.startsWith('/')) {
+              try {
+                return new URL(trimmed, this.baseUrl).toString();
+              } catch {
+                return trimmed;
+              }
+            }
+            return trimmed;
+          })
+          .filter((value) => /^https?:\/\//i.test(value)),
+      ),
+    ];
 
     for (const url of candidateUrls) {
       if (!this.isSafeMediaUrl(url)) {
@@ -652,20 +719,19 @@ export class FlaresendApiClient implements IWhatsappClient {
         continue;
       }
       try {
-        const response = await axios.get(url, {
-          responseType: 'arraybuffer',
-          timeout: 30_000,
-          maxContentLength: 30 * 1024 * 1024,
-          headers: this.isOwnBaseUrl(url)
-            ? await this.accountHeaders()
-            : undefined,
-        });
-        const buffer = Buffer.from(response.data);
+        const response = this.isOwnBaseUrl(url)
+          ? await this.getWithMediaHeaders(url)
+          : await axios.get<ArrayBuffer>(url, {
+              responseType: 'arraybuffer',
+              timeout: 30_000,
+              maxContentLength: 30 * 1024 * 1024,
+            });
+        const buffer = response ? Buffer.from(response.data) : Buffer.alloc(0);
         if (buffer.length > 0) {
           return {
             buffer,
             mimeType:
-              (response.headers['content-type'] as string | undefined)?.split(';')[0] ||
+              (response?.headers['content-type'] as string | undefined)?.split(';')[0] ||
               mimeType,
             originalFilename: this.mediaFilename(descriptor, mimeType),
           };
@@ -680,18 +746,14 @@ export class FlaresendApiClient implements IWhatsappClient {
     for (const mediaId of candidateIds) {
       for (const path of this.mediaDownloadPaths()) {
         try {
-          const response = await this.http.get(path.replace('{id}', encodeURIComponent(mediaId)), {
-            responseType: 'arraybuffer',
-            timeout: 30_000,
-            maxContentLength: 30 * 1024 * 1024,
-            headers: await this.accountHeaders(),
-          });
-          const buffer = Buffer.from(response.data);
+          const url = new URL(path.replace('{id}', encodeURIComponent(mediaId)), this.baseUrl).toString();
+          const response = await this.getWithMediaHeaders(url);
+          const buffer = response ? Buffer.from(response.data) : Buffer.alloc(0);
           if (buffer.length > 0) {
             return {
               buffer,
               mimeType:
-                (response.headers['content-type'] as string | undefined)?.split(';')[0] ||
+                (response?.headers['content-type'] as string | undefined)?.split(';')[0] ||
                 mimeType,
               originalFilename: this.mediaFilename(descriptor, mimeType),
             };
@@ -728,7 +790,14 @@ export class FlaresendApiClient implements IWhatsappClient {
       .filter(Boolean);
     return configured?.length
       ? configured
-      : ['/media/{id}', '/download-media/{id}', '/media/download/{id}'];
+      : [
+          '/media/{id}',
+          '/download-media/{id}',
+          '/media/download/{id}',
+          '/download/{id}',
+          '/get-media/{id}',
+          '/files/{id}',
+        ];
   }
 
   private isOwnBaseUrl(url: string): boolean {

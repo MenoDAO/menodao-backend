@@ -19,6 +19,11 @@ import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
 import { onboardingReprompt, onboardingWelcome } from './onboarding.messages';
+import {
+  extractFlaresendAudio,
+  extractFlaresendFieldMedia,
+  type FlaresendMedia,
+} from './flaresend-media.util';
 
 const WABOXAPP_INBOUND_DEDUPE_TTL_MS = 30_000;
 const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
@@ -200,9 +205,9 @@ export class BotGatewayService {
     const phoneHint = this.extractPhoneHint(data);
     const contactName = data.pushName || data.name || undefined;
     const messageText = this.extractFlaresendMessageText(data as any);
-    const isAudio = Boolean(data.message?.audioMessage);
-    const fieldMedia = this.extractFlaresendFieldMedia(data.message);
-    if (!isAudio && !fieldMedia && !messageText) return;
+    const audioMedia = extractFlaresendAudio(data as any);
+    const fieldMedia = extractFlaresendFieldMedia(data as any);
+    if (!audioMedia && !fieldMedia && !messageText) return;
 
     // FlareSend retries a delivery when it does not see a fast 2xx, and the
     // controller acknowledges before processing finishes. Drop repeats so a
@@ -234,7 +239,7 @@ export class BotGatewayService {
     );
 
     try {
-      if (isAudio) {
+      if (audioMedia) {
         const member = await this.identity.resolveMember({
           phoneDigitsFallback: this.isLid(whatsappId)
             ? (phoneHint ?? undefined)
@@ -258,10 +263,19 @@ export class BotGatewayService {
         }
 
         const audioSource = await this.flaresendClient.downloadMediaDescriptor(
-          data.message?.audioMessage,
+          audioMedia.descriptor,
           data.id,
-          data.message?.audioMessage?.mimetype || 'audio/ogg',
+          audioMedia.mimeType,
         );
+        if (!audioSource) {
+          this.logger.warn(
+            `FlareSend audio download failed for ${recipientPhone}; media keys=${Object.keys(
+              audioMedia.descriptor || {},
+            )
+              .slice(0, 20)
+              .join(',')}`,
+          );
+        }
         if (audioSource) {
           try {
             const result = await this.voicePipelineService.processVoicePipeline(
@@ -331,63 +345,13 @@ export class BotGatewayService {
     }
   }
 
-  private extractFlaresendFieldMedia(message: any):
-    | {
-        kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
-        descriptor: any;
-        mimeType: string;
-        caption?: string | null;
-      }
-    | null {
-    if (!message || typeof message !== 'object') return null;
-    const candidates: Array<{
-      key: string;
-      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
-      mime: string;
-    }> = [
-      { key: 'imageMessage', kind: 'IMAGE', mime: 'image/jpeg' },
-      { key: 'videoMessage', kind: 'VIDEO', mime: 'video/mp4' },
-      { key: 'documentMessage', kind: 'DOCUMENT', mime: 'application/octet-stream' },
-    ];
-    for (const candidate of candidates) {
-      let descriptor = message[candidate.key];
-      if (!descriptor || typeof descriptor !== 'object') {
-        // Some FlareSend versions use a flat `{ type: "image", url: ... }`.
-        const type = typeof message.type === 'string' ? message.type.toLowerCase() : '';
-        if (type !== candidate.kind.toLowerCase() && !(candidate.kind === 'DOCUMENT' && type === 'document')) continue;
-        descriptor = message;
-      }
-      const mimeType =
-        typeof descriptor.mimetype === 'string' && descriptor.mimetype
-          ? descriptor.mimetype
-          : typeof descriptor.mimeType === 'string' && descriptor.mimeType
-            ? descriptor.mimeType
-            : candidate.mime;
-      return {
-        kind: candidate.kind,
-        descriptor,
-        mimeType,
-        caption:
-          typeof descriptor.caption === 'string' && descriptor.caption.trim()
-            ? descriptor.caption.trim()
-            : null,
-      };
-    }
-    return null;
-  }
-
   private async handleFlaresendFieldMedia(params: {
     payload: FlaresendWebhookPayload;
     data: any;
     whatsappId: string;
     phoneHint?: string;
     contactName?: string;
-    fieldMedia: {
-      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
-      descriptor: any;
-      mimeType: string;
-      caption?: string | null;
-    };
+    fieldMedia: FlaresendMedia;
   }): Promise<void> {
     const { payload, data, whatsappId, phoneHint, contactName, fieldMedia } = params;
     const member = await this.identity.resolveMember({
