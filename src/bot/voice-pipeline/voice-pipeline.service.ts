@@ -190,19 +190,32 @@ export class VoicePipelineService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const lower = message.toLowerCase();
-      const stage =
-        lower.includes('transcript') ||
+      let stage = 'processing';
+      if (
+        lower.includes('empty transcript') ||
+        (lower.includes('transcript') && lower.includes('empty'))
+      ) {
+        stage = 'stt-empty';
+      } else if (lower.includes('assemblyai is not initialized')) {
+        stage = 'stt-config';
+      } else if (
         lower.includes('assemblyai') ||
-        lower.includes('audio') ||
-        lower.includes('transcrib')
-          ? 'stt'
-          : lower.includes('gemini') ||
-              lower.includes('llm') ||
-              lower.includes('generatecompletion') ||
-              lower.includes('model') ||
-              lower.includes('timeout')
-            ? 'llm'
-            : 'processing';
+        lower.includes('transcrib') ||
+        lower.includes('transcript')
+      ) {
+        stage = 'stt';
+      } else if (lower.includes('audio')) {
+        stage = 'stt-audio';
+      } else if (
+        lower.includes('gemini') ||
+        lower.includes('llm') ||
+        lower.includes('generatecompletion') ||
+        lower.includes('model')
+      ) {
+        stage = 'llm';
+      } else if (lower.includes('timeout')) {
+        stage = 'timeout';
+      }
       this.logger.error(
         `Voice pipeline error [${sessionUuid}] stage=${stage}: ${message}`,
       );
