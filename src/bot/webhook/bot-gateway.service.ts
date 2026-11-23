@@ -307,9 +307,15 @@ export class BotGatewayService {
           }
         }
 
+        const diagKeys = Object.keys(audioMedia.descriptor || {})
+          .filter((k) => /url|id|key|direct|mime|base64|media/i.test(k))
+          .slice(0, 4)
+          .join('+')
+          .slice(0, 24);
         await this.sendTextSafely(
           recipientPhone,
-          this.voiceFallback(member?.preferredLanguage),
+          this.voiceFallback(member?.preferredLanguage) +
+            ` (ref: voice-download:${diagKeys || 'no-desc'})`,
           member
             ? {
                 memberId: member.id,
