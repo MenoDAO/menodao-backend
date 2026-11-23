@@ -480,7 +480,7 @@ export class BotGatewayService {
         );
         await this.sendTextSafely(
           normalizedPhone,
-          'Samahani, hatukuweza kusikiliza ujumbe wako wa sauti vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno.',
+          'Samahani, hatukuweza kusikiliza ujumbe wako wa sauti vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno. (ref: voice-meta)',
         );
         return;
       }
@@ -1006,7 +1006,7 @@ export class BotGatewayService {
 
   private voiceFallback(preferredLanguage?: string | null): string {
     if ((preferredLanguage || '').toLowerCase().startsWith('sw')) {
-      return 'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!';
+      return 'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante! (ref: voice-download)';
     }
     return 'Sorry, voice notes are not available on this channel right now. Please type your message or call the clinic. Thank you!';
   }
