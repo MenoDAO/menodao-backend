@@ -37,16 +37,32 @@ export class FoundationImpactOverrideDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(1_000_000)
-  contributingMembers?: number | null;
+  @Max(10_000_000)
+  peopleReached?: number | null;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(1_000)
-  approvedFacilities?: number | null;
+  @Max(10_000_000)
+  peopleScreened?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10_000_000)
+  treatmentsDone?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  totalReferrals?: number | null;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
@@ -55,22 +71,6 @@ export class FoundationImpactOverrideDto {
   @Min(0)
   @Max(100_000)
   campsConducted?: number | null;
-
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(10_000_000)
-  peopleServed?: number | null;
-
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(47)
-  counties?: number | null;
 }
 
 export class FoundationClinicOverrideDto {

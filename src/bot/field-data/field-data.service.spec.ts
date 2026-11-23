@@ -119,6 +119,54 @@ describe('FieldDataService', () => {
     );
   });
 
+  it('stores numeric people metrics in the extracted payload', async () => {
+    const { service, prisma, llm } = build({
+      llmReply: JSON.stringify({
+        summary: 'Camp register was legible.',
+        peopleReached: '42',
+        peopleScreened: 38,
+        treatmentsDone: 31,
+        referrals: 5,
+        confidence: 0.95,
+        unclear: [],
+      }),
+    });
+
+    const result = await service.ingestMedia(imageInput);
+
+    expect(result.status).toBe('PARSED');
+    const updateCall = (prisma.fieldSubmission.update as jest.Mock).mock
+      .calls[0][0];
+    expect(updateCall.data.extracted).toMatchObject({
+      peopleReached: 42,
+      peopleScreened: 38,
+      treatmentsDone: 31,
+      referrals: 5,
+    });
+    const promptCall = (llm.generateCompletion as jest.Mock).mock.calls[0][0];
+    expect(promptCall.systemPrompt).toContain('peopleReached');
+    expect(promptCall.systemPrompt).toContain('treatmentsDone');
+  });
+
+  it('maps legacy count aliases into peopleReached', async () => {
+    const { service, prisma } = build({
+      llmReply: JSON.stringify({
+        summary: 'Legacy register.',
+        peopleSeen: 22,
+        patientCount: 20,
+        confidence: 0.9,
+        unclear: [],
+      }),
+    });
+
+    await service.ingestMedia(imageInput);
+
+    const updateCall = (prisma.fieldSubmission.update as jest.Mock).mock
+      .calls[0][0];
+    expect(updateCall.data.extracted.peopleReached).toBe(22);
+    expect(updateCall.data.extracted.peopleSeen).toBe(22);
+  });
+
   it('routes low-confidence extractions to the admin review queue', async () => {
     const { service } = build({
       llmReply: JSON.stringify({

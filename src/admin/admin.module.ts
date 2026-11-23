@@ -27,6 +27,8 @@ import { CalendarModule } from '../calendar/calendar.module';
 import { AdminCalendarController } from '../calendar/calendar.controller';
 import { FieldDataModule } from '../bot/field-data/field-data.module';
 import { FieldDataController } from './field-data.controller';
+import { VoucherModule } from '../voucher/voucher.module';
+import { VoucherController } from './voucher.controller';
 
 @Global()
 @Module({
@@ -41,6 +43,7 @@ import { FieldDataController } from './field-data.controller';
     WhatsappClientsModule,
     CalendarModule,
     FieldDataModule,
+    VoucherModule,
   ],
   controllers: [
     AdminController,
@@ -54,6 +57,7 @@ import { FieldDataController } from './field-data.controller';
     AdminBookingController,
     AdminCalendarController,
     FieldDataController,
+    VoucherController,
   ],
   providers: [
     AdminService,

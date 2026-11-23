@@ -15,7 +15,9 @@ export interface AuditLogEntry {
     | 'BOT_CHAT'
     | 'ADMIN_USER'
     | 'FIELD_CONTRIBUTOR'
-    | 'FIELD_SUBMISSION';
+    | 'FIELD_SUBMISSION'
+    | 'VOUCHER_BATCH'
+    | 'VOUCHER';
   targetId: string;
   reason: string;
   metadata?: any;

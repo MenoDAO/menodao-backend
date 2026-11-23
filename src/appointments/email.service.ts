@@ -48,7 +48,9 @@ export class EmailService {
     to: string | string[],
     subject: string,
     text: string,
+    from?: string,
   ): Promise<boolean> {
+    const fromAddress = from?.trim() || this.from;
     const recipients = (Array.isArray(to) ? to : [to]).filter((addr) =>
       addr.includes('@'),
     );
@@ -60,7 +62,7 @@ export class EmailService {
       try {
         await this.ses.send(
           new SendEmailCommand({
-            FromEmailAddress: this.from,
+            FromEmailAddress: fromAddress,
             Destination: { ToAddresses: recipients },
             Content: {
               Simple: {
@@ -86,7 +88,7 @@ export class EmailService {
     }
     try {
       await this.transporter.sendMail({
-        from: this.from,
+        from: fromAddress,
         to: recipients.join(', '),
         subject,
         text,
