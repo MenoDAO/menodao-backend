@@ -130,13 +130,13 @@ export class AssemblyAiService {
     try {
       const transcript = await this.client.transcripts.transcribe({
         audio: audioSource,
-        // 'best' selects AssemblyAI's highest-accuracy universal model and
-        // supports keyterms_prompt (Slam-1 uses a different `prompt` field).
-        speech_model: 'best',
-        language_code: languageHint ?? undefined,
-        // Keep auto-detection enabled even with a hint so mixed
-        // Swahili/English audio is not forced into one language.
-        language_detection: true,
+        // API now expects `speech_models` (array); `speech_model` is rejected.
+        speech_models: ['universal-3-5-pro', 'universal-2'],
+        // AssemblyAI rejects language_detection when language_code is set.
+        // Use a hint when known; otherwise auto-detect for mixed audio.
+        ...(languageHint
+          ? { language_code: languageHint }
+          : { language_detection: true }),
         punctuate: true,
         format_text: true,
         // Drop filler words ("um", "uh") so the transcript reads naturally.
@@ -145,7 +145,7 @@ export class AssemblyAiService {
         // biggest single accuracy gain for dental/clinic conversations
         // without paying for a custom model or a second service.
         keyterms_prompt: keyterms,
-      });
+      } as any);
 
       if (transcript.status === 'error') {
         this.logger.error(
