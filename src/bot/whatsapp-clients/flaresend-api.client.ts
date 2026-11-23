@@ -681,7 +681,7 @@ export class FlaresendApiClient implements IWhatsappClient {
         { iv: [0, 16], cipherKey: [16, 48], macKey: [48, 80] },
         { iv: [0, 16], cipherKey: [32, 64], macKey: [64, 96] },
       ] as const;
-      for (const layout of layouts) {
+      const tryDecrypt = (layout: (typeof layouts)[number]) => {
         const iv = expanded.subarray(layout.iv[0], layout.iv[1]);
         const cipherKey = expanded.subarray(
           layout.cipherKey[0],
@@ -696,10 +696,52 @@ export class FlaresendApiClient implements IWhatsappClient {
           .update(file)
           .digest()
           .subarray(0, 10);
-        if (mac.equals(expectedMacIv) || mac.equals(expectedMacNoIv)) {
-          const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
-          return Buffer.concat([decipher.update(file), decipher.final()]);
+        const macOk = mac.equals(expectedMacIv) || mac.equals(expectedMacNoIv);
+        const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
+        const decrypted = Buffer.concat([decipher.update(file), decipher.final()]);
+        return { decrypted, macOk };
+      };
+      const hasAudioMagic = (buf: Buffer) => {
+        const head = buf.subarray(0, 16).toString('hex');
+        return (
+          buf.length > 4 &&
+          (head.startsWith('4f676753') ||
+            head.startsWith('52494646') ||
+            head.startsWith('494433') ||
+            head.startsWith('664c6143') ||
+            head.startsWith('1a45dfa3') ||
+            head.startsWith('2321414d52') ||
+            (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) ||
+            buf.subarray(4, 8).toString('hex') === '66747970')
+        );
+      };
+      for (const layout of layouts) {
+        try {
+          const { decrypted, macOk } = tryDecrypt(layout);
+          if (macOk || hasAudioMagic(decrypted)) {
+            if (!macOk) {
+              this.logger.warn(
+                'WhatsApp media MAC mismatch but decrypted audio looks valid; accepting',
+              );
+            }
+            return decrypted;
+          }
+        } catch {
+          // try next layout
         }
+      }
+      // Last resort: return first-layout decrypt if it produced bytes, else original
+      try {
+        const { decrypted } = tryDecrypt(layouts[0]);
+        if (decrypted.length > 0) {
+          this.logger.warn(
+            'WhatsApp media MAC mismatch; returning decrypted bytes as last resort',
+          );
+          (decrypted as any)._waDecrypt = 'mac-mismatch-decrypted';
+          return decrypted;
+        }
+      } catch {
+        // ignore
       }
       this.logger.warn('WhatsApp media MAC mismatch; using original buffer');
       (buffer as any)._waDecrypt = 'mac-mismatch';
@@ -731,7 +773,11 @@ export class FlaresendApiClient implements IWhatsappClient {
         mime || expectedMimeType,
       );
       const waStatus = (out as any)._waDecrypt;
-      if (waStatus === 'mac-mismatch' || waStatus === 'error') {
+      if (
+        waStatus === 'mac-mismatch' ||
+        waStatus === 'mac-mismatch-decrypted' ||
+        waStatus === 'error'
+      ) {
         const head = out.subarray(0, 16).toString('hex');
         const hasKnownAudioMagic =
           out.length > 4 &&
@@ -894,7 +940,7 @@ export class FlaresendApiClient implements IWhatsappClient {
             const trimmed = value.trim();
             if (trimmed.startsWith('/')) {
               try {
-                return new URL(trimmed, this.baseUrl).toString();
+                return new URL(trimmed, 'https://mmg.whatsapp.net').toString();
               } catch {
                 return trimmed;
               }
