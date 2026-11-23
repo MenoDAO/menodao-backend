@@ -56,6 +56,11 @@ interface ParsedFieldDocument {
   eventDate?: string;
   location?: string;
   campName?: string;
+  peopleReached?: number | string | null;
+  peopleScreened?: number | string | null;
+  treatmentsDone?: number | string | null;
+  referrals?: number | string | null;
+  // Legacy keys are still accepted from older models and stored as-is.
   patientCount?: number | string | null;
   peopleSeen?: number | string | null;
   summary?: string;
@@ -72,7 +77,8 @@ const SYSTEM_PROMPT = [
   'You extract structured field and clinical notes from an image uploaded by an authorised health worker.',
   'Return ONLY one JSON object. Never invent facts. If text is illegible or ambiguous, put the uncertain item in "unclear" and lower "confidence".',
   'Do not diagnose and do not recommend medication. Transcribe what the document says.',
-  'Use keys: reportType, eventDate, location, campName, patientCount, peopleSeen, summary, observations, clinicalFindings, actionsTaken, followUp, confidence (0-1), unclear (array).',
+  'Use keys: reportType, eventDate, location, campName, peopleReached, peopleScreened, treatmentsDone, referrals, patientCount, peopleSeen, summary, observations, clinicalFindings, actionsTaken, followUp, confidence (0-1), unclear (array).',
+  'peopleReached, peopleScreened, treatmentsDone and referrals must be plain numbers (whole counts) or null when the document does not state them. patientCount and peopleSeen are legacy aliases for peopleReached.',
   'Empty arrays are fine when a key is not present in the document.',
 ].join(' ');
 
@@ -103,6 +109,18 @@ function clampConfidence(value: unknown): number {
   const numeric = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(numeric)) return 0;
   return Math.min(1, Math.max(0, numeric));
+}
+
+/** Normalise model output to a non-negative integer count, or null if absent. */
+function countOrNull(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.trunc(numeric)) : null;
+  }
+  return null;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -263,6 +281,7 @@ export class FieldDataService {
       if (!parsed.summary || !String(parsed.summary).trim())
         missingFields.push('summary');
       if (
+        parsed.peopleReached == null &&
         parsed.patientCount == null &&
         parsed.peopleSeen == null &&
         !/attendance|census|count|registration/i.test(
@@ -280,6 +299,15 @@ export class FieldDataService {
         : 'PARSED';
       const extracted: Prisma.InputJsonValue = {
         ...parsed,
+        // Always persist the aggregation keys. Legacy aliases remain in the
+        // payload via the spread, and continue to count as peopleReached.
+        peopleReached:
+          countOrNull(parsed.peopleReached) ??
+          countOrNull(parsed.peopleSeen) ??
+          countOrNull(parsed.patientCount),
+        peopleScreened: countOrNull(parsed.peopleScreened),
+        treatmentsDone: countOrNull(parsed.treatmentsDone),
+        referrals: countOrNull(parsed.referrals),
         confidence,
         unclear,
       } as Prisma.InputJsonValue;

@@ -1748,3 +1748,50 @@ model BotLlmCallLog {
   @@index([status, createdAt])
   @@index([operation, createdAt])
 }
+
+/// Printed/digital vouchers issued by the Foundation. Batches hold the shared
+/// prefix and notes; each voucher carries its own redemption lifecycle. Admin
+/// identities are stored as plain IDs to keep this model independent of roles.
+model VoucherBatch {
+  id               String    @id @default(uuid())
+  name             String
+  codePrefix       String
+  note             String?
+  totalInt         Int
+  createdByAdminId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  vouchers Voucher[]
+
+  @@index([createdAt])
+}
+
+enum VoucherStatus {
+  ISSUED
+  REDEEMED
+  EXPIRED
+  VOID
+}
+
+model Voucher {
+  id                String        @id @default(uuid())
+  code              String        @unique
+  batchId           String
+  batch             VoucherBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  status            VoucherStatus @default(ISSUED)
+  issuedToName      String?
+  issuedToPhone     String?
+  issuedAt          DateTime      @default(now())
+  expiresAt         DateTime?
+  redeemedAt        DateTime?
+  redeemedByAdminId String?
+  redemptionNotes   String?
+  sharedChannels    String[]      @default([])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([status, createdAt])
+  @@index([batchId])
+  @@index([code])
+}

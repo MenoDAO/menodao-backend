@@ -38,12 +38,59 @@ export type FoundationClinicCard = {
 
 export type FoundationImpact = {
   registeredMembers: number;
-  contributingMembers: number;
-  approvedFacilities: number;
+  peopleReached: number;
+  peopleScreened: number;
+  treatmentsDone: number;
+  totalReferrals: number;
   campsConducted: number;
-  peopleServed: number;
-  counties: number;
 };
+
+export type FieldImpactTotals = {
+  peopleReached: number;
+  peopleScreened: number;
+  treatmentsDone: number;
+};
+
+function impactNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.trunc(numeric)) : null;
+  }
+  return null;
+}
+
+/**
+ * Pure aggregation of parsed field documents. Only the three approved,
+ * status-filtered submission rows are passed in; the caller owns the query.
+ * Legacy `peopleSeen` / `patientCount` values still count as peopleReached.
+ */
+export function sumFieldImpact(
+  submissions: Array<{ extracted?: unknown } | null | undefined>,
+): FieldImpactTotals {
+  const totals: FieldImpactTotals = {
+    peopleReached: 0,
+    peopleScreened: 0,
+    treatmentsDone: 0,
+  };
+  for (const submission of submissions) {
+    const extracted = submission?.extracted;
+    if (!extracted || typeof extracted !== 'object' || Array.isArray(extracted)) {
+      continue;
+    }
+    const source = extracted as Record<string, unknown>;
+    totals.peopleReached +=
+      impactNumber(source.peopleReached) ??
+      impactNumber(source.peopleSeen) ??
+      impactNumber(source.patientCount) ??
+      0;
+    totals.peopleScreened += impactNumber(source.peopleScreened) ?? 0;
+    totals.treatmentsDone += impactNumber(source.treatmentsDone) ?? 0;
+  }
+  return totals;
+}
 
 export type FoundationHeroContent = {
   videoUrl: string | null;
@@ -108,11 +155,11 @@ type FoundationSettings = {
   clinicalClassification: string | null;
   impact: {
     registeredMembers: number | null;
-    contributingMembers: number | null;
-    approvedFacilities: number | null;
+    peopleReached: number | null;
+    peopleScreened: number | null;
+    treatmentsDone: number | null;
+    totalReferrals: number | null;
     campsConducted: number | null;
-    peopleServed: number | null;
-    counties: number | null;
   };
   clinicOverrides: Record<string, ClinicOverride>;
   hero: FoundationHeroContent;
@@ -165,11 +212,11 @@ const CONTENT_ROW_ID = 'primary';
 const MAX_MEDIA_ITEMS = 12;
 const EMPTY_IMPACT = {
   registeredMembers: null,
-  contributingMembers: null,
-  approvedFacilities: null,
+  peopleReached: null,
+  peopleScreened: null,
+  treatmentsDone: null,
+  totalReferrals: null,
   campsConducted: null,
-  peopleServed: null,
-  counties: null,
 };
 
 const EMPTY_COPY: FoundationCopyLocale = {
@@ -255,7 +302,7 @@ export class FoundationSiteService {
     const photo = this.getMeta(publicBase);
     const clinics = await this.buildClinicCards(publicBase, settings);
     const visible = clinics.filter((clinic) => !clinic.hidden);
-    const live = await this.liveImpact(visible.length);
+    const live = await this.liveImpact();
     const impact = this.resolveImpact(live, settings);
 
     return {
@@ -276,9 +323,7 @@ export class FoundationSiteService {
   async getAdminNetwork(publicBase: string) {
     const { settings, updatedAt } = await this.readSettingsRecord();
     const clinics = await this.buildClinicCards(publicBase, settings);
-    const liveImpact = await this.liveImpact(
-      clinics.filter((clinic) => !clinic.hidden).length,
-    );
+    const liveImpact = await this.liveImpact();
     return {
       whatsappNumber: settings.whatsappNumber,
       anchorClinicId: settings.anchorClinicId,
@@ -315,13 +360,11 @@ export class FoundationSiteService {
     if (input.impact) {
       current.impact = {
         registeredMembers: this.optionalCount(input.impact.registeredMembers),
-        contributingMembers: this.optionalCount(
-          input.impact.contributingMembers,
-        ),
-        approvedFacilities: this.optionalCount(input.impact.approvedFacilities),
+        peopleReached: this.optionalCount(input.impact.peopleReached),
+        peopleScreened: this.optionalCount(input.impact.peopleScreened),
+        treatmentsDone: this.optionalCount(input.impact.treatmentsDone),
+        totalReferrals: this.optionalCount(input.impact.totalReferrals),
         campsConducted: this.optionalCount(input.impact.campsConducted),
-        peopleServed: this.optionalCount(input.impact.peopleServed),
-        counties: this.optionalCount(input.impact.counties),
       };
     }
     if (input.clinics) {
@@ -471,53 +514,29 @@ export class FoundationSiteService {
     };
   }
 
-  private async liveImpact(
-    visibleFacilities: number,
-  ): Promise<FoundationImpact> {
-    const [registeredMembers, contributingMembers, campsConducted, attendedRows, clinicCounties, memberCounties] =
+  private async liveImpact(): Promise<FoundationImpact> {
+    const [registeredMembers, campsConducted, totalReferrals, submissions] =
       await Promise.all([
         this.prisma.member.count(),
-        this.prisma.subscription.count({ where: { isActive: true } }),
         this.prisma.camp.count({ where: { isActive: true } }),
-        this.prisma.campRegistration.findMany({
-          where: { status: 'ATTENDED' },
-          select: { memberId: true, campId: true },
+        this.prisma.member.count({
+          where: { referredBy: { not: null } },
         }),
-        this.prisma.clinic.findMany({
-          where: { status: 'APPROVED' },
-          select: { subCounty: true },
-        }),
-        this.prisma.member.findMany({
-          where: { county: { not: null } },
-          select: { county: true },
-          distinct: ['county'],
+        this.prisma.fieldSubmission.findMany({
+          where: { status: { in: ['PARSED', 'PROCESSED'] } },
+          select: { extracted: true },
         }),
       ]);
 
-    // One person attended twice is still one person served. Registrations are
-    // the attendance source of truth; camps keep their own historical count.
-    const served = new Set<string>();
-    for (const row of attendedRows) {
-      if (row.memberId) served.add(`m:${row.memberId}`);
-      else if (row.campId) served.add(`c:${row.campId}`);
-    }
-    const counties = new Set<string>();
-    for (const clinic of clinicCounties) {
-      const value = clinic.subCounty?.trim();
-      if (value) counties.add(value.toLowerCase());
-    }
-    for (const member of memberCounties) {
-      const value = member.county?.trim();
-      if (value) counties.add(value.toLowerCase());
-    }
+    const fieldTotals = sumFieldImpact(submissions);
 
     return {
-      registeredMembers,
-      contributingMembers,
-      approvedFacilities: visibleFacilities,
-      campsConducted,
-      peopleServed: served.size,
-      counties: counties.size,
+      registeredMembers: registeredMembers ?? 0,
+      peopleReached: fieldTotals.peopleReached,
+      peopleScreened: fieldTotals.peopleScreened,
+      treatmentsDone: fieldTotals.treatmentsDone,
+      totalReferrals: totalReferrals ?? 0,
+      campsConducted: campsConducted ?? 0,
     };
   }
 
@@ -528,13 +547,11 @@ export class FoundationSiteService {
     return {
       registeredMembers:
         settings.impact.registeredMembers ?? live.registeredMembers,
-      contributingMembers:
-        settings.impact.contributingMembers ?? live.contributingMembers,
-      approvedFacilities:
-        settings.impact.approvedFacilities ?? live.approvedFacilities,
+      peopleReached: settings.impact.peopleReached ?? live.peopleReached,
+      peopleScreened: settings.impact.peopleScreened ?? live.peopleScreened,
+      treatmentsDone: settings.impact.treatmentsDone ?? live.treatmentsDone,
+      totalReferrals: settings.impact.totalReferrals ?? live.totalReferrals,
       campsConducted: settings.impact.campsConducted ?? live.campsConducted,
-      peopleServed: settings.impact.peopleServed ?? live.peopleServed,
-      counties: settings.impact.counties ?? live.counties,
     };
   }
 
@@ -883,11 +900,11 @@ function normalizeSettings(
     clinicalClassification: input.clinicalClassification || null,
     impact: {
       registeredMembers: input.impact?.registeredMembers ?? null,
-      contributingMembers: input.impact?.contributingMembers ?? null,
-      approvedFacilities: input.impact?.approvedFacilities ?? null,
+      peopleReached: input.impact?.peopleReached ?? null,
+      peopleScreened: input.impact?.peopleScreened ?? null,
+      treatmentsDone: input.impact?.treatmentsDone ?? null,
+      totalReferrals: input.impact?.totalReferrals ?? null,
       campsConducted: input.impact?.campsConducted ?? null,
-      peopleServed: input.impact?.peopleServed ?? null,
-      counties: input.impact?.counties ?? null,
     },
     clinicOverrides: input.clinicOverrides || {},
     hero: normalizeHero(input.hero, DEFAULT_SETTINGS.hero),

@@ -4,11 +4,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FoundationInquiryKind, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../appointments/email.service';
 
-const NOTIFY = ['support@menodao.org'];
+const DEFAULT_NOTIFY = 'menodao.org@gmail.com';
+const DEFAULT_FROM = 'Dr. Papi Foundation <noreply@drpapifoundation.org>';
 
 const FORMS: Record<
   string,
@@ -89,6 +91,7 @@ export class FoundationInquiriesService {
   constructor(
     private prisma: PrismaService,
     private email: EmailService,
+    private config: ConfigService,
   ) {}
 
   async create(formId: string, raw: Record<string, unknown>) {
@@ -200,9 +203,14 @@ export class FoundationInquiriesService {
       ...lines,
     ].join('\n');
 
-    const sent = await this.email.send(NOTIFY, `[DPF] ${title}`, text);
+    const notify = [
+      this.config.get<string>('FOUNDATION_INQUIRY_TO') || DEFAULT_NOTIFY,
+    ];
+    const from =
+      this.config.get<string>('FOUNDATION_INQUIRY_FROM') || DEFAULT_FROM;
+    const sent = await this.email.send(notify, `[DPF] ${title}`, text, from);
     if (sent) {
-      this.logger.log(`Notified ${NOTIFY.join(', ')} for inquiry ${id}`);
+      this.logger.log(`Notified ${notify.join(', ')} for inquiry ${id}`);
     } else {
       this.logger.error(`Failed to notify operators for inquiry ${id}`);
     }

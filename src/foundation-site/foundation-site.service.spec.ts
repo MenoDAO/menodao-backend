@@ -1,10 +1,21 @@
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { FoundationSiteService } from './foundation-site.service';
+import {
+  FoundationSiteService,
+  sumFieldImpact,
+} from './foundation-site.service';
 
 const UPDATED_AT = new Date('2026-11-22T12:00:00.000Z');
 
-function buildService(payload: Record<string, unknown>) {
+function buildService(
+  payload: Record<string, unknown>,
+  options: {
+    fieldSubmissions?: Array<{ extracted?: unknown }>;
+    memberCount?: number;
+    referralCount?: number | null;
+    campCount?: number;
+  } = {},
+) {
   const prisma = {
     foundationSiteContent: {
       findUnique: jest
@@ -15,12 +26,20 @@ function buildService(payload: Record<string, unknown>) {
     clinic: { findMany: jest.fn().mockResolvedValue([]) },
     clinicOverride: undefined,
     member: {
-      count: jest.fn().mockResolvedValue(0),
-      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockImplementation((args?: { where?: unknown }) =>
+        Promise.resolve(
+          args?.where ? (options.referralCount ?? 0) : (options.memberCount ?? 0),
+        ),
+      ),
     },
-    subscription: { count: jest.fn().mockResolvedValue(0) },
-    camp: { count: jest.fn().mockResolvedValue(0) },
-    campRegistration: { findMany: jest.fn().mockResolvedValue([]) },
+    camp: {
+      count: jest.fn().mockResolvedValue(options.campCount ?? 0),
+    },
+    fieldSubmission: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(options.fieldSubmissions ?? []),
+    },
   };
   const config = {
     get: jest.fn().mockReturnValue(null),
@@ -116,5 +135,137 @@ describe('FoundationSiteService content', () => {
     expect(site.founderPhotoUrl).toBeNull();
     expect(site).toHaveProperty('whatsappNumber');
     expect(site).toHaveProperty('impact');
+  });
+
+  it('publishes the six-field impact contract from live data', async () => {
+    const { service, prisma } = buildService(
+      {},
+      {
+        memberCount: 120,
+        referralCount: 9,
+        campCount: 4,
+        fieldSubmissions: [
+          {
+            extracted: {
+              peopleReached: 25,
+              peopleScreened: 20,
+              treatmentsDone: 18,
+            },
+          },
+          {
+            extracted: {
+              peopleSeen: 12, // legacy alias still counts as peopleReached
+              treatmentsDone: 7,
+            },
+          },
+          { extracted: { patientCount: '8', peopleScreened: 3 } },
+          { extracted: 'not an object' },
+        ],
+      },
+    );
+
+    const site = await service.getPublicSite('https://api.example.org');
+
+    expect(site.impact).toEqual({
+      registeredMembers: 120,
+      peopleReached: 45,
+      peopleScreened: 23,
+      treatmentsDone: 25,
+      totalReferrals: 9,
+      campsConducted: 4,
+    });
+    expect(Object.keys(site.impact)).toEqual([
+      'registeredMembers',
+      'peopleReached',
+      'peopleScreened',
+      'treatmentsDone',
+      'totalReferrals',
+      'campsConducted',
+    ]);
+    expect(prisma.fieldSubmission.findMany).toHaveBeenCalledWith({
+      where: { status: { in: ['PARSED', 'PROCESSED'] } },
+      select: { extracted: true },
+    });
+    expect(prisma.member.count).toHaveBeenCalledWith({
+      where: { referredBy: { not: null } },
+    });
+  });
+
+  it('applies per-field admin overrides without leaking removed fields', async () => {
+    const { service } = buildService(
+      {
+        impact: {
+          peopleReached: 500,
+          totalReferrals: 42,
+        },
+      },
+      {
+        fieldSubmissions: [
+          { extracted: { peopleReached: 3, peopleScreened: 2 } },
+        ],
+        referralCount: 9,
+      },
+    );
+
+    const admin = await service.getAdminNetwork('https://api.example.org');
+    expect(admin.impact).toEqual({
+      registeredMembers: 0,
+      peopleReached: 500,
+      peopleScreened: 2,
+      treatmentsDone: 0,
+      totalReferrals: 42,
+      campsConducted: 0,
+    });
+    const contractKeys = [
+      'registeredMembers',
+      'peopleReached',
+      'peopleScreened',
+      'treatmentsDone',
+      'totalReferrals',
+      'campsConducted',
+    ];
+    expect(Object.keys(admin.publishedImpact)).toEqual(contractKeys);
+    expect(Object.keys(admin.liveImpact)).toEqual(contractKeys);
+  });
+
+  it('treats a null referral count as zero', async () => {
+    const { service } = buildService({}, { referralCount: null });
+    const site = await service.getPublicSite('https://api.example.org');
+    expect(site.impact.totalReferrals).toBe(0);
+  });
+});
+
+describe('sumFieldImpact', () => {
+  it('ignores non-numeric values and supports legacy aliases', () => {
+    expect(
+      sumFieldImpact([
+        {
+          extracted: {
+            peopleReached: 'n/a',
+            peopleSeen: 6,
+            patientCount: 99,
+            peopleScreened: 4,
+            treatmentsDone: '7',
+          },
+        },
+        { extracted: null },
+        { extracted: [] },
+        null,
+      ]),
+    ).toEqual({ peopleReached: 6, peopleScreened: 4, treatmentsDone: 7 });
+  });
+
+  it('prefers the current peopleReached key over legacy aliases', () => {
+    expect(
+      sumFieldImpact([
+        {
+          extracted: {
+            peopleReached: 11,
+            peopleSeen: 2,
+            patientCount: 3,
+          },
+        },
+      ]).peopleReached,
+    ).toBe(11);
   });
 });

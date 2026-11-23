@@ -26,7 +26,9 @@ export type Capability =
   | 'audit.read'
   | 'staff.manage'
   | 'field_data.read'
-  | 'field_data.write';
+  | 'field_data.write'
+  | 'vouchers.read'
+  | 'vouchers.write';
 
 export const ALL_CAPABILITIES: Capability[] = [
   'admins.manage',
@@ -50,6 +52,8 @@ export const ALL_CAPABILITIES: Capability[] = [
   'staff.manage',
   'field_data.read',
   'field_data.write',
+  'vouchers.read',
+  'vouchers.write',
 ];
 
 const SUPPORT_CAPABILITIES: Capability[] = [
@@ -63,6 +67,7 @@ const SUPPORT_CAPABILITIES: Capability[] = [
   'brand_context.read',
   'field_data.read',
   'conversations.read',
+  'vouchers.read',
 ];
 
 /** Read-mostly plus the small chores the junior dev/ops hire needs. */
@@ -77,6 +82,7 @@ const JUNIOR_CAPABILITIES: Capability[] = [
   'brand_context.read',
   'field_data.read',
   'conversations.read',
+  'vouchers.read',
 ];
 
 export const ROLE_CAPABILITIES: Record<string, Capability[]> = {
