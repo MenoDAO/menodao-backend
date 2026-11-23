@@ -659,7 +659,13 @@ export class FlaresendApiClient implements IWhatsappClient {
           ? Buffer.from(mediaKeyRaw)
           : typeof mediaKeyRaw === 'object' && mediaKeyRaw?.type === 'Buffer'
             ? Buffer.from(mediaKeyRaw.data)
-            : Buffer.from(String(mediaKeyRaw), 'base64');
+            : Buffer.from(
+                String(mediaKeyRaw)
+                  .replace(/-/g, '+')
+                  .replace(/_/g, '/')
+                  .replace(/\s/g, ''),
+                'base64',
+              );
       if (mediaKey.length !== 32) {
         (buffer as any)._waDecrypt = `bad-keylen-${mediaKey.length}`;
         return buffer;
@@ -672,11 +678,15 @@ export class FlaresendApiClient implements IWhatsappClient {
       if (buffer.length <= 10) return buffer;
       const file = buffer.subarray(0, buffer.length - 10);
       const mac = buffer.subarray(buffer.length - 10);
-      const expectedMac = createHmac('sha256', macKey)
+      const expectedMacIv = createHmac('sha256', macKey)
         .update(Buffer.concat([iv, file]))
         .digest()
         .subarray(0, 10);
-      if (!mac.equals(expectedMac)) {
+      const expectedMacNoIv = createHmac('sha256', macKey)
+        .update(file)
+        .digest()
+        .subarray(0, 10);
+      if (!mac.equals(expectedMacIv) && !mac.equals(expectedMacNoIv)) {
         this.logger.warn('WhatsApp media MAC mismatch; using original buffer');
         (buffer as any)._waDecrypt = 'mac-mismatch';
         return buffer;
