@@ -188,7 +188,24 @@ export class VoicePipelineService {
       }
       return result;
     } catch (error) {
-      this.logger.error(`Voice pipeline error [${sessionUuid}]: ${error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      const lower = message.toLowerCase();
+      const stage =
+        lower.includes('transcript') ||
+        lower.includes('assemblyai') ||
+        lower.includes('audio') ||
+        lower.includes('transcrib')
+          ? 'stt'
+          : lower.includes('gemini') ||
+              lower.includes('llm') ||
+              lower.includes('generatecompletion') ||
+              lower.includes('model') ||
+              lower.includes('timeout')
+            ? 'llm'
+            : 'processing';
+      this.logger.error(
+        `Voice pipeline error [${sessionUuid}] stage=${stage}: ${message}`,
+      );
       return {
         intakeUuid: sessionUuid,
         senderPhone,
@@ -196,9 +213,10 @@ export class VoicePipelineService {
         intent: 'HEALTH_EDUCATION',
         intentConfidence: 0,
         patientMessage:
-          'Samahani, hatukuweza kusikiliza ujumbe wako vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno.',
+          'Samahani, hatukuweza kusikiliza ujumbe wako vizuri. Tafadhali jaribu kutuma tena au uandike kwa maneno.' +
+          ` (ref: voice-${stage})`,
         status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       };
     }
   }
