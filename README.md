@@ -333,8 +333,10 @@ npm run start:dev
 #    Check in a patient → add procedures → upload before/after images
 #    → trigger verification → watch the on-chain transactions appear
 #
-# 6. Test Dr. Papi WhatsApp Webhook
-#    POST /bot/webhook/flaresend/:token or POST /whatsapp/webhook
+# 6. Test Dr. Papi WhatsApp Assistant & Chat Playground
+#    Interactive Browser Playground: http://localhost:3000/bot/playground
+#    Swagger API Docs: http://localhost:3000/api/docs
+#    Webhook: POST /bot/webhook/flaresend/:token or POST /whatsapp/webhook
 ```
 
 The pipeline runs in mock mode if env vars aren't set — useful for local development without
