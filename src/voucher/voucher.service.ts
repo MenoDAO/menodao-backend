@@ -22,6 +22,11 @@ export const VOUCHER_CHANNELS = [
   'EMAIL',
   'IN_PERSON',
   'POSTER',
+  'FACEBOOK',
+  'INSTAGRAM',
+  'X',
+  'TIKTOK',
+  'REFERRAL',
   'OTHER',
 ] as const;
 export type VoucherChannel = (typeof VOUCHER_CHANNELS)[number];
@@ -105,6 +110,23 @@ export class VoucherService {
    * insertion (and a unique-constraint race is retried) so a printed code never
    * points at two vouchers.
    */
+  private mapBatch(batch: any) {
+    if (!batch) return batch;
+    const { totalInt, ...rest } = batch;
+    return { ...rest, total: totalInt ?? rest.total ?? 0 };
+  }
+
+  private mapVoucher(voucher: any) {
+    if (!voucher) return voucher;
+    return {
+      ...voucher,
+      sharedChannels: Array.isArray(voucher.sharedChannels)
+        ? voucher.sharedChannels
+        : [],
+      batch: voucher.batch ? this.mapBatch(voucher.batch) : voucher.batch,
+    };
+  }
+
   async createBatch(input: CreateVoucherBatchInput) {
     const count = Number(input?.count);
     if (!Number.isInteger(count) || count < 1 || count > 500) {
@@ -164,7 +186,10 @@ export class VoucherService {
       vouchers.push(created);
     }
 
-    return { ...batch, vouchers };
+    return {
+      batch: this.mapBatch(batch),
+      vouchers: vouchers.map((voucher) => this.mapVoucher(voucher)),
+    };
   }
 
   async listVouchers(params: ListVouchersInput = {}) {
@@ -174,7 +199,7 @@ export class VoucherService {
     const search = params.search?.trim();
     const limit = Math.min(200, Math.max(1, Number(params.limit) || 50));
 
-    return this.prisma.voucher.findMany({
+    const vouchers = await this.prisma.voucher.findMany({
       where: {
         ...(status ? { status } : {}),
         ...(search
@@ -201,6 +226,7 @@ export class VoucherService {
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
+    return vouchers.map((voucher) => this.mapVoucher(voucher));
   }
 
   async stats() {
@@ -249,17 +275,26 @@ export class VoucherService {
       include: { batch: true },
     });
     if (!voucher) throw new NotFoundException('Voucher not found.');
+    return this.mapVoucher(voucher);
+  }
+
+  private async getRaw(id: string) {
+    const voucher = await this.prisma.voucher.findUnique({
+      where: { id },
+      include: { batch: true },
+    });
+    if (!voucher) throw new NotFoundException('Voucher not found.');
     return voucher;
   }
 
   /** Redeeming the same voucher twice is safe and returns the existing row. */
   async redeem(id: string, input: RedeemVoucherInput = {}) {
-    const voucher = await this.get(id);
-    if (voucher.status === 'REDEEMED') return voucher;
+    const voucher = await this.getRaw(id);
+    if (voucher.status === 'REDEEMED') return this.mapVoucher(voucher);
     if (voucher.status === 'VOID' || voucher.status === 'EXPIRED') {
       throw new BadRequestException(`Voucher is ${voucher.status.toLowerCase()}.`);
     }
-    return this.prisma.voucher.update({
+    const updated = await this.prisma.voucher.update({
       where: { id },
       data: {
         status: 'REDEEMED',
@@ -269,6 +304,7 @@ export class VoucherService {
       },
       include: { batch: true },
     });
+    return this.mapVoucher(updated);
   }
 
   async share(id: string, channel: string) {
@@ -278,29 +314,60 @@ export class VoucherService {
     if (!VOUCHER_CHANNELS.includes(normalized as VoucherChannel)) {
       throw new BadRequestException('Unknown sharing channel.');
     }
-    const voucher = await this.get(id);
+    const voucher = await this.getRaw(id);
     const channels = Array.isArray(voucher.sharedChannels)
       ? voucher.sharedChannels
       : [];
-    if (channels.includes(normalized)) return voucher;
+    if (channels.includes(normalized)) return this.mapVoucher(voucher);
 
-    return this.prisma.voucher.update({
+    const updated = await this.prisma.voucher.update({
       where: { id },
       data: {
         sharedChannels: [...channels, normalized],
       },
       include: { batch: true },
     });
+    return this.mapVoucher(updated);
   }
 
   async void(id: string) {
-    const voucher = await this.get(id);
-    if (voucher.status === 'VOID') return voucher;
-    return this.prisma.voucher.update({
+    const voucher = await this.getRaw(id);
+    if (voucher.status === 'VOID') return this.mapVoucher(voucher);
+    const updated = await this.prisma.voucher.update({
       where: { id },
       data: { status: 'VOID' },
       include: { batch: true },
     });
+    return this.mapVoucher(updated);
+  }
+
+  /**
+   * Redeem a voucher by human-entered code. Used by bot/admin flows where the
+   * code is the natural identifier. Idempotent for already-redeemed codes.
+   */
+  async redeemByCode(code: string, input: RedeemVoucherInput = {}) {
+    const normalized = String(code ?? '').trim().toUpperCase();
+    if (!normalized) throw new BadRequestException('Voucher code is required.');
+    const voucher = await this.prisma.voucher.findUnique({
+      where: { code: normalized },
+      include: { batch: true },
+    });
+    if (!voucher) throw new NotFoundException('Voucher not found.');
+    if (voucher.status === 'REDEEMED') return this.mapVoucher(voucher);
+    if (voucher.status === 'VOID' || voucher.status === 'EXPIRED') {
+      throw new BadRequestException(`Voucher is ${voucher.status.toLowerCase()}.`);
+    }
+    const updated = await this.prisma.voucher.update({
+      where: { id: voucher.id },
+      data: {
+        status: 'REDEEMED',
+        redeemedAt: new Date(),
+        redeemedByAdminId: input.adminId || input.redeemedBy || null,
+        redemptionNotes: input.notes?.trim() || null,
+      },
+      include: { batch: true },
+    });
+    return this.mapVoucher(updated);
   }
 
   /**

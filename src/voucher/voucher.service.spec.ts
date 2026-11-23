@@ -160,7 +160,8 @@ describe('VoucherService lifecycle', () => {
     expect(prisma.voucher.update).toHaveBeenCalledTimes(1);
 
     const again = await service.redeem(row.id, { adminId: 'admin-2' });
-    expect(again).toBe(row);
+    expect(again.id).toBe(row.id);
+    expect(again.status).toBe('REDEEMED');
     expect(prisma.voucher.update).toHaveBeenCalledTimes(1);
   });
 

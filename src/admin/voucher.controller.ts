@@ -64,7 +64,7 @@ export class VoucherController {
   @Capability('vouchers.write')
   @ApiOperation({ summary: 'Generate a batch of unique voucher codes' })
   async createBatch(@Body() body: CreateVoucherBatchDto, @Req() req: AdminRequest) {
-    const batch = await this.vouchers.createBatch({
+    const result = await this.vouchers.createBatch({
       ...body,
       createdByAdminId: req.admin.id,
     });
@@ -72,12 +72,12 @@ export class VoucherController {
       adminId: req.admin.id,
       action: 'CREATE_VOUCHER_BATCH',
       targetType: 'VOUCHER_BATCH',
-      targetId: batch.id,
-      reason: `Generated ${batch.totalInt} ${batch.codePrefix} vouchers`,
-      metadata: { prefix: batch.codePrefix, count: batch.totalInt },
+      targetId: result.batch.id,
+      reason: `Generated ${result.batch.total} ${result.batch.codePrefix} vouchers`,
+      metadata: { prefix: result.batch.codePrefix, count: result.batch.total },
       ipAddress: req.ip || 'unknown',
     });
-    return batch;
+    return result;
   }
 
   @Post(':id/redeem')

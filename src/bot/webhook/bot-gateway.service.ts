@@ -15,6 +15,7 @@ import { BotChatService } from '../chat/bot-chat.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FieldDataService } from '../field-data/field-data.service';
+import { VoucherService } from '../../voucher/voucher.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
@@ -75,6 +76,7 @@ export class BotGatewayService {
     private readonly memberDataService: BotMemberDataService,
     private readonly adminAccess: AdminWhatsappAccessService,
     private readonly fieldDataService: FieldDataService,
+    private readonly voucherService: VoucherService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -561,6 +563,17 @@ export class BotGatewayService {
       instanceProviderId,
     });
 
+    if (
+      await this.handleVoucherMessage({
+        member,
+        recipientPhone: member.phoneNumber,
+        messageText,
+        chatContext,
+      })
+    ) {
+      return;
+    }
+
     // New / unverified WhatsApp numbers start in the onboarding state machine;
     // known (verified) members proceed straight to the AI reply path.
     if (!member.isVerified) {
@@ -759,6 +772,97 @@ export class BotGatewayService {
   }
 
   /** Outbound send that never breaks the conversation state machine. */
+  private extractVoucherCode(messageText: string): string | null {
+    const normalized = String(messageText ?? '').toUpperCase();
+    const matches = normalized.match(/\b[A-Z0-9]{2,12}-[A-HJ-NP-Z2-9]{5}\b/g);
+    if (!matches?.length) return null;
+    return matches[0] ?? null;
+  }
+
+  private isVoucherIntent(messageText: string): boolean {
+    const text = String(messageText ?? '').toLowerCase();
+    return /\b(voucher|vocha|redeem|kubadilisha|tumia vocha|care code|discount code)\b/.test(
+      text,
+    );
+  }
+
+  private async handleVoucherMessage(params: {
+    member: { id: string; phoneNumber: string; fullName?: string | null; name?: string | null };
+    recipientPhone: string;
+    messageText: string;
+    chatContext: ChatContext;
+  }): Promise<boolean> {
+    const code = this.extractVoucherCode(params.messageText);
+    const hasIntent = this.isVoucherIntent(params.messageText);
+    if (!code && !hasIntent) return false;
+    if (!code) {
+      await this.sendTextSafely(
+        params.recipientPhone,
+        'Please send the voucher code in the format SMILE-XXXXX so I can check or redeem it.',
+        params.chatContext,
+      );
+      return true;
+    }
+
+    try {
+      const normalized = code.trim().toUpperCase();
+      const existing = await this.prisma.voucher.findUnique({
+        where: { code: normalized },
+      });
+      if (!existing) {
+        if (hasIntent || params.messageText.trim().toUpperCase() === normalized) {
+          await this.sendTextSafely(
+            params.recipientPhone,
+            `I could not find voucher ${normalized}. Please check the code and send it again.`,
+            params.chatContext,
+          );
+          return true;
+        }
+        return false;
+      }
+
+      const redeemed = await this.voucherService.redeemByCode(normalized, {
+        redeemedBy:
+          params.member.name ||
+          params.member.fullName ||
+          params.member.phoneNumber,
+        notes: `Redeemed via WhatsApp bot by member ${params.member.id}`,
+      });
+      const status = String((redeemed as any)?.status ?? '');
+      if (status === 'REDEEMED') {
+        const already = existing.status === 'REDEEMED';
+        await this.sendTextSafely(
+          params.recipientPhone,
+          already
+            ? `Voucher ${normalized} has already been redeemed. If you need help using it for care, reply with BOOKING or talk to our team.`
+            : `Voucher ${normalized} is confirmed and redeemed. You can present this code at participating care points or reply BOOKING to get help accessing care.`,
+          params.chatContext,
+        );
+        return true;
+      }
+
+      await this.sendTextSafely(
+        params.recipientPhone,
+        `Voucher ${normalized} cannot be redeemed right now (${status.toLowerCase() || 'unavailable'}). Please contact support for help.`,
+        params.chatContext,
+      );
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Voucher bot handling failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (hasIntent || params.messageText.trim().toUpperCase() === code) {
+        await this.sendTextSafely(
+          params.recipientPhone,
+          'I could not process that voucher right now. Please try again or contact support.',
+          params.chatContext,
+        );
+        return true;
+      }
+      return false;
+    }
+  }
+
   private async sendTextSafely(
     recipientPhone: string,
     replyText: string,
