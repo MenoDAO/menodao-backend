@@ -123,13 +123,16 @@ export class AssemblyAiService {
       .filter(Boolean)
       .slice(0, 200);
 
+    let audioHead = '';
     if (Buffer.isBuffer(audioSource)) {
-      const head = audioSource.subarray(0, 16).toString('hex');
-      const looksText = audioSource
-        .subarray(0, 64)
-        .toString('utf8')
-        .trimStart()
-        .startsWith('{') ||
+      audioHead = audioSource.subarray(0, 16).toString('hex');
+      const head = audioHead;
+      const looksText =
+        audioSource
+          .subarray(0, 64)
+          .toString('utf8')
+          .trimStart()
+          .startsWith('{') ||
         audioSource
           .subarray(0, 64)
           .toString('utf8')
@@ -210,11 +213,11 @@ export class AssemblyAiService {
         raw: transcript,
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to transcribe audio via AssemblyAI: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to transcribe audio via AssemblyAI: ${msg}`);
+      if (audioHead && /transcoding|file type|unsupported/i.test(msg)) {
+        throw new Error(`${msg} [head=${audioHead}]`);
+      }
       throw error;
     }
   }
