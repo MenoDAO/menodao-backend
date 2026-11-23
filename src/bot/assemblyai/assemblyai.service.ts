@@ -216,7 +216,8 @@ export class AssemblyAiService {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to transcribe audio via AssemblyAI: ${msg}`);
       if (audioHead && /transcoding|file type|unsupported/i.test(msg)) {
-        throw new Error(`${msg} [head=${audioHead}]`);
+        const wa = (audioSource as any)?._waDecrypt || '';
+        throw new Error(`${msg} [head=${audioHead}${wa ? ` wa=${wa}` : ''}]`);
       }
       throw error;
     }

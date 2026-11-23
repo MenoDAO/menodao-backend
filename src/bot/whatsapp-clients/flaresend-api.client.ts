@@ -643,7 +643,10 @@ export class FlaresendApiClient implements IWhatsappClient {
     mimeType: string,
   ): Buffer {
     const mediaKeyRaw = descriptor?.mediaKey ?? descriptor?.mediakey;
-    if (!mediaKeyRaw) return buffer;
+    if (!mediaKeyRaw) {
+      (buffer as any)._waDecrypt = 'no-key';
+      return buffer;
+    }
     try {
       const mediaKey = Buffer.isBuffer(mediaKeyRaw)
         ? mediaKeyRaw
@@ -667,6 +670,7 @@ export class FlaresendApiClient implements IWhatsappClient {
         .subarray(0, 10);
       if (!mac.equals(expectedMac)) {
         this.logger.warn('WhatsApp media MAC mismatch; using original buffer');
+        (buffer as any)._waDecrypt = 'mac-mismatch';
         return buffer;
       }
       const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
@@ -675,6 +679,7 @@ export class FlaresendApiClient implements IWhatsappClient {
       this.logger.warn(
         `WhatsApp media decrypt failed: ${error instanceof Error ? error.message : String(error)}`,
       );
+      (buffer as any)._waDecrypt = 'error';
       return buffer;
     }
   }
