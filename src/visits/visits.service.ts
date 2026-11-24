@@ -11,7 +11,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProceduresService } from '../procedures/procedures.service';
 import { SmsService } from '../sms/sms.service';
 import {
+  AppointmentActor,
+  AppointmentStatus,
   PackageTier,
+  Prisma,
   VisitStatus,
   ClaimStatus,
   ClaimType,
@@ -195,7 +198,8 @@ export class VisitsService {
     }
 
     const memberData = searchResult.member;
-    if (!searchResult.active || !memberData) {
+    const selfPayAppointmentId = !searchResult.active ? dto.appointmentId : undefined;
+    if (!memberData || (!searchResult.active && !selfPayAppointmentId)) {
       throw new BadRequestException(
         'Member does not have an active subscription or missing member data',
       );
@@ -219,45 +223,73 @@ export class VisitsService {
       throw new BadRequestException('Member already has an open visit');
     }
 
-    // Create new visit with clinical data
-    const visit = await this.prisma.visit.create({
-      data: {
-        memberId: memberData.id,
-        staffId: staffId,
-        status: VisitStatus.OPEN,
-        totalCost: 0,
-        chiefComplaint: dto.chiefComplaint,
-        medicalHistory: dto.medicalHistory,
-        vitals: dto.vitals,
-        clinicalNotes: dto.clinicalNotes,
-        hasConsent: dto.hasConsent,
-        // Create questionnaire data if provided
-        ...(dto.questionnaire && {
-          questionnaire: {
-            create: {
-              ...dto.questionnaire,
-              // Calculate DMFT score if all components provided
-              ...(dto.questionnaire.decayedTeeth !== undefined &&
-                dto.questionnaire.missingTeeth !== undefined &&
-                dto.questionnaire.filledTeeth !== undefined && {
-                  dmftScore:
-                    (dto.questionnaire.decayedTeeth || 0) +
-                    (dto.questionnaire.missingTeeth || 0) +
-                    (dto.questionnaire.filledTeeth || 0),
-                }),
-            },
-          },
-        }),
-      },
-      include: {
-        member: {
-          include: {
-            subscription: true,
+    const visitData: Prisma.VisitUncheckedCreateInput = {
+      memberId: memberData.id,
+      staffId: staffId,
+      status: VisitStatus.OPEN,
+      totalCost: 0,
+      chiefComplaint: dto.chiefComplaint,
+      medicalHistory: dto.medicalHistory,
+      vitals: dto.vitals,
+      clinicalNotes: dto.clinicalNotes,
+      hasConsent: dto.hasConsent,
+      // Create questionnaire data if provided
+      ...(dto.questionnaire && {
+        questionnaire: {
+          create: {
+            ...dto.questionnaire,
+            // Calculate DMFT score if all components provided
+            ...(dto.questionnaire.decayedTeeth !== undefined &&
+              dto.questionnaire.missingTeeth !== undefined &&
+              dto.questionnaire.filledTeeth !== undefined && {
+                dmftScore:
+                  (dto.questionnaire.decayedTeeth || 0) +
+                  (dto.questionnaire.missingTeeth || 0) +
+                  (dto.questionnaire.filledTeeth || 0),
+              }),
           },
         },
-        questionnaire: true,
-      },
-    });
+      }),
+      isSelfPay: Boolean(selfPayAppointmentId),
+    };
+    const include = {
+      member: { include: { subscription: true } },
+      questionnaire: true,
+    } as const;
+    const visit = selfPayAppointmentId
+      ? await this.prisma.$transaction(async (tx) => {
+          const staff = await tx.staffUser.findUnique({
+            where: { id: staffId },
+            select: { clinicId: true },
+          });
+          if (!staff?.clinicId) {
+            throw new BadRequestException('You must be assigned to the appointment clinic.');
+          }
+          const created = await tx.visit.create({ data: visitData, include });
+          const linked = await tx.appointment.updateMany({
+            where: {
+              id: selfPayAppointmentId,
+              memberId: memberData.id,
+              clinicId: staff.clinicId,
+              visitId: null,
+              status: { in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED] },
+            },
+            data: { visitId: created.id, status: AppointmentStatus.ATTENDED },
+          });
+          if (linked.count !== 1) {
+            throw new BadRequestException('Self-pay check-in requires an open appointment for this patient at your clinic.');
+          }
+          await tx.appointmentEvent.create({
+            data: {
+              appointmentId: selfPayAppointmentId,
+              type: 'ATTENDED',
+              actor: AppointmentActor.STAFF,
+              actorId: staffId,
+            },
+          });
+          return created;
+        })
+      : await this.prisma.visit.create({ data: visitData, include });
 
     const v = visit as unknown as VisitWithMember;
     const vm = v.member;
@@ -273,23 +305,25 @@ export class VisitsService {
       metadata: { visitId: visit.id, staffId },
     });
 
-    let appointmentId = dto.appointmentId;
-    const staff = await this.prisma.staffUser.findUnique({
-      where: { id: staffId },
-      select: { clinicId: true },
-    });
-    if (!appointmentId && this.appointments) {
-      const booked = await this.appointments.findOpenForMemberAtClinic(
-        vm.id,
-        staff?.clinicId || undefined,
-      );
-      appointmentId = booked?.id;
-    }
-    if (appointmentId) {
-      await this.appointments?.attachVisit(appointmentId, visit.id, staffId, {
-        memberId: vm.id,
-        clinicId: staff?.clinicId || undefined,
+    if (!selfPayAppointmentId) {
+      let appointmentId = dto.appointmentId;
+      const staff = await this.prisma.staffUser.findUnique({
+        where: { id: staffId },
+        select: { clinicId: true },
       });
+      if (!appointmentId && this.appointments) {
+        const booked = await this.appointments.findOpenForMemberAtClinic(
+          vm.id,
+          staff?.clinicId || undefined,
+        );
+        appointmentId = booked?.id;
+      }
+      if (appointmentId) {
+        await this.appointments?.attachVisit(appointmentId, visit.id, staffId, {
+          memberId: vm.id,
+          clinicId: staff?.clinicId || undefined,
+        });
+      }
     }
 
     return {
@@ -299,14 +333,15 @@ export class VisitsService {
         status: v.status,
         checkedInAt: v.checkedInAt,
         totalCost: v.totalCost,
+        isSelfPay: visit.isSelfPay,
       },
       member: {
         id: vm.id,
         fullName: vm.fullName,
         phoneNumber: vm.phoneNumber,
-        tier: tier,
+        tier: selfPayAppointmentId ? null : tier,
       },
-      claimLimit: await this.getRemainingClaimLimit(v.memberId),
+      claimLimit: selfPayAppointmentId ? null : await this.getRemainingClaimLimit(v.memberId),
     };
   }
 
@@ -344,7 +379,8 @@ export class VisitsService {
       throw new BadRequestException('Visit is not open');
     }
 
-    if (!visit.member.subscription || !visit.member.subscription.isActive) {
+    const subscription = visit.member.subscription;
+    if (!visit.isSelfPay && !subscription?.isActive) {
       throw new BadRequestException('Member subscription is not active');
     }
 
@@ -357,8 +393,8 @@ export class VisitsService {
 
     // Check if procedure is allowed for member's tier
     const allowedTiers = procedure.allowedTiers as string[];
-    const memberTier = visit.member.subscription.tier;
-    if (!allowedTiers.includes(memberTier)) {
+    const memberTier = visit.isSelfPay ? null : subscription?.tier;
+    if (memberTier && !allowedTiers.includes(memberTier)) {
       throw new BadRequestException(
         `Procedure "${procedure.name}" is not available for ${memberTier} tier members`,
       );
@@ -376,11 +412,11 @@ export class VisitsService {
       (sum, claim) => sum + claim.amount,
       0,
     );
-    const allocatedLimit = CLAIM_LIMITS[memberTier];
+    const allocatedLimit = memberTier ? CLAIM_LIMITS[memberTier] : 0;
     const remainingLimit = allocatedLimit - totalClaimed;
 
     // Check if adding this procedure would exceed the limit
-    if (newTotalCost > remainingLimit) {
+    if (memberTier && newTotalCost > remainingLimit) {
       throw new HttpException(
         {
           statusCode: HttpStatus.PAYMENT_REQUIRED,
@@ -434,7 +470,7 @@ export class VisitsService {
 
     return {
       visit: updatedVisit,
-      remainingLimit: remainingLimit - newTotalCost,
+      remainingLimit: memberTier ? remainingLimit - newTotalCost : 0,
     };
   }
 
@@ -477,15 +513,20 @@ export class VisitsService {
       );
     }
 
+    const subscription = visit.member.subscription;
+    if (!visit.isSelfPay && !subscription) {
+      throw new BadRequestException('Member subscription is not available.');
+    }
+
     // Final validation: ensure total cost doesn't exceed limit
     const totalClaimed = visit.member.claims.reduce(
       (sum, claim) => sum + claim.amount,
       0,
     );
-    const allocatedLimit = CLAIM_LIMITS[visit.member.subscription!.tier];
+    const allocatedLimit = !visit.isSelfPay && subscription ? CLAIM_LIMITS[subscription.tier] : 0;
     const remainingLimit = allocatedLimit - totalClaimed;
 
-    if (visit.totalCost > remainingLimit) {
+    if (!visit.isSelfPay && visit.totalCost > remainingLimit) {
       throw new HttpException(
         {
           statusCode: HttpStatus.PAYMENT_REQUIRED,
@@ -501,7 +542,7 @@ export class VisitsService {
       async (tx) => {
         const createdClaims: any[] = [];
         // Create claims
-        for (const vp of visit.procedures) {
+        for (const vp of visit.isSelfPay ? [] : visit.procedures) {
           const claim = await tx.claim.create({
             data: {
               memberId: visit.memberId,
@@ -517,7 +558,7 @@ export class VisitsService {
 
         // Close visit
         const updatedVisit = await tx.visit.update({
-          where: { id: visitId },
+          where: { id: visitId, status: VisitStatus.OPEN },
           data: {
             status: VisitStatus.DISCHARGED,
             dischargedAt: new Date(),
@@ -530,12 +571,14 @@ export class VisitsService {
 
     // Calculate new balance
     const newTotalClaimed = totalClaimed + visit.totalCost;
-    const newRemainingLimit = allocatedLimit - newTotalClaimed;
+    const newRemainingLimit = visit.isSelfPay ? 0 : allocatedLimit - newTotalClaimed;
 
     // Send SMS in the background so a slow SMS provider cannot
     // stall the response and cause browser "Failed to fetch" / timeouts.
     const memberName = visit.member.fullName || 'Member';
-    const smsMessage = `Dear ${memberName}, MenoDAO covered KES ${visit.totalCost} for your visit today. Your new limit is KES ${newRemainingLimit}. Get well soon!`;
+    const smsMessage = visit.isSelfPay
+      ? `Dear ${memberName}, thank you for visiting the clinic today. Please contact the clinic with any questions about your visit.`
+      : `Dear ${memberName}, MenoDAO covered KES ${visit.totalCost} for your visit today. Your new limit is KES ${newRemainingLimit}. Get well soon!`;
     const phoneNumber = visit.member.phoneNumber;
 
     void this.smsService
@@ -613,7 +656,8 @@ export class VisitsService {
       (sum, claim) => sum + claim.amount,
       0,
     );
-    const allocatedLimit = CLAIM_LIMITS[visit.member.subscription!.tier];
+    const tier = visit.isSelfPay ? null : visit.member.subscription?.tier;
+    const allocatedLimit = tier ? CLAIM_LIMITS[tier] : 0;
     const remainingLimit = allocatedLimit - totalClaimed;
 
     // Extract member to top level to match frontend OpenVisit interface
@@ -632,7 +676,7 @@ export class VisitsService {
             }
           : null,
       },
-      remainingLimit: remainingLimit - visit.totalCost,
+      remainingLimit: tier ? remainingLimit - visit.totalCost : 0,
       allocatedLimit,
     };
   }

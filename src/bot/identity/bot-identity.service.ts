@@ -105,10 +105,10 @@ export class BotIdentityService {
         const created = await this.prisma.member.create({
           data: {
             phoneNumber: fallbackE164,
-            fullName: params.contactName || null,
             whatsappId: wid && !this.isLid(wid) ? wid : null,
             whatsappLinkedAt: wid ? new Date() : null,
             isVerified: false,
+            preferredLanguage: null,
           },
           select: MEMBER_SELECT,
         });

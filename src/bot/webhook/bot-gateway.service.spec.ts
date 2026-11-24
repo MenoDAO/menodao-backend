@@ -2,7 +2,6 @@ import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { VoicePipelineService } from '../voice-pipeline/voice-pipeline.service';
 import type { BotIdentityService } from '../identity/bot-identity.service';
-import type { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import type { BotChatService } from '../chat/bot-chat.service';
 import type { BotMemberDataService } from '../account/bot-member-data.service';
 import type { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
@@ -32,16 +31,25 @@ function build(env: Record<string, string> = {}) {
     get: (name: string) => env[name],
   } as unknown as ConfigService;
 
+  const member = {
+    id: 'guest', phoneNumber: '+254712345678', isVerified: false, preferredLanguage: null,
+  };
+  const sendTextMessage = jest.fn().mockResolvedValue(undefined);
   const service = new BotGatewayService(
     {} as PrismaService,
     config,
     { processTextPipeline } as unknown as VoicePipelineService,
-    {} as BotIdentityService,
-    {} as BotOnboardingService,
-    {} as BotChatService,
-    {} as BotMemberDataService,
-    {} as AdminWhatsappAccessService,
-    {} as IWhatsappClient,
+    { resolveMember: jest.fn().mockResolvedValue(member) } as unknown as BotIdentityService,
+    {
+      recordInbound: jest.fn().mockResolvedValue(undefined),
+      recordOutbound: jest.fn().mockResolvedValue(undefined),
+    } as unknown as BotChatService,
+    { detectScope: jest.fn().mockReturnValue(null) } as unknown as BotMemberDataService,
+    { detectRequest: jest.fn().mockReturnValue(null) } as never,
+    { findAdminBySender: jest.fn().mockResolvedValue(null) } as unknown as AdminWhatsappAccessService,
+    {} as never,
+    {} as never,
+    { sendTextMessage, markMessageAsRead: jest.fn() } as unknown as IWhatsappClient,
     {} as WhatsappApiClient,
     {} as FlaresendApiClient,
     {} as WaboxappApiClient,
@@ -53,7 +61,7 @@ function build(env: Record<string, string> = {}) {
     }
   ).generateReplyText.bind(service) as (params: ReplyParams) => Promise<string>;
 
-  return { generateReplyText, processTextPipeline };
+  return { generateReplyText, processTextPipeline, service, sendTextMessage };
 }
 
 const params: ReplyParams = {
@@ -105,5 +113,25 @@ describe('BotGatewayService fallback replies', () => {
     await expect(generateReplyText(params)).resolves.toBe(
       'Hello, how can I help?',
     );
+  });
+});
+
+
+describe('first message from a new WhatsApp number', () => {
+  it('answers the patient’s first concern without a signup menu', async () => {
+    const { service, processTextPipeline, sendTextMessage } = build();
+    processTextPipeline.mockResolvedValue({ patientMessage: 'How long has it been sore?' });
+
+    await service['handleUserTextMessage']({
+      senderId: '254712345678',
+      fallbackPhone: '254712345678',
+      messageId: 'first-message',
+      messageText: 'My tooth has been sore',
+    });
+
+    expect(processTextPipeline).toHaveBeenCalledWith(
+      'My tooth has been sore', '+254712345678', undefined, undefined, '254712345678',
+    );
+    expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', 'How long has it been sore?');
   });
 });

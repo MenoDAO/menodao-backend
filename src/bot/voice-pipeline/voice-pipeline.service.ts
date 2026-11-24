@@ -122,41 +122,40 @@ export class VoicePipelineService {
 
     const sessionUuid = intakeUuid || randomUUID();
     this.logger.log(
-      `Starting voice pipeline execution [${sessionUuid}] for ${senderPhone}`,
+      `Starting voice pipeline execution [${sessionUuid}]`,
     );
     try {
       const keyterms = await this.loadVoiceKeyterms();
       const sttResult = await this.assemblyAiService.transcribeAudio(
         audioSource,
-        {
-          languageHint,
-          keyterms,
-        },
+        { keyterms },
       );
-      const transcript = sttResult.text;
-      if (!transcript || transcript.trim().length === 0) {
-        throw new Error('Received empty transcript from audio source.');
-      }
-
-      // Avoid acting on very uncertain transcripts. Echoing the heard text
-      // lets the member correct us without forcing every voice note through
-      // a confirmation step.
-      if (sttResult.confidence !== undefined && sttResult.confidence < 0.5) {
-        const result: PipelineExecutionResult = {
+      const transcript = normalizeVoiceTranscript(sttResult.text);
+      const language = sttResult.languageCode || languageHint || undefined;
+      const words = sttResult.words?.filter((word) => Number.isFinite(word.confidence)) ?? [];
+      const confidence = sttResult.confidence ??
+        (words.length ? words.reduce((sum, word) => sum + word.confidence, 0) / words.length : undefined);
+      const unclearWords = words.filter((word) => word.confidence < 0.5).length;
+      if (
+        !/[\p{L}\p{N}]/u.test(transcript) ||
+        confidence === undefined ||
+        !Number.isFinite(confidence) ||
+        confidence < 0.75 ||
+        (words.length > 0 && unclearWords / words.length >= 0.25)
+      ) {
+        return {
           intakeUuid: sessionUuid,
           senderPhone,
-          transcript,
-          detectedLanguage: sttResult.languageCode || languageHint || undefined,
+          detectedLanguage: language,
           intent: 'GENERAL_CONVERSATION',
-          intentConfidence: sttResult.confidence,
-          patientMessage:
-            languageHint === 'sw'
-              ? `Samahani, sikusikia vizuri. Umesema: "${transcript}". Tafadhali rudia au andika kwa maneno.`
-              : `Sorry, I didn't catch that clearly. I heard: "${transcript}". Please repeat or type your message.`,
+          intentConfidence: confidence ?? 0,
+          transcript: '',
+          patientMessage: replyLanguage(languageHint || language) === 'sw'
+            ? 'Samahani, sikupata ujumbe wako vizuri. Unaweza kuandika au kutuma ujumbe mwingine wa sauti ulio wazi zaidi?'
+            : 'I couldn’t make out your voice note clearly. Could you type what you wanted to tell me, or send a clearer recording?',
           status: 'failed',
           error: 'LOW_CONFIDENCE_TRANSCRIPTION',
         };
-        return result;
       }
 
       const result = await this.processTextPipeline(
@@ -168,14 +167,6 @@ export class VoicePipelineService {
         sttResult.duration,
         true,
       );
-
-      if (sttResult.confidence !== undefined && sttResult.confidence < 0.75) {
-        const echoPrefix =
-          (sttResult.languageCode || languageHint) === 'sw'
-            ? 'Nimesikia'
-            : 'I heard';
-        result.patientMessage = `${echoPrefix}: "${transcript}"\n\n${result.patientMessage}`;
-      }
 
       if (cacheKey) {
         this.voiceResultCache.set(cacheKey, {
@@ -259,7 +250,7 @@ export class VoicePipelineService {
       : transcriptText;
     const sessionUuid = intakeUuid || randomUUID();
     this.logger.log(
-      `Routing ${isVoice ? 'voice note' : 'message'} [${sessionUuid}]: "${workingTranscript.substring(0, 60)}..."`,
+      `Routing ${isVoice ? 'voice note' : 'message'} [${sessionUuid}]`,
     );
 
     // Resolve existing Member by phone — no bot signup for known numbers.
@@ -285,7 +276,7 @@ export class VoicePipelineService {
     }
     const userId = member.id;
     const e164 = member.phoneNumber;
-    const language = replyLanguage(member.preferredLanguage);
+    const language = replyLanguage(member.preferredLanguage || detectedLanguage);
     const memberName = member.fullName?.trim() || null;
 
     await this.prisma.botMessageLog.create({
@@ -844,33 +835,20 @@ export class VoicePipelineService {
     }
 
     try {
-      const [clinics, procedures] = await Promise.all([
-        this.prisma.clinic.findMany({
-          where: { status: 'APPROVED' },
-          select: {
-            name: true,
-            subCounty: true,
-            doctors: {
-              where: { isActive: true },
-              select: { name: true, specialty: true },
-            },
-          },
-        }),
-        this.prisma.procedure.findMany({
-          where: { isActive: true },
-          select: { name: true },
-        }),
-      ]);
+      const clinics = await this.prisma.clinic.findMany({
+        where: { status: 'APPROVED' },
+        select: {
+          name: true,
+          subCounty: true,
+          doctors: { where: { isActive: true }, select: { name: true } },
+        },
+      });
 
       const terms = new Set<string>([
         'MenoDAO',
         'Dr Papi',
         'dental',
         'clinic',
-        'appointment',
-        'booking',
-        'insurance',
-        'member',
         'kesho',
         'leo',
         'asubuhi',
@@ -884,11 +862,7 @@ export class VoicePipelineService {
         if (clinic.subCounty) terms.add(clinic.subCounty);
         for (const doctor of clinic.doctors ?? []) {
           if (doctor.name) terms.add(doctor.name);
-          if (doctor.specialty) terms.add(doctor.specialty);
         }
-      }
-      for (const procedure of procedures) {
-        if (procedure.name) terms.add(procedure.name);
       }
 
       const result = Array.from(terms)

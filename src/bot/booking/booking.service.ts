@@ -45,7 +45,6 @@ import {
   BookingLang,
   t,
   ASK_SERVICE,
-  ASK_SERVICE_CHOICE,
   ASK_DOCTOR,
   ASK_DATE_TIME,
   ASK_NAME,
@@ -432,7 +431,11 @@ export class BookingService {
       const bookingDraft = await tx.botBookingDraft.upsert({
         where: { memberId: userId },
         update: {},
-        create: { memberId: userId, language: preferredLanguage ?? 'en' },
+        create: {
+          memberId: userId,
+          language: preferredLanguage ?? 'en',
+          clientName: memberName?.trim() || undefined,
+        },
       });
       await tx.careEvent.upsert({
         where: { id: bookingDraft.id },
@@ -654,15 +657,11 @@ export class BookingService {
         if (match) {
           updates.service = match;
         } else {
-          const serviceList = effectiveClinic.services
-            .map((s, i) => `${i + 1}. ${s}`)
-            .join('\n');
           await this.saveDraft(userId, updates);
           return {
             reply: t(SERVICE_NOT_OFFERED, effectiveLang, {
               service: extraction.service,
               clinic: effectiveClinic.name,
-              serviceList,
             }),
             triageFlag: false,
           };
@@ -670,6 +669,11 @@ export class BookingService {
       } else {
         updates.service = extraction.service;
       }
+    }
+
+    if (!updates.service && !draft.service && resolvedClinic) {
+      const consultation = resolvedClinic.services.find((service) => /\bconsultation\b/i.test(service));
+      if (consultation) updates.service = consultation;
     }
 
     const parsedDateTime = parseBookingDateTime(
@@ -737,8 +741,8 @@ export class BookingService {
 
     if (extraction.clientName) {
       updates.clientName = extraction.clientName;
-      await this.prisma.member.update({
-        where: { id: userId },
+      await this.prisma.member.updateMany({
+        where: { id: userId, fullName: null },
         data: { fullName: extraction.clientName },
       });
     }
@@ -807,6 +811,11 @@ export class BookingService {
     const resolvedClinicName =
       clinics.find((c) => c.id === updatedDraft.clinicId)?.name ??
       'Dr. Papi Dental Clinic';
+    const membershipNote = await this.membershipBookingNote(
+      userId,
+      updatedDraft.service,
+      effectiveLang,
+    ).catch(() => '');
     return {
       reply: t(READ_BACK, effectiveLang, {
         service: updatedDraft.service ?? '',
@@ -814,6 +823,7 @@ export class BookingService {
         time: this.format24hTime(updatedDraft.time!),
         clinic: resolvedClinicName,
         name: updatedDraft.clientName ?? memberName ?? 'there',
+        membershipNote,
         doctor:
           updatedDraft.doctorId &&
           clinics
@@ -826,6 +836,34 @@ export class BookingService {
       }),
       triageFlag: false,
     };
+  }
+
+  private async membershipBookingNote(
+    memberId: string,
+    service: string | null,
+    language: BookingLang,
+  ): Promise<string> {
+    if (!service || !/\bconsultation\b/i.test(service)) return '';
+    const [membership, procedure] = await Promise.all([
+      this.prisma.subscription.findUnique({
+        where: { memberId },
+        select: { isActive: true, endDate: true },
+      }),
+      this.prisma.procedure.findFirst({
+        where: { name: { equals: service, mode: 'insensitive' }, isActive: true },
+        select: { allowedTiers: true },
+      }),
+    ]);
+    if (membership?.isActive && (!membership.endDate || membership.endDate > new Date())) return '';
+    const tiers = ['BRONZE', 'SILVER', 'GOLD'].filter(
+      (tier) => Array.isArray(procedure?.allowedTiers) && procedure.allowedTiers.includes(tier),
+    ).map((tier) => `Meno${tier[0]}${tier.slice(1).toLowerCase()}`);
+    if (!tiers.length) return '';
+
+    const plans = this.humanizeList(tiers, language);
+    return language === 'sw'
+      ? `${plans} inaweza kusaidia kulipia uchunguzi wa daktari kulingana na masharti ya kifurushi. Andika “membership options” kuona bei. Unaweza kuthibitisha miadi bila uanachama.\n\n`
+      : `${plans} can help cover this consultation so the dentist can assess what’s bothering you, subject to plan terms. Type “membership options” to see prices. You can confirm your visit without cover.\n\n`;
   }
 
   private async finalizeBooking(
@@ -1511,48 +1549,8 @@ export class BookingService {
           }
         }
         return t(ASK_DOCTOR, lang);
-      case 'service': {
-        if (clinics.length === 0) return t(ASK_SERVICE, lang);
-        if (draft.clinicId) {
-          const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
-          const services =
-            clinic && clinic.services.length > 0
-              ? clinic.services
-              : Array.from(new Set(clinics.flatMap((c) => c.services)));
-          if (services.length > 0) {
-            return t(ASK_SERVICE_CHOICE, lang, {
-              serviceList: this.humanizeList(services, lang),
-            });
-          }
-        }
-        const allServices = clinics
-          .flatMap((c) => c.services)
-          .filter((s, i, arr) => arr.indexOf(s) === i);
-        const fallbackServices =
-          lang === 'sw'
-            ? [
-                'kusafisha meno',
-                'ukaguzi',
-                'kuziba jino',
-                "kung'oa jino",
-                'kupamba meno',
-                'X-ray',
-              ]
-            : [
-                'cleaning',
-                'check-up',
-                'filling',
-                'extraction',
-                'whitening',
-                'X-ray',
-              ];
-        return t(ASK_SERVICE_CHOICE, lang, {
-          serviceList: this.humanizeList(
-            allServices.length ? allServices : fallbackServices,
-            lang,
-          ),
-        });
-      }
+      case 'service':
+        return t(ASK_SERVICE, lang);
       case 'clinic':
         if (clinics.length === 0) return t(BOOKING_UNAVAILABLE, lang);
         return t(ASK_CLINIC, lang, {

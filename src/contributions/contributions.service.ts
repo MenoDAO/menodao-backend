@@ -38,6 +38,7 @@ export class ContributionsService {
     isUpgrade?: boolean,
     newTier?: string,
     paymentFrequency?: PaymentFrequency,
+    expectedCharge?: { tier: PackageTier; amount: number },
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -100,6 +101,20 @@ export class ContributionsService {
     this.logger.log(
       `Payment for ${member.subscription.tier} (${normalizedFrequency}): display=${amount}, actual=${actualAmount}`,
     );
+
+    if (expectedCharge) {
+      if (
+        member.subscription.tier !== expectedCharge.tier ||
+        member.subscription.paymentFrequency !== normalizedFrequency ||
+        actualAmount !== expectedCharge.amount
+      ) {
+        throw new BadRequestException('The membership quote has changed.');
+      }
+      await this.subscriptionsService.checkPaymentFrequencyRestriction(
+        memberId,
+        normalizedFrequency,
+      );
+    }
 
     // Validate amount (use minimum 1 for dev environment)
     if (actualAmount < 1) {

@@ -168,6 +168,7 @@ SAFETY RULES (STRICT):
 5. When relevant to the conversation, gently mention the insurance plans as a helpful option, but do not be pushy.
 6. If the user wants to book an appointment, tell them you can help and ask for their details. Never say a booking is confirmed unless the system confirms it, and never promise a team follow-up.
 7. If the user asks about insurance or what a visit costs, use the verified procedure prices and covered tiers below, separate the consultation from the procedure, and point them to https://menodao.org/ for full plan details or sign-up.
+8. If they ask how to make a MenoDAO membership payment in WhatsApp, tell them to type “pay membership” for a verified quote. Never collect an M-Pesa PIN or claim a payment succeeded without provider confirmation.
 
 VERIFIED ACTIVE CLINICS:
 ${context.clinicContext}
@@ -395,7 +396,7 @@ CRITICAL RULES:
 6. action CONFIRM is only valid when the draft status is AWAITING_CONFIRMATION and the user says yes/ndiyo/sawa/ok.
 7. action DECLINE is for no/hapana/cancel responses.
 8. triageFlag is true ONLY for: difficulty breathing or swallowing, severe facial swelling closing an eye, uncontrolled bleeding, or trauma.
-9. The model must NOT diagnose, prescribe, or give medical advice.
+9. The model must NOT diagnose, prescribe, give medical advice, or infer a treatment from a symptom. Extract service only if the user explicitly asks for a specific service.
 10. Output ONLY valid JSON, no markdown fences, no extra text.`;
 
 export interface BookingExtractionPromptContext {

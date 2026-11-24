@@ -10,8 +10,8 @@ import { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
 import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
-import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
+import { BotMembershipPaymentService } from '../account/bot-membership-payment.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FieldDataService } from '../field-data/field-data.service';
@@ -19,7 +19,6 @@ import { VoucherService } from '../../voucher/voucher.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
-import { onboardingReprompt, onboardingWelcome } from './onboarding.messages';
 import {
   extractFlaresendAudio,
   extractFlaresendFieldMedia,
@@ -39,12 +38,6 @@ const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_FALLBACK_REPLY =
   'Samahani, kuna hitilafu ya muda kwenye mfumo wetu. Tafadhali jaribu tena baada ya dakika chache. ' +
   'Sorry, we are having a temporary problem. Please try again in a few minutes.';
-
-interface OnboardingMenuChoice {
-  key: 'BOOKING' | 'HEALTH' | 'HELP';
-  /** Canonical phrasing used when the member only replies with the menu number. */
-  phrase: string;
-}
 
 /** Everything needed to attach an outbound message to its conversation. */
 interface ChatContext {
@@ -71,9 +64,9 @@ export class BotGatewayService {
     private readonly configService: ConfigService,
     private readonly voicePipelineService: VoicePipelineService,
     private readonly identity: BotIdentityService,
-    private readonly onboardingService: BotOnboardingService,
     private readonly chatService: BotChatService,
     private readonly memberDataService: BotMemberDataService,
+    private readonly membershipPayments: BotMembershipPaymentService,
     private readonly adminAccess: AdminWhatsappAccessService,
     private readonly fieldDataService: FieldDataService,
     private readonly voucherService: VoucherService,
@@ -558,6 +551,36 @@ export class BotGatewayService {
       instanceProviderId,
     };
 
+    // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
+    // verification code only while a pending challenge exists for this member.
+    const trimmed = (messageText || '').trim();
+    if (
+      /^\d{6}$/.test(trimmed) &&
+      (await this.memberDataService.hasPendingVerification(member.id))
+    ) {
+      const result = await this.memberDataService.verify(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        trimmed,
+      );
+      await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
+      return;
+    }
+
+    // Payer numbers and confirmation codes are kept out of the chat archive.
+    const payer = /^pay from(?:\s+(.+))?$/i.exec(trimmed);
+    if (payer) {
+      const reply = await this.membershipPayments.changePayer(member.id, payer[1] ?? '');
+      await this.sendTextSafely(member.phoneNumber, reply);
+      return;
+    }
+
+    const confirmation = /^confirm m-?pesa(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(trimmed);
+    if (confirmation) {
+      const reply = await this.membershipPayments.confirm(member.id, confirmation[1]);
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
     // Persist the member's side of the conversation before we reply, so a
     // failure further down still leaves an auditable transcript.
     await this.chatService.recordInbound({
@@ -580,39 +603,17 @@ export class BotGatewayService {
       return;
     }
 
-    // New / unverified WhatsApp numbers start in the onboarding state machine;
-    // known (verified) members proceed straight to the AI reply path.
-    if (!member.isVerified) {
-      const session = await this.onboardingService.getSession(member.id);
-      if (!session || session.status === 'IN_PROGRESS') {
-        await this.handleOnboardingTurn({
-          memberId: member.id,
-          recipientPhone: member.phoneNumber,
-          messageText,
-          senderId,
-          chatContext,
-          preferredLanguage: member.preferredLanguage ?? 'en',
-        });
-        return;
-      }
-    }
-
-    // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
-    // verification code only while a pending challenge exists for this member.
-    const trimmed = (messageText || '').trim();
-    if (
-      /^\d{6}$/.test(trimmed) &&
-      (await this.memberDataService.hasPendingVerification(member.id))
-    ) {
-      const result = await this.memberDataService.verify(
-        { id: member.id, phoneNumber: member.phoneNumber },
-        trimmed,
+    if (/^(?:membership options|membership plans|vifurushi vya uanachama)[.!?]?$/i.test(trimmed)) {
+      await this.sendTextSafely(
+        member.phoneNumber,
+        this.membershipPayments.describePlans(),
+        chatContext,
       );
-      await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
       return;
     }
 
-    const scope = this.memberDataService.detectScope(messageText);
+    const scope = this.membershipPayments.detectRequest(messageText) ??
+      this.memberDataService.detectScope(messageText);
     if (scope) {
       const reply = await this.memberDataService.handleRequest(
         { id: member.id, phoneNumber: member.phoneNumber },
@@ -629,102 +630,6 @@ export class BotGatewayService {
       senderId,
     });
     await this.sendTextSafely(member.phoneNumber, replyText, chatContext);
-  }
-
-  /**
-   * First turn for a new WhatsApp contact. The welcome is a question, not a
-   * menu, and every reply after it is handed to the AI pipeline in the
-   * member's own words. Bare 1/2/3 shortcuts still work for returning users.
-   */
-  private async handleOnboardingTurn(params: {
-    memberId: string;
-    recipientPhone: string;
-    messageText: string;
-    senderId: string;
-    chatContext: ChatContext;
-    preferredLanguage?: string;
-  }): Promise<void> {
-    const { memberId, recipientPhone, messageText, chatContext } = params;
-    const preferredLanguage = params.preferredLanguage ?? 'en';
-    const session = await this.onboardingService.start(
-      memberId,
-      preferredLanguage,
-    );
-
-    if (session.step === 'WELCOME') {
-      await this.onboardingService.setStep(memberId, 'INTEREST', {
-        source: 'welcome',
-        language: preferredLanguage,
-        welcomeSentAt: new Date().toISOString(),
-      });
-      await this.sendTextSafely(
-        recipientPhone,
-        onboardingWelcome(preferredLanguage),
-        chatContext,
-      );
-      return;
-    }
-
-    const choice = this.resolveMenuChoice(messageText);
-    const trimmedInput = (messageText ?? '').trim();
-    // A bare number carries no intent. Everything else — including "my tooth
-    // is sore" — goes to the pipeline exactly as the member wrote it.
-    const aiInput =
-      /^[123]$/.test(trimmedInput) && choice ? choice.phrase : trimmedInput;
-    if (!aiInput) {
-      await this.sendTextSafely(
-        recipientPhone,
-        onboardingReprompt(preferredLanguage),
-        chatContext,
-      );
-      return;
-    }
-
-    await this.onboardingService.setStep(memberId, 'MENU', {
-      choice: choice?.key ?? 'FREE_TEXT',
-      selectedAt: new Date().toISOString(),
-    });
-
-    const replyText = await this.generateReplyText({
-      memberId,
-      recipientPhone,
-      messageText: aiInput,
-      senderId: params.senderId,
-    });
-    await this.sendTextSafely(recipientPhone, replyText, chatContext);
-    await this.onboardingService.complete(memberId);
-  }
-
-  private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {
-    const text = (messageText ?? '').trim().toLowerCase();
-    if (!text) return null;
-    if (
-      /^(1|book|booking|appointment|miadi|ninapenda kupanga|book\s+appointment)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'BOOKING',
-        phrase: 'I want to book an appointment at a MenoDAO clinic.',
-      };
-    }
-    if (
-      /^(2|health|info|information|symptom|symptoms|pain|toothache|afya|maumivu)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'HEALTH',
-        phrase: 'I have a question about my dental health.',
-      };
-    }
-    if (/^(3|help|support|account|memb|msaada)/.test(text)) {
-      return {
-        key: 'HELP',
-        phrase: 'I need help with my MenoDAO account.',
-      };
-    }
-    return null;
   }
 
   /** Shared reply generation: static override (if configured) or the AI pipeline. */

@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { ContributionsModule } from '../../contributions/contributions.module';
+import { SubscriptionsModule } from '../../subscriptions/subscriptions.module';
+import { BotMembershipPaymentService } from '../account/bot-membership-payment.service';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from '../../auth/auth.module';
 import { SmsModule } from '../../sms/sms.module';
@@ -24,9 +27,12 @@ import { BotActionRegistryService } from './bot-action-registry.service';
     AuthModule,
     SmsModule,
     BotIdentityModule,
+    ContributionsModule,
+    SubscriptionsModule,
   ],
   providers: [
     BotMemberDataService,
+    BotMembershipPaymentService,
     AdminWhatsappAccessService,
     BotPrivilegeService,
     BotActorService,
@@ -34,6 +40,7 @@ import { BotActionRegistryService } from './bot-action-registry.service';
   ],
   exports: [
     BotMemberDataService,
+    BotMembershipPaymentService,
     AdminWhatsappAccessService,
     BotPrivilegeService,
     BotActorService,
