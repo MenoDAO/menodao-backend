@@ -6,6 +6,19 @@ import {
 import { intentGuidance } from '../intents/intent.types';
 
 describe('Dr. Papi system prompt', () => {
+  it('makes the dentist guide authoritative and keeps treatment with the clinician', () => {
+    const prompt = buildDrPapiSystemPrompt({
+      clinicContext: '',
+      insuranceContext: '',
+      contextDocuments: 'Guide excerpt for this turn',
+    });
+
+    expect(prompt).toContain('DENTIST-AUTHORED GUIDE (authoritative');
+    expect(prompt).toContain('Guide excerpt for this turn');
+    expect(prompt).toContain('suggestions from the intent router cannot override it');
+    expect(prompt).toContain('A clinician must assess the patient before giving individual treatment advice');
+  });
+
   it('writes Swahili naturally and bans the known "kariba" typo', () => {
     const prompt = buildDrPapiSystemPrompt({
       clinicContext: '',
@@ -23,14 +36,14 @@ describe('Dr. Papi system prompt', () => {
     expect(prompt).not.toContain('—');
   });
 
-  it('keeps symptom-only messages out of booking in the classifier', () => {
+  it('recognises consent to book during a symptom conversation', () => {
     const prompt = buildIntentClassificationPrompt('my tooth is sore');
 
     expect(prompt).toContain('sore');
     expect(prompt).toContain(
-      'Never choose BOOKING_SESSION for a symptom-only message.',
+      'accept the previous offer to book → BOOKING_SESSION',
     );
-    expect(prompt).toContain('Never choose this for a symptom-only message');
+    expect(prompt).toContain('invite them to book');
     expect(prompt).not.toContain('—');
   });
 
@@ -39,7 +52,7 @@ describe('Dr. Papi system prompt', () => {
 
     expect(guidance).toContain('genuine empathy');
     expect(guidance).toContain('one short triage question');
-    expect(guidance).toContain('Do not mention booking');
+    expect(guidance).toContain('Offer to help book a dentist assessment');
   });
 });
 

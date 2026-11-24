@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
 import { CalendarSyncService } from '../../calendar/calendar-sync.service';
-import { AppointmentActor, AppointmentStatus } from '@prisma/client';
+import { AppointmentActor, AppointmentStatus, CareEventType } from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from '../ai/interfaces/llm-provider.interface';
@@ -428,10 +428,24 @@ export class BookingService {
     preferredLanguage?: 'en' | 'sw',
     memberName?: string | null,
   ): Promise<{ reply: string; triageFlag: boolean }> {
-    const draft = await this.prisma.botBookingDraft.upsert({
-      where: { memberId: userId },
-      update: {},
-      create: { memberId: userId, language: preferredLanguage ?? 'en' },
+    const draft = await this.prisma.$transaction(async (tx) => {
+      const bookingDraft = await tx.botBookingDraft.upsert({
+        where: { memberId: userId },
+        update: {},
+        create: { memberId: userId, language: preferredLanguage ?? 'en' },
+      });
+      await tx.careEvent.upsert({
+        where: { id: bookingDraft.id },
+        update: {},
+        create: {
+          id: bookingDraft.id,
+          type: CareEventType.APPOINTMENT_REQUESTED,
+          memberId: userId,
+          source: 'bot-booking-draft',
+          occurredAt: new Date(),
+        },
+      });
+      return bookingDraft;
     });
     const lang = (draft.language ?? preferredLanguage ?? 'en') as BookingLang;
 
@@ -545,7 +559,13 @@ export class BookingService {
       extraction.action === 'CANCEL_BOOKING' ||
       (extraction.action === 'DECLINE' && draft.status === 'COLLECTING')
     ) {
-      await this.prisma.botBookingDraft.delete({ where: { memberId: userId } });
+      await this.prisma.$transaction([
+        this.prisma.botBookingDraft.delete({ where: { id: draft.id } }),
+        this.prisma.careEvent.updateMany({
+          where: { id: draft.id, source: 'bot-booking-draft' },
+          data: { metadata: { cancelled: true } },
+        }),
+      ]);
       return { reply: t(BOOKING_CANCELLED, lang), triageFlag: false };
     }
 
@@ -810,6 +830,7 @@ export class BookingService {
 
   private async finalizeBooking(
     draft: {
+      id: string;
       memberId: string;
       clinicId: string | null;
       doctorId: string | null;
@@ -904,8 +925,10 @@ export class BookingService {
             },
           },
         });
-        await tx.botBookingDraft.delete({
-          where: { memberId: draft.memberId },
+        await tx.botBookingDraft.delete({ where: { id: draft.id } });
+        await tx.careEvent.updateMany({
+          where: { id: draft.id, source: 'bot-booking-draft' },
+          data: { metadata: { appointmentId: appt.id } },
         });
 
         return appt;

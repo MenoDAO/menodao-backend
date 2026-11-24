@@ -35,7 +35,7 @@ export class OpenAiProvider implements ILlmProvider {
   }
 
   async generateCompletion(options: GenerateResponseOptions): Promise<string> {
-    const { systemPrompt, userPrompt, history = [], responseFormat, images } =
+    const { systemPrompt, userPrompt, history = [], responseFormat, images, pdfBase64 } =
       options;
 
     const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
@@ -49,6 +49,16 @@ export class OpenAiProvider implements ILlmProvider {
       })),
     ];
 
+    if (pdfBase64) {
+      userContent.push({
+        type: 'file',
+        file: {
+          filename: 'field-report.pdf',
+          file_data: `data:application/pdf;base64,${pdfBase64}`,
+        },
+      });
+    }
+
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
       ...history.map(
@@ -60,7 +70,7 @@ export class OpenAiProvider implements ILlmProvider {
       ),
       {
         role: 'user',
-        content: images?.length ? userContent : userPrompt,
+        content: images?.length || pdfBase64 ? userContent : userPrompt,
       },
     ];
 

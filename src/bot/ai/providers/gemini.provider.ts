@@ -105,7 +105,7 @@ export class GeminiProvider implements ILlmProvider {
   }
 
   async generateCompletion(options: GenerateResponseOptions): Promise<string> {
-    const { systemPrompt, userPrompt, history = [], responseFormat, images } =
+    const { systemPrompt, userPrompt, history = [], responseFormat, images, pdfBase64 } =
       options;
 
     const contents = [
@@ -117,6 +117,9 @@ export class GeminiProvider implements ILlmProvider {
         role: 'user',
         parts: [
           { text: userPrompt },
+          ...(pdfBase64
+            ? [{ inlineData: { mimeType: 'application/pdf', data: pdfBase64 } }]
+            : []),
           ...(images ?? []).map((image) => ({
             inlineData: {
               mimeType: image.mimeType,

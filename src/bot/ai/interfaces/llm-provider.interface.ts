@@ -19,6 +19,8 @@ export interface GenerateResponseOptions {
   responseFormat?: 'json';
   /** Vision-capable providers attach these to the user turn. */
   images?: LlmImageAttachment[];
+  /** One inline PDF document for field intake. */
+  pdfBase64?: string;
 }
 
 export interface ILlmProvider {

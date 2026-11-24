@@ -30,10 +30,7 @@ import type {
   IntentEntities,
   IntentType,
 } from '../intents/intent.types';
-import {
-  fallbackClassification,
-  isSymptomOnlyMessage,
-} from '../intents/intent-fallback';
+import { fallbackClassification } from '../intents/intent-fallback';
 import { BotActorService } from '../actions/bot-actor.service';
 import { BotActionRegistryService } from '../actions/bot-action-registry.service';
 import type {
@@ -310,8 +307,8 @@ export class VoicePipelineService {
         this.logger.log(
           `[${sessionUuid}] Stale booking draft found — deleting and re-classifying`,
         );
-        await this.prisma.botBookingDraft.delete({
-          where: { memberId: userId },
+        await this.prisma.botBookingDraft.deleteMany({
+          where: { id: existingDraft.id, updatedAt: existingDraft.updatedAt },
         });
       }
     }
@@ -827,14 +824,6 @@ export class VoicePipelineService {
       data: { memberId: userId, role: 'assistant', content: reply },
     });
 
-    void this.careEvents?.track({
-      type: CareEventType.APPOINTMENT_REQUESTED,
-      memberId: userId,
-      sessionId: sessionUuid,
-      source: 'bot-voice-pipeline',
-      privacyClass: CarePrivacyClass.OPERATIONAL,
-    });
-
     return {
       intakeUuid: sessionUuid,
       senderPhone,
@@ -965,42 +954,13 @@ export class VoicePipelineService {
         entities,
         reasoning,
       };
-      return this.applySymptomFirstGuard(transcript, classification);
+      return classification;
     } catch (error) {
       this.logger.warn(
         `Intent classification parsing failed, using fallback heuristic: ${error}`,
       );
-      return this.applySymptomFirstGuard(
-        transcript,
-        fallbackClassification(transcript),
-      );
+      return fallbackClassification(transcript);
     }
-  }
-
-  /**
-   * A sore tooth is a question before it is a booking. Even if the classifier
-   * proposes START_BOOKING, a symptom-only message is routed to triage first.
-   */
-  private applySymptomFirstGuard(
-    transcript: string,
-    classification: IntentClassification,
-  ): IntentClassification {
-    if (
-      isSymptomOnlyMessage(transcript) &&
-      classification.intent !== 'CLINICAL_INTAKE'
-    ) {
-      this.logger.log(
-        `Symptom-first guard applied [${transcript.slice(0, 40)}]: ${classification.intent} -> CLINICAL_INTAKE`,
-      );
-      return {
-        ...classification,
-        intent: 'CLINICAL_INTAKE',
-        action: null,
-        confidence: Math.max(classification.confidence, 0.9),
-        reasoning: 'symptom_first',
-      };
-    }
-    return classification;
   }
 
   private parseEntities(raw: unknown): IntentEntities | undefined {

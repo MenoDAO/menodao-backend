@@ -55,9 +55,7 @@ export class BotAiService {
     options: AiReplyOptions = {},
   ): Promise<AiReply> {
     const language = replyLanguage(options.language);
-    // One retrieval per reply: the same documents feed both the system prompt
-    // grounding and the user prompt context. Include the previous user turn so
-    // follow-ups ("and how much is that?") retrieve the right documents.
+    // Include the previous user turn to ground follow-up questions.
     const previousUserTurn = [...history]
       .reverse()
       .find((message) => message.role === 'user')?.content;
@@ -70,15 +68,11 @@ export class BotAiService {
       retrievedContext,
       options,
     );
-    const contextBlock =
-      this.contextService.renderPromptBlock(retrievedContext);
     let rawReply: string;
     try {
       rawReply = await this.llmProvider.generateCompletion({
         systemPrompt,
-        userPrompt: contextBlock
-          ? `${contextBlock}\n\nUser question: ${userMessage}`
-          : userMessage,
+        userPrompt: userMessage,
         history,
         operation,
       });
@@ -116,10 +110,6 @@ export class BotAiService {
       );
       return [];
     }
-  }
-
-  private renderContextBlock(retrieved: RetrievedBrandContext[]): string {
-    return this.contextService.renderPromptBlock(retrieved);
   }
 
   /** Grounding: backend Clinic (APPROVED) + active Procedure catalogue. */
