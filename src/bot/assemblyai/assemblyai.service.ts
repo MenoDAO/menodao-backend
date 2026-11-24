@@ -196,13 +196,13 @@ export class AssemblyAiService {
       }
 
       this.logger.log(
-        `Transcription completed successfully (${transcript.language_code || 'auto'}): "${transcript.text?.substring(0, 80)}..."`,
+        `Transcription completed successfully (${transcript.language_code || 'auto'})`,
       );
 
       return {
         text: transcript.text || '',
         languageCode: transcript.language_code || undefined,
-        confidence: transcript.confidence || undefined,
+        confidence: transcript.confidence ?? undefined,
         duration: transcript.audio_duration || undefined,
         words: transcript.words?.map((w) => ({
           text: w.text,

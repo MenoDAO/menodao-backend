@@ -167,6 +167,52 @@ describe('VisitsService', () => {
     });
   });
 
+  it('links a self-pay visit to an open appointment at the staff clinic', async () => {
+    const member = { id: 'member-1', phoneNumber: '+254712345678', subscription: null };
+    mockPrisma.member.findFirst.mockResolvedValue(member);
+    mockPrisma.visit.findFirst.mockResolvedValue(null);
+    mockPrisma.visit.create.mockResolvedValue({
+      id: 'visit-1', memberId: member.id, member, isSelfPay: true,
+    });
+    const linked = jest.fn().mockResolvedValue({ count: 1 });
+    mockPrisma.$transaction.mockImplementation(async (callback) =>
+      callback({
+        ...mockPrisma,
+        appointment: { updateMany: linked },
+        appointmentEvent: { create: jest.fn() },
+      }),
+    );
+
+    const result = await service.checkIn({
+      phoneNumber: member.phoneNumber, hasConsent: true, appointmentId: 'appointment-1',
+    }, 'staff-1');
+
+    expect(result.visit.isSelfPay).toBe(true);
+    expect(result.claimLimit).toBeNull();
+    expect(linked).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ clinicId: 'clinic-1', memberId: member.id, visitId: null }),
+    }));
+  });
+
+  it('discharges a self-pay visit without creating a claim', async () => {
+    const visit = {
+      id: 'visit-1', status: VisitStatus.OPEN, isSelfPay: true, memberId: 'member-1',
+      totalCost: 1000,
+      member: { fullName: 'Patient', phoneNumber: '+254712345678', subscription: null, claims: [] },
+      procedures: [{ cost: 1000, procedure: { code: 'CONSULT', name: 'Consultation' } }],
+    };
+    mockPrisma.visit.findUnique.mockResolvedValue(visit);
+    mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+    mockPrisma.visit.update.mockResolvedValue({ ...visit, status: VisitStatus.DISCHARGED });
+    mockSmsService.sendSms.mockResolvedValue({ success: true });
+
+    const result = await service.dischargeVisit(visit.id);
+
+    expect(result.visit.status).toBe(VisitStatus.DISCHARGED);
+    expect(result.claims).toEqual([]);
+    expect(mockPrisma.claim.create).not.toHaveBeenCalled();
+  });
+
   describe('dischargeVisit', () => {
     it('should discharge visit and create claims in a transaction', async () => {
       const mockVisit = {

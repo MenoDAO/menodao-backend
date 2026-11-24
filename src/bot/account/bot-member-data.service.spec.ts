@@ -53,6 +53,7 @@ describe('BotMemberDataService', () => {
     service = new BotMemberDataService(
       prisma as unknown as PrismaService,
       auth as unknown as AuthService,
+      { offer: jest.fn() } as never,
     );
   });
 

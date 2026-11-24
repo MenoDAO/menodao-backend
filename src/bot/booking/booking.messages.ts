@@ -23,8 +23,8 @@ function msg(en: string, sw: string): BilingualMessage {
 // ── Field prompts ─────────────────────────────────────────────────────────────
 
 export const ASK_SERVICE = msg(
-  '🦷 What can I help with today? A cleaning, check-up, filling, extraction, whitening, or X-ray?',
-  "🦷 Ni huduma gani unahitaji leo? Kusafisha meno, ukaguzi, kuziba jino, kung'oa jino, kupamba meno, au X-ray?",
+  'What’s been bothering you? I can help arrange a consultation with a dentist.',
+  'Niambie kwa kifupi kinachokusumbua ili tupange uchunguzi na daktari wa meno.',
 );
 
 export const ASK_SERVICE_CHOICE = msg(
@@ -62,8 +62,8 @@ export const CLINIC_NOT_FOUND = msg(
 // ── Service choice ────────────────────────────────────────────────────────────
 
 export const SERVICE_NOT_OFFERED = msg(
-  '🦷 "{service}" isn\'t offered at {clinic}. They do {serviceList}. Which one would you like?',
-  '🦷 "{service}" haifanyiki kwa {clinic}. Wao hufanya {serviceList}. Unataka ipi?',
+  '“{service}” isn’t listed at {clinic}. Would you like me to help arrange an assessment with a dentist?',
+  '“{service}” haijaorodheshwa katika {clinic}. Ungependa nikusaidie kupanga uchunguzi na daktari wa meno?',
 );
 
 export const BOOKING_UNAVAILABLE = msg(
@@ -101,8 +101,8 @@ export const SLOT_TAKEN = msg(
 // ── Read-back / confirmation ──────────────────────────────────────────────────
 
 export const READ_BACK = msg(
-  '📋 Let me check the details with you:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n🦷 *Doctor:* {doctor}\n\nDoes everything look right? (Yes / No)\n\n_Replying Yes lets us share these details with the clinic._',
-  '📋 Tafadhali angalia maelezo ya miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n🦷 *Daktari:* {doctor}\n\nYote ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo, unakubali maelezo haya kushirikiwa na kliniki._',
+  '📋 Let me check the details with you:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n🦷 *Doctor:* {doctor}\n\n{membershipNote}Does everything look right? (Yes / No)\n\n_Replying Yes lets us share these details with the clinic._',
+  '📋 Tafadhali angalia maelezo ya miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n🦷 *Daktari:* {doctor}\n\n{membershipNote}Yote ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo, unakubali maelezo haya kushirikiwa na kliniki._',
 );
 
 export const BOOKING_AWAITING_CONFIRMATION = msg(

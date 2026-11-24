@@ -476,6 +476,7 @@ model Visit {
   staffId      String // Staff who checked in the patient
   status       VisitStatus @default(OPEN)
   totalCost    Int         @default(0) // Total cost of procedures in KES
+  isSelfPay    Boolean     @default(false)
   checkedInAt  DateTime    @default(now())
   dischargedAt DateTime?
   createdAt    DateTime    @default(now())

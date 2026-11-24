@@ -251,7 +251,7 @@ export class SubscriptionsService {
    *
    * DEV MODE: Restrictions are bypassed in development environment for testing
    */
-  private async checkPaymentFrequencyRestriction(
+  async checkPaymentFrequencyRestriction(
     memberId: string,
     paymentFrequency: 'MONTHLY' | 'ANNUAL',
   ): Promise<void> {

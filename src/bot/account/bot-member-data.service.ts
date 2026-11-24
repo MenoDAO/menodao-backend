@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AppointmentStatus, Prisma } from '@prisma/client';
 import { AuthService } from '../../auth/auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  BotMembershipPaymentService,
+  isMembershipPaymentScope,
+  type MembershipPaymentScope,
+} from './bot-membership-payment.service';
 
 export type MemberDataScope =
   | 'ACCOUNT'
@@ -9,6 +14,8 @@ export type MemberDataScope =
   | 'APPOINTMENTS'
   | 'VISITS'
   | 'CLAIMS';
+
+type RequestScope = MemberDataScope | MembershipPaymentScope;
 
 interface MemberRef {
   id: string;
@@ -60,6 +67,7 @@ export class BotMemberDataService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
+    private readonly membershipPayments: BotMembershipPaymentService,
   ) {}
 
   /**
@@ -154,7 +162,7 @@ export class BotMemberDataService {
    */
   async handleRequest(
     member: MemberRef,
-    scope: MemberDataScope,
+    scope: RequestScope,
   ): Promise<string> {
     const verified = await this.prisma.botDataAccessSession.findFirst({
       where: {
@@ -166,7 +174,7 @@ export class BotMemberDataService {
     });
     if (verified) {
       await this.logAccess(member.id, scope, 'GRANTED');
-      return this.buildReply(member.id, scope);
+      return this.buildVerifiedReply(member, scope, verified.id);
     }
 
     const pending = await this.prisma.botDataAccessSession.findFirst({
@@ -305,12 +313,24 @@ export class BotMemberDataService {
     });
     await this.logAccess(member.id, session.scope, 'GRANTED');
     return {
-      reply: await this.buildReply(member.id, session.scope as MemberDataScope),
+      reply: await this.buildVerifiedReply(member, session.scope as RequestScope, session.id),
       verified: true,
     };
   }
 
-  private verificationPrompt(scope: MemberDataScope): string {
+  private buildVerifiedReply(member: MemberRef, scope: RequestScope, sessionId: string) {
+    return isMembershipPaymentScope(scope)
+      ? this.membershipPayments.offer(member.id, scope, sessionId, member.phoneNumber)
+      : this.buildReply(member.id, scope);
+  }
+
+  private verificationPrompt(scope: RequestScope): string {
+    if (scope === 'MEMBERSHIP_STATUS') {
+      return 'I sent a 6-digit SMS code to your registered number. Reply with the code so I can show your plan.';
+    }
+    if (isMembershipPaymentScope(scope)) {
+      return 'I sent a 6-digit verification code by SMS to the number on your account. Reply with that code to see your membership payment quote. Never share your M-Pesa PIN here.';
+    }
     const what: Record<MemberDataScope, string> = {
       ACCOUNT: 'account details',
       PAYMENTS: 'payment history',
@@ -619,7 +639,7 @@ export class BotMemberDataService {
             fullName: true,
             createdAt: true,
             subscription: {
-              select: { tier: true, isActive: true, monthlyAmount: true },
+              select: { tier: true, isActive: true, monthlyAmount: true, paymentFrequency: true },
             },
           },
         }),
@@ -647,7 +667,7 @@ export class BotMemberDataService {
     const tier = member.subscription
       ? `${this.titleCase(member.subscription.tier)}, ${
           member.subscription.isActive ? 'Active' : 'Not active'
-        }`
+        }, ${member.subscription.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly'}`
       : 'No membership on record';
     return [
       'Here is your MenoDAO account summary:',
