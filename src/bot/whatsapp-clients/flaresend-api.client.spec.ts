@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import axios from 'axios';
+import { createCipheriv, createHmac, hkdfSync } from 'crypto';
 import type { ConfigService } from '@nestjs/config';
 import type { BotInstanceStore } from '../instances/bot-instance.store';
 import { FlaresendApiClient } from './flaresend-api.client';
@@ -7,6 +8,42 @@ import { FlaresendApiClient } from './flaresend-api.client';
 jest.mock('axios');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+describe('FlaresendApiClient voice notes', () => {
+  afterEach(() => mockedAxios.get.mockReset());
+
+  it.each(['application/octet-stream', 'audio/ogg'])(
+    'decrypts WhatsApp audio served as %s',
+    async (contentType) => {
+      const { client } = build();
+      const audio = Buffer.from('OggS\u0000\u0002synthetic Opus fixture');
+      const mediaKey = Buffer.alloc(32, 42);
+      const keys = Buffer.from(
+        hkdfSync('sha256', mediaKey, Buffer.alloc(0), 'WhatsApp Audio Keys', 112),
+      );
+      const iv = keys.subarray(0, 16);
+      const cipher = createCipheriv('aes-256-cbc', keys.subarray(16, 48), iv);
+      const ciphertext = Buffer.concat([cipher.update(audio), cipher.final()]);
+      const mac = createHmac('sha256', keys.subarray(48, 80))
+        .update(iv)
+        .update(ciphertext)
+        .digest()
+        .subarray(0, 10);
+      mockedAxios.get.mockResolvedValueOnce({
+        data: Buffer.concat([ciphertext, mac]),
+        headers: { 'content-type': contentType },
+      });
+
+      await expect(
+        client.downloadMediaDescriptor({
+          url: 'https://mmg.whatsapp.net/voice-note.enc',
+          mimetype: 'audio/ogg; codecs=opus',
+          mediaKey: mediaKey.toString('base64'),
+        }),
+      ).resolves.toMatchObject({ buffer: audio, mimeType: 'audio/ogg' });
+    },
+  );
+});
 
 /** Minimal shape axios.isAxiosError accepts in these tests. */
 function httpError(status: number, data: Record<string, unknown> = {}) {

@@ -762,6 +762,10 @@ export class FlaresendApiClient implements IWhatsappClient {
     descriptor: Record<string, any> = {},
   ): Promise<{ buffer: Buffer; mimeType: string } | null> {
     const mime = (contentType || '').split(';')[0].trim().toLowerCase();
+    const declaredMime = expectedMimeType.split(';')[0].trim().toLowerCase();
+    // The CDN can label encrypted voice notes as generic binary. The audio
+    // descriptor determines which WhatsApp keys were used to encrypt them.
+    const audioMime = declaredMime.startsWith('audio/') ? declaredMime : null;
     const isTextLike =
       mime.includes('json') ||
       mime.startsWith('text/') ||
@@ -770,7 +774,7 @@ export class FlaresendApiClient implements IWhatsappClient {
       const out = this.maybeDecryptWhatsappMedia(
         buffer,
         descriptor,
-        mime || expectedMimeType,
+        audioMime ?? (mime || expectedMimeType),
       );
       const waStatus = (out as any)._waDecrypt;
       if (
@@ -791,7 +795,7 @@ export class FlaresendApiClient implements IWhatsappClient {
             out.subarray(4, 8).toString('hex') === '66747970');
         if (!hasKnownAudioMagic) return null;
       }
-      return { buffer: out, mimeType: mime || expectedMimeType };
+      return { buffer: out, mimeType: audioMime ?? (mime || expectedMimeType) };
     }
 
     // Some FlareSend endpoints return JSON containing a signed URL or base64.
@@ -824,8 +828,9 @@ export class FlaresendApiClient implements IWhatsappClient {
         const b = resp ? Buffer.from(resp.data) : Buffer.alloc(0);
         if (b.length > 0 && !this.looksLikeTextPayload(b)) {
           const mime =
-            (resp?.headers['content-type'] as string | undefined)?.split(';')[0] ||
-            expectedMimeType;
+            audioMime ??
+            ((resp?.headers['content-type'] as string | undefined)?.split(';')[0] ||
+              expectedMimeType);
           return {
             buffer: this.maybeDecryptWhatsappMedia(b, descriptor, mime),
             mimeType: mime,
@@ -842,9 +847,10 @@ export class FlaresendApiClient implements IWhatsappClient {
         const b = Buffer.from(cleaned.replace(/\s/g, ''), 'base64');
         if (b.length > 0) {
           const mime =
-            (typeof obj.mimetype === 'string' && obj.mimetype) ||
-            (typeof obj.mimeType === 'string' && obj.mimeType) ||
-            expectedMimeType;
+            audioMime ??
+            ((typeof obj.mimetype === 'string' && obj.mimetype) ||
+              (typeof obj.mimeType === 'string' && obj.mimeType) ||
+              expectedMimeType);
           return {
             buffer: this.maybeDecryptWhatsappMedia(b, descriptor, mime),
             mimeType: mime,
