@@ -144,8 +144,7 @@ const SYMPTOM_RE =
   /\b(sore|aching|ache|pain|painful|hurts?|tender|toothache|bleed(ing)?|swell(ing|ed)?|sensitive|abscess|pus|trauma|maumivu|kuuma|naniuma|linaniuma|yananiuma|uvimbe|ufizi|damu)\b/;
 
 /**
- * A symptom-only message must never be treated as a booking request. This is a
- * deterministic guard over the LLM classifier, not a replacement for it.
+ * Recognise symptom language when the fallback has no more specific match.
  */
 export function isSymptomOnlyMessage(transcript: string): boolean {
   const text = (transcript ?? '').toLowerCase().trim();
@@ -192,7 +191,10 @@ export function fallbackClassification(
     };
   }
 
-  return { intent: 'HEALTH_EDUCATION', confidence: 0.55 };
+  return {
+    intent: isSymptomOnlyMessage(text) ? 'CLINICAL_INTAKE' : 'HEALTH_EDUCATION',
+    confidence: 0.55,
+  };
 }
 
 export function detectScope(text: string): IntentDataScope | null {

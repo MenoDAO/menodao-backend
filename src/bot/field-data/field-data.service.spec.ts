@@ -192,7 +192,24 @@ describe('FieldDataService', () => {
     expect(result.status).toBe('NEEDS_REVIEW');
   });
 
-  it('does not send video or documents to the text model', async () => {
+  it.each(['application/pdf', 'application/octet-stream'])(
+    'extracts a PDF sent as %s through the same review workflow as images',
+    async (mimeType) => {
+      const { service, llm } = build({
+        llmReply: JSON.stringify({ summary: 'Synthetic report', confidence: 0.95 }),
+      });
+      const buffer = Buffer.from('%PDF-1.7 synthetic report');
+      const result = await service.ingestMedia({
+        ...imageInput, kind: 'DOCUMENT', mimeType, buffer,
+      });
+      expect(result.status).toBe('PARSED');
+      expect(llm.generateCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({ pdfBase64: buffer.toString('base64') }),
+      );
+    },
+  );
+
+  it('keeps video in admin review',  async () => {
     const { service, llm } = build();
     const result = await service.ingestMedia({
       ...imageInput,

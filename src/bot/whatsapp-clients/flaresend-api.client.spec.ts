@@ -9,21 +9,27 @@ jest.mock('axios');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-describe('FlaresendApiClient voice notes', () => {
+describe('FlaresendApiClient encrypted media', () => {
   afterEach(() => mockedAxios.get.mockReset());
 
-  it.each(['application/octet-stream', 'audio/ogg'])(
-    'decrypts WhatsApp audio served as %s',
-    async (contentType) => {
+  it.each([
+    ['audio/ogg', 'Audio', 'application/octet-stream'],
+    ['audio/ogg', 'Audio', 'audio/ogg'],
+    ['image/jpeg', 'Image', 'application/octet-stream'],
+    ['video/mp4', 'Video', 'application/octet-stream'],
+    ['application/pdf', 'Document', 'application/octet-stream'],
+  ])(
+    'decrypts %s with WhatsApp %s keys when served as %s',
+    async (mimeType, mediaKind, contentType) => {
       const { client } = build();
-      const audio = Buffer.from('OggS\u0000\u0002synthetic Opus fixture');
+      const media = Buffer.from('synthetic media fixture');
       const mediaKey = Buffer.alloc(32, 42);
       const keys = Buffer.from(
-        hkdfSync('sha256', mediaKey, Buffer.alloc(0), 'WhatsApp Audio Keys', 112),
+        hkdfSync('sha256', mediaKey, Buffer.alloc(0), `WhatsApp ${mediaKind} Keys`, 112),
       );
       const iv = keys.subarray(0, 16);
       const cipher = createCipheriv('aes-256-cbc', keys.subarray(16, 48), iv);
-      const ciphertext = Buffer.concat([cipher.update(audio), cipher.final()]);
+      const ciphertext = Buffer.concat([cipher.update(media), cipher.final()]);
       const mac = createHmac('sha256', keys.subarray(48, 80))
         .update(iv)
         .update(ciphertext)
@@ -36,11 +42,11 @@ describe('FlaresendApiClient voice notes', () => {
 
       await expect(
         client.downloadMediaDescriptor({
-          url: 'https://mmg.whatsapp.net/voice-note.enc',
-          mimetype: 'audio/ogg; codecs=opus',
+          url: 'https://mmg.whatsapp.net/media.enc',
+          mimetype: mimeType === 'audio/ogg' ? 'audio/ogg; codecs=opus' : mimeType,
           mediaKey: mediaKey.toString('base64'),
         }),
-      ).resolves.toMatchObject({ buffer: audio, mimeType: 'audio/ogg' });
+      ).resolves.toMatchObject({ buffer: media, mimeType });
     },
   );
 });

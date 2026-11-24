@@ -276,10 +276,11 @@ export class BrandContextService {
     topK: number = BRAND_CONTEXT_TOP_K,
   ): Promise<RetrievedBrandContext[]> {
     const startedAt = Date.now();
+    const queryTokens = this.tokenize(query);
+    if (!queryTokens.size) return [];
     const wanted: string[] = typeof kinds === 'string' ? [kinds] : [...kinds];
     const { documents, df, avgdl } = await this.loadDocuments();
     const candidates = documents.filter((doc) => wanted.includes(doc.kind));
-    const queryTokens = this.tokenize(query);
 
     // BM25: rare terms carry more weight, and document length is normalised so
     // a two-line note cannot outrank the substantial guide section that
@@ -294,7 +295,7 @@ export class BrandContextService {
           const tf = doc.tf.get(token);
           if (!tf) continue;
           const idf = Math.log(
-            1 + (totalDocs - docFreq + 0.5) / (docFreq + 0.5),
+            1 + (documents.length - docFreq + 0.5) / (docFreq + 0.5),
           );
           const norm = 1 - BM25_B + BM25_B * (doc.tokenCount / (avgdl || 1));
           score += idf * ((tf * (BM25_K1 + 1)) / (tf + BM25_K1 * norm));

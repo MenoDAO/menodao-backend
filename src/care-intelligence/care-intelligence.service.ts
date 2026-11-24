@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma, VisitStatus } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { CareEventType, Prisma, VisitStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CARE_LOOP_STAGES,
@@ -34,7 +35,10 @@ interface GeoFilter {
 export class CareIntelligenceService {
   private cache = new Map<string, { expires: number; value: unknown }>();
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async getDashboard(query: {
     from?: string;
@@ -454,6 +458,7 @@ export class CareIntelligenceService {
       providerUtilization,
       appointmentNow,
       appointmentPrev,
+      whatsappBooking,
     ] = await Promise.all([
       this.prisma.member.count({ where: memberFilter }),
       this.prisma.member.count({
@@ -597,6 +602,7 @@ export class CareIntelligenceService {
         period.previousTo,
         hasGeo ? memberFilter : undefined,
       ),
+      this.whatsappBookingStats(period.from, period.to, hasGeo ? memberFilter : undefined),
     ]);
 
     const visitCount = (rows: { status: VisitStatus; _count: { _all: number } }[]) =>
@@ -1092,6 +1098,7 @@ export class CareIntelligenceService {
           'Provider utilization is visits per staff member who checked patients in during the period.',
       },
       appointments: {
+        whatsappBooking,
         created: appointmentNow.created,
         bookedMembers: appointmentNow.bookedMembers,
         attended: appointmentNow.attended,
@@ -1415,6 +1422,88 @@ export class CareIntelligenceService {
       };
     }
     return merged;
+  }
+
+  private async whatsappBookingStats(
+    from: Date,
+    to: Date,
+    memberWhere?: Prisma.MemberWhereInput,
+  ) {
+    const eligibleMembers = memberWhere
+      ? await this.prisma.member.findMany({ where: memberWhere, select: { id: true } })
+      : null;
+    const attempts = await this.prisma.careEvent.findMany({
+      where: {
+        source: 'bot-booking-draft',
+        type: CareEventType.APPOINTMENT_REQUESTED,
+        occurredAt: { gte: from, lt: to },
+        ...(eligibleMembers
+          ? { memberId: { in: eligibleMembers.map(({ id }) => id) } }
+          : {}),
+      },
+      select: { id: true, metadata: true },
+    });
+    const appointmentIds: string[] = [];
+    const openDraftIds: string[] = [];
+    let stopped = 0;
+    for (const attempt of attempts) {
+      const outcome = attempt.metadata as { appointmentId?: string; cancelled?: boolean } | null;
+      if (outcome?.appointmentId) appointmentIds.push(outcome.appointmentId);
+      else if (outcome?.cancelled) stopped++;
+      else openDraftIds.push(attempt.id);
+    }
+
+    const minutes = Number(this.config.get('BOT_BOOKING_DRAFT_TTL_MINUTES') ?? 30);
+    const freshAfter = new Date(Date.now() - minutes * 60_000);
+    const [appointments, inProgress] = await Promise.all([
+      appointmentIds.length
+        ? this.prisma.appointment.findMany({
+            where: { id: { in: appointmentIds } },
+            select: { memberId: true, status: true, visit: { select: { status: true } } },
+          })
+        : [],
+      openDraftIds.length
+        ? this.prisma.botBookingDraft.count({
+            where: { id: { in: openDraftIds }, updatedAt: { gt: freshAfter } },
+          })
+        : 0,
+    ]);
+
+    const abandoned = openDraftIds.length - inProgress;
+    const attendedByMember = new Map<string, number>();
+    let attended = 0;
+    let completedVisits = 0;
+    let noShows = 0;
+    let cancelledBookings = 0;
+    for (const appointment of appointments) {
+      if (appointment.visit?.status === VisitStatus.DISCHARGED) completedVisits++;
+      if (appointment.status === 'NO_SHOW') noShows++;
+      if (appointment.status === 'CANCELLED_BY_MEMBER' || appointment.status === 'CANCELLED_BY_CLINIC') {
+        cancelledBookings++;
+      }
+      if (appointment.status === 'ATTENDED') {
+        attended++;
+        attendedByMember.set(
+          appointment.memberId,
+          (attendedByMember.get(appointment.memberId) ?? 0) + 1,
+        );
+      }
+    }
+    const returning = [...attendedByMember.values()].filter((count) => count > 1).length;
+    return {
+      started: attempts.length,
+      booked: appointmentIds.length,
+      attended,
+      completedVisits,
+      noShows,
+      cancelledBookings,
+      stopped,
+      abandoned,
+      inProgress,
+      conversionRate: ratio(appointmentIds.length, attempts.length),
+      dropOffRate: ratio(stopped + abandoned, attempts.length),
+      repeatAttendanceRate: ratio(returning, attendedByMember.size),
+    };
   }
 
   private async appointmentStats(
