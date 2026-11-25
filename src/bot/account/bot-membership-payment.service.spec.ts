@@ -29,9 +29,15 @@ function build() {
     contribution: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const subscriptions = {
-    getPackages: jest
-      .fn()
-      .mockReturnValue([{ tier: 'SILVER', actualAnnualCharge: 8000 }]),
+    getPackages: jest.fn().mockReturnValue([
+      {
+        tier: 'SILVER',
+        displayName: 'MenoSilver',
+        actualMonthlyCharge: 800,
+        actualAnnualCharge: 8000,
+      },
+    ]),
+    subscribe: jest.fn().mockResolvedValue(undefined),
     checkPaymentFrequencyRestriction: jest.fn().mockResolvedValue(undefined),
   };
   const contributions = {
@@ -65,6 +71,56 @@ describe('BotMembershipPaymentService', () => {
       undefined,
       'ANNUAL',
       { tier: 'SILVER', amount: 8000 },
+    );
+  });
+
+  it('quotes a new Bronze monthly membership and initiates STK only after confirmation', async () => {
+    const { service, prisma, subscriptions, contributions, quote } = build();
+    const storedQuote = {
+      ...quote,
+      scope:
+        'MEMBERSHIP_JOIN:BRONZE:MONTHLY|BRONZE|MONTHLY|500|new|254712345678',
+    };
+    prisma.subscription.findUnique.mockResolvedValue(null);
+    prisma.botDataAccessSession.upsert.mockResolvedValue(storedQuote);
+    prisma.botDataAccessSession.findFirst.mockResolvedValue(storedQuote);
+    subscriptions.getPackages.mockReturnValue([
+      {
+        tier: 'BRONZE',
+        displayName: 'MenoBronze',
+        actualMonthlyCharge: 500,
+        actualAnnualCharge: 5000,
+      },
+    ]);
+
+    const reply = await service.offer(
+      'member',
+      'MEMBERSHIP_JOIN:BRONZE:MONTHLY',
+      'verified',
+      '+254712345678',
+    );
+    expect(reply).toContain('KES 500');
+    expect(reply).toContain('confirm M-Pesa');
+    expect(subscriptions.subscribe).not.toHaveBeenCalled();
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+
+    await expect(service.confirm('member')).resolves.toContain(
+      'pending until M-Pesa confirms',
+    );
+    expect(subscriptions.subscribe).toHaveBeenCalledWith(
+      'member',
+      'BRONZE',
+      'MONTHLY',
+    );
+    expect(contributions.initiatePayment).toHaveBeenCalledWith(
+      'member',
+      500,
+      'MPESA',
+      '254712345678',
+      false,
+      undefined,
+      'MONTHLY',
+      { tier: 'BRONZE', amount: 500 },
     );
   });
 
@@ -133,12 +189,46 @@ describe('BotMembershipPaymentService', () => {
     ).resolves.toBeNull();
   });
 
+  it('does not mistake a booking or an unclear choice for membership consent', () => {
+    const { service } = build();
+    expect(
+      service.planFollowUpScope(
+        'yes',
+        'Would you like me to book a consultation?',
+      ),
+    ).toBeNull();
+    expect(
+      service.planFollowUpScope(
+        'yes',
+        'Bronze monthly or Silver yearly. Which would you like?',
+      ),
+    ).toBeNull();
+    expect(
+      service.planFollowUpScope(
+        'yearly',
+        'MenoBronze is available monthly or yearly. Which works for you?',
+      ),
+    ).toBe('MEMBERSHIP_JOIN:BRONZE:ANNUAL');
+    expect(service.detectRequest('I only want to set up my membership')).toBe(
+      'MEMBERSHIP_PAY',
+    );
+  });
+
   it('invites an unstarted member to select a plan after verification', async () => {
     const { service, prisma, contributions } = build();
     prisma.subscription.findUnique.mockResolvedValue(null);
-    await expect(
-      service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'),
-    ).resolves.toContain('make your first payment right here');
+    const reply = await service.offer(
+      'member',
+      'MEMBERSHIP_PAY',
+      'verified',
+      '+254712345678',
+    );
+    expect(reply).toContain(
+      'make your first payment right here.\n\n*Membership options*',
+    );
+    expect(reply).toContain(
+      '*MenoSilver*\nKES 800 monthly · KES 8,000 yearly\n\nTo choose',
+    );
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 
@@ -147,8 +237,9 @@ describe('BotMembershipPaymentService', () => {
     subscriptions.checkPaymentFrequencyRestriction.mockRejectedValue(
       new BadRequestException('You have already made an annual payment.'),
     );
-    await expect(service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'))
-      .resolves.toContain('Nothing extra is due right now');
+    await expect(
+      service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'),
+    ).resolves.toContain('Nothing extra is due right now');
     expect(prisma.botDataAccessSession.upsert).not.toHaveBeenCalled();
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });

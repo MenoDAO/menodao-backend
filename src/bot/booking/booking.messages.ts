@@ -101,8 +101,8 @@ export const SLOT_TAKEN = msg(
 // ── Read-back / confirmation ──────────────────────────────────────────────────
 
 export const READ_BACK = msg(
-  '📋 Let me check the details with you:\n\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n👤 *Name:* {name}\n🦷 *Doctor:* {doctor}\n\n{membershipNote}Does everything look right? (Yes / No)\n\n_Replying Yes lets us share these details with the clinic._',
-  '📋 Tafadhali angalia maelezo ya miadi yako:\n\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n👤 *Jina:* {name}\n🦷 *Daktari:* {doctor}\n\n{membershipNote}Yote ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo, unakubali maelezo haya kushirikiwa na kliniki._',
+  'Let me check the details with you:\n\n*Service:* {service}\n*Date:* {date}\n*Time:* {time}\n*Clinic:* {clinic}\n*Name:* {name}\n*Doctor:* {doctor}\n\n{membershipNote}Does everything look right? (Yes / No)\n\n_Replying Yes lets us share these details with the clinic._',
+  'Tafadhali angalia maelezo ya miadi yako:\n\n*Huduma:* {service}\n*Tarehe:* {date}\n*Wakati:* {time}\n*Kliniki:* {clinic}\n*Jina:* {name}\n*Daktari:* {doctor}\n\n{membershipNote}Yote ni sawa? (Ndiyo / Hapana)\n\n_Kwa kujibu Ndiyo, unakubali maelezo haya kushirikiwa na kliniki._',
 );
 
 export const BOOKING_AWAITING_CONFIRMATION = msg(
@@ -111,8 +111,8 @@ export const BOOKING_AWAITING_CONFIRMATION = msg(
 );
 
 export const BOOKING_CONFIRMED = msg(
-  "✅ *You're booked!*\n\n📋 *Name:* {name}\n🦷 *Service:* {service}\n📅 *Date:* {date}\n🕐 *Time:* {time}\n🏥 *Clinic:* {clinic}\n\nYour reference is *#{ref}*. See you soon 😊",
-  '✅ *Miadi imethibitishwa!*\n\n📋 *Jina:* {name}\n🦷 *Huduma:* {service}\n📅 *Tarehe:* {date}\n🕐 *Wakati:* {time}\n🏥 *Kliniki:* {clinic}\n\nNambari yako ya rejea ni *#{ref}*. Tutaonana hivi karibuni 😊',
+  "*You're booked!*\n\n*Name:* {name}\n*Service:* {service}\n*Date:* {date}\n*Time:* {time}\n*Clinic:* {clinic}\n\nYour reference is *#{ref}*. See you soon",
+  '*Miadi imethibitishwa!*\n\n*Jina:* {name}\n*Huduma:* {service}\n*Tarehe:* {date}\n*Wakati:* {time}\n*Kliniki:* {clinic}\n\nNambari yako ya rejea ni *#{ref}*. Tutaonana hivi karibuni',
 );
 
 // ── Emergency ────────────────────────────────────────────────────────────────

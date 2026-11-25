@@ -99,6 +99,7 @@ export class BotMemberDataService {
       /\bam i (paid up|up to date)\b/,
       /\bmy membership (payments?|contributions?) (history|records?|status)\b/,
       /\bmy payment (status|records?)\b/,
+      /\b(?:did|has) my (?:m-?pesa )?payment (?:go|gone) through\b/,
     ];
     if (payments.some((pattern) => pattern.test(text))) return 'PAYMENTS';
 

@@ -1,3 +1,4 @@
+import { BotMembershipPaymentService } from '../account/bot-membership-payment.service';
 import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { VoicePipelineService } from '../voice-pipeline/voice-pipeline.service';
@@ -36,6 +37,10 @@ function build(env: Record<string, string> = {}) {
   };
   const voucher = { verifyPublic: jest.fn().mockResolvedValue({ valid: true }), redeemByCode: jest.fn().mockResolvedValue({ status: 'REDEEMED' }) };
   const sendTextMessage = jest.fn().mockResolvedValue(undefined);
+  const latestSentReply = jest.fn().mockResolvedValue(null);
+  const handleRequest = jest.fn().mockResolvedValue('I sent a 6-digit verification code by SMS.');
+  const membershipPayments = new BotMembershipPaymentService({} as never, {} as never, {} as never);
+  jest.spyOn(membershipPayments, 'acceptPayerReply').mockResolvedValue(null);
   const service = new BotGatewayService(
     {} as PrismaService,
     config,
@@ -44,9 +49,10 @@ function build(env: Record<string, string> = {}) {
     {
       recordInbound: jest.fn().mockResolvedValue(undefined),
       recordOutbound: jest.fn().mockResolvedValue(undefined),
+      latestSentReply,
     } as unknown as BotChatService,
-    { detectScope: jest.fn().mockReturnValue(null) } as unknown as BotMemberDataService,
-    { detectRequest: jest.fn().mockReturnValue(null), planChoiceReply: jest.fn().mockReturnValue(null), acceptPayerReply: jest.fn().mockResolvedValue(null) } as never,
+    { detectScope: jest.fn().mockReturnValue(null), handleRequest } as unknown as BotMemberDataService,
+    membershipPayments,
     { findAdminBySender: jest.fn().mockResolvedValue(null) } as unknown as AdminWhatsappAccessService,
     {} as never,
     voucher as never,
@@ -62,7 +68,7 @@ function build(env: Record<string, string> = {}) {
     }
   ).generateReplyText.bind(service) as (params: ReplyParams) => Promise<string>;
 
-  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher };
+  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher, latestSentReply, handleRequest };
 }
 
 const params: ReplyParams = {
@@ -151,4 +157,22 @@ describe('voucher intent', () => {
       expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', expect.stringContaining('valid and unused'));
     },
   );
+});
+
+describe('membership acceptance', () => {
+  it('routes yes after the delivered Bronze monthly offer directly to verification', async () => {
+    const { service, latestSentReply, handleRequest, processTextPipeline, sendTextMessage } = build();
+    latestSentReply.mockResolvedValue('Would you like to go ahead and start your Bronze monthly membership right here in our chat?');
+
+    await service['handleUserTextMessage']({
+      senderId: '254712345678', fallbackPhone: '254712345678',
+      messageId: 'accept-plan', messageText: 'yes',
+    });
+
+    expect(handleRequest).toHaveBeenCalledWith(
+      { id: 'guest', phoneNumber: '+254712345678' }, 'MEMBERSHIP_JOIN:BRONZE:MONTHLY',
+    );
+    expect(processTextPipeline).not.toHaveBeenCalled();
+    expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', expect.stringContaining('verification code'));
+  });
 });
