@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
@@ -246,6 +247,20 @@ export class SasaPayService {
     }
   }
 
+  private stkCallbackToken(reference: string): string {
+    return createHmac('sha256', this.clientSecret)
+      .update(`menodao-stk-callback:${reference}`)
+      .digest('hex');
+  }
+
+  verifyStkCallback(reference: string, token: string): boolean {
+    if (!this.clientSecret || !/^menodao_[a-z0-9]+$/i.test(reference) || !/^[a-f0-9]{64}$/i.test(token)) return false;
+    return timingSafeEqual(
+      Buffer.from(this.stkCallbackToken(reference), 'hex'),
+      Buffer.from(token, 'hex'),
+    );
+  }
+
   /**
    * C2B: Request payment from customer via M-Pesa STK Push
    */
@@ -257,7 +272,7 @@ export class SasaPayService {
   ): Promise<SasaPayC2BResponse> {
     const token = await this.getAccessToken();
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
-    const callbackUrl = `${this.callbackBaseUrl}/contributions/callback`;
+    const callbackUrl = `${this.callbackBaseUrl}/contributions/callback/stk/${accountReference}/${this.stkCallbackToken(accountReference)}`;
 
     const requestBody: SasaPayC2BRequest = {
       MerchantCode: this.merchantCode,
@@ -271,7 +286,7 @@ export class SasaPayService {
     };
 
     this.logger.log(
-      `C2B STK Push: phone=${normalizedPhone}, amount=${amount}, ref=${accountReference}, callback=${callbackUrl}`,
+      `C2B STK Push: payer ending in ${normalizedPhone.slice(-4)}, amount=${amount}`,
     );
 
     try {
@@ -296,7 +311,7 @@ export class SasaPayService {
       if (axios.isAxiosError(error) && error.response) {
         const errorData = error.response.data as Record<string, any>;
         this.logger.error(
-          `C2B request failed [${error.response.status}]: ${JSON.stringify(errorData)}`,
+          `C2B request failed [${error.response.status}]`,
         );
         return {
           status: false,

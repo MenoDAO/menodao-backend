@@ -71,6 +71,7 @@ describe('BotMembershipPaymentService', () => {
       undefined,
       'ANNUAL',
       { tier: 'SILVER', amount: 8000 },
+      'WHATSAPP',
     );
   });
 
@@ -121,6 +122,7 @@ describe('BotMembershipPaymentService', () => {
       undefined,
       'MONTHLY',
       { tier: 'BRONZE', amount: 500 },
+      'WHATSAPP',
     );
   });
 
@@ -158,6 +160,7 @@ describe('BotMembershipPaymentService', () => {
       undefined,
       'ANNUAL',
       { tier: 'SILVER', amount: 8000 },
+      'WHATSAPP',
     );
   });
 

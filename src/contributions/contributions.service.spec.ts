@@ -26,6 +26,7 @@ describe('ContributionsService', () => {
       findFirst: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
   };
 
@@ -108,7 +109,13 @@ describe('ContributionsService', () => {
 
       const result = await service.initiatePayment('member-1', 550, 'MPESA');
 
-      expect(mockPrismaService.contribution.create).toHaveBeenCalled();
+      expect(mockPrismaService.contribution.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: 'member-1',
+          status: 'PENDING',
+          metadata: expect.objectContaining({ stkSource: 'WEB', purchasedTier: 'SILVER' }),
+        }),
+      }));
       expect(mockPaymentService.initiateSTKPush).toHaveBeenCalled();
       expect(result.contributionId).toBe('contrib-1');
       expect(result.status).toBe('PENDING');
@@ -123,10 +130,7 @@ describe('ContributionsService', () => {
       mockPrismaService.contribution.create.mockResolvedValue({
         id: 'contrib-1',
       });
-      mockPrismaService.contribution.update.mockResolvedValue({
-        id: 'contrib-1',
-        status: 'FAILED',
-      });
+      mockPrismaService.contribution.updateMany.mockResolvedValue({ count: 1 });
       mockPaymentService.initiateSTKPush.mockResolvedValue({
         success: false,
         error: 'STK push failed',
@@ -256,6 +260,32 @@ describe('ContributionsService', () => {
   });
 
   describe('handlePaymentCallback', () => {
+    it('records only the contribution settled by this callback', async () => {
+      mockPaymentService.processCallback.mockResolvedValue({
+        success: true,
+        message: 'Payment processed successfully',
+        contributionId: 'matched-contribution',
+      });
+      mockPrismaService.contribution.findUnique.mockResolvedValue({
+        id: 'matched-contribution',
+        memberId: 'membership-recipient',
+        amount: 350,
+        txHash: null,
+      });
+      mockBlockchainService.recordContribution.mockResolvedValue('tx');
+
+      await service.handlePaymentCallback({ ResultCode: '0' });
+
+      expect(mockPrismaService.contribution.findUnique).toHaveBeenCalledWith({
+        where: { id: 'matched-contribution' },
+      });
+      expect(mockPrismaService.contribution.findFirst).not.toHaveBeenCalled();
+      expect(mockBlockchainService.recordContribution).toHaveBeenCalledWith(
+        'membership-recipient',
+        350,
+      );
+    });
+
     it('should process callback via payment service', async () => {
       mockPaymentService.processCallback.mockResolvedValue({
         success: true,

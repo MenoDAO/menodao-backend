@@ -454,6 +454,7 @@ export class CareIntelligenceService {
       overdueFollowup,
       membershipDurationDays,
       completedContributionSum,
+      stkRevenue,
       disbursedSum,
       providerUtilization,
       appointmentNow,
@@ -584,10 +585,14 @@ export class CareIntelligenceService {
         _sum: { amount: true },
         where: {
           status: 'COMPLETED',
-          createdAt: { gte: period.from, lt: period.to },
+          OR: [
+            { confirmedAt: { gte: period.from, lt: period.to } },
+            { confirmedAt: null, createdAt: { gte: period.from, lt: period.to } },
+          ],
           ...(hasGeo ? { member: memberFilter } : {}),
         },
       }),
+      this.membershipStkRevenue(period.from, period.to, hasGeo ? memberFilter : undefined),
       this.prisma.disbursal.aggregate({
         _sum: { amount: true },
         where: {
@@ -902,6 +907,7 @@ export class CareIntelligenceService {
     const careCost = disbursedSum._sum.amount || 0;
     const sustainability = {
       membershipContributionsKes: funding,
+      stkRevenue,
       careDisbursedKes: careCost,
       fundingPerCompletedTreatment:
         dischargedPeriod > 0 ? funding / dischargedPeriod : null,
@@ -1422,6 +1428,43 @@ export class CareIntelligenceService {
       };
     }
     return merged;
+  }
+
+  private async membershipStkRevenue(from: Date, to: Date, memberWhere?: Prisma.MemberWhereInput) {
+    const period = { gte: from, lt: to };
+    const matched: Prisma.ContributionWhereInput = {
+      status: 'COMPLETED',
+      paymentMethod: { equals: 'MPESA', mode: 'insensitive' },
+      OR: [{ confirmedAt: period }, { confirmedAt: null, createdAt: period }],
+      ...(memberWhere ? { member: memberWhere } : {}),
+    };
+    const [whatsapp, web, all] = await this.prisma.$transaction([
+      this.prisma.contribution.aggregate({
+        where: { ...matched, metadata: { path: ['stkSource'], equals: 'WHATSAPP' } },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.contribution.aggregate({
+        where: { ...matched, metadata: { path: ['stkSource'], equals: 'WEB' } },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.contribution.aggregate({
+        where: matched,
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+    ], { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    const whatsappKes = whatsapp._sum.amount ?? 0;
+    const webKes = web._sum.amount ?? 0;
+    return {
+      whatsappKes,
+      whatsappPayments: whatsapp._count._all,
+      webKes,
+      webPayments: web._count._all,
+      unattributedKes: (all._sum.amount ?? 0) - whatsappKes - webKes,
+      unattributedPayments: all._count._all - whatsapp._count._all - web._count._all,
+    };
   }
 
   private async whatsappBookingStats(

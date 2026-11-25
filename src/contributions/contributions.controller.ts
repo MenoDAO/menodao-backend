@@ -7,6 +7,8 @@ import {
   UseGuards,
   Request,
   Logger,
+  ServiceUnavailableException,
+  HttpCode,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { ContributionsService } from './contributions.service';
@@ -14,7 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { ClaimsService } from '../claims/claims.service';
-import {
+import type {
   SasaPayC2BCallbackData,
   SasaPayB2CCallbackData,
 } from '../sasapay/sasapay.service';
@@ -114,7 +116,6 @@ export class ContributionsController {
     this.logger.log('='.repeat(80));
     this.logger.log('SasaPay callback received');
     this.logger.log(`Timestamp: ${new Date().toISOString()}`);
-    this.logger.log(`Payload: ${JSON.stringify(payload, null, 2)}`);
     this.logger.log('='.repeat(80));
 
     try {
@@ -146,6 +147,7 @@ export class ContributionsController {
         payload as SasaPayC2BCallbackData,
       );
 
+      if (result.retryable) throw new ServiceUnavailableException(result.message);
       this.logger.log(`C2B callback result: ${JSON.stringify(result)}`);
       this.logger.log('='.repeat(80));
 
@@ -159,13 +161,25 @@ export class ContributionsController {
       this.logger.error(`Stack: ${(error as Error).stack}`);
       this.logger.error('='.repeat(80));
 
-      // Return success to SasaPay to prevent retries, but log the error
-      return {
-        ResultCode: '0',
-        ResultDesc:
-          'Callback received but processing failed - logged for manual review',
-      };
+      if (error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('Callback processing failed');
+
     }
+  }
+
+  @Post('callback/stk/:reference/:token')
+  @HttpCode(200)
+  async handleSignedStkCallback(
+    @Param('reference') reference: string,
+    @Param('token') token: string,
+    @Body() payload: SasaPayC2BCallbackData,
+  ) {
+    const result = await this.contributionsService.handlePaymentCallback(payload, { reference, token });
+    if (result.retryable) throw new ServiceUnavailableException('Payment processing can be retried');
+    return {
+      ResultCode: result.success ? '0' : '1',
+      ResultDesc: result.message,
+    };
   }
 
   @Post('webhook')

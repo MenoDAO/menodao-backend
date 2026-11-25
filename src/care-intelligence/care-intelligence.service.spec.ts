@@ -51,3 +51,34 @@ describe('WhatsApp booking dashboard', () => {
     });
   });
 });
+
+describe('STK membership revenue', () => {
+  it('reports confirmed amounts separately and leaves legacy records unattributed', async () => {
+    const aggregate = jest.fn()
+      .mockResolvedValueOnce({ _sum: { amount: 350 }, _count: { _all: 1 } })
+      .mockResolvedValueOnce({ _sum: { amount: 1100 }, _count: { _all: 2 } })
+      .mockResolvedValueOnce({ _sum: { amount: 2150 }, _count: { _all: 4 } });
+    const prisma = {
+      contribution: { aggregate },
+      $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
+    };
+    const service = new CareIntelligenceService(prisma as never, new ConfigService());
+    const from = new Date('2026-11-01');
+    const to = new Date('2026-12-01');
+
+    await expect(service['membershipStkRevenue'](from, to)).resolves.toEqual({
+      whatsappKes: 350, whatsappPayments: 1,
+      webKes: 1100, webPayments: 2,
+      unattributedKes: 700, unattributedPayments: 1,
+    });
+    expect(aggregate).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({
+        status: 'COMPLETED', metadata: { path: ['stkSource'], equals: 'WHATSAPP' },
+        OR: [
+          { confirmedAt: { gte: from, lt: to } },
+          { confirmedAt: null, createdAt: { gte: from, lt: to } },
+        ],
+      }),
+    }));
+  });
+});
