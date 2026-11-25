@@ -1,3 +1,4 @@
+import { BotMembershipPaymentService } from '../account/bot-membership-payment.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -30,7 +31,7 @@ import type {
   IntentEntities,
   IntentType,
 } from '../intents/intent.types';
-import { fallbackClassification } from '../intents/intent-fallback';
+import { fallbackClassification, isDirectConsultationRequest } from '../intents/intent-fallback';
 import { BotActorService } from '../actions/bot-actor.service';
 import { BotActionRegistryService } from '../actions/bot-action-registry.service';
 import type {
@@ -101,6 +102,7 @@ export class VoicePipelineService {
     private readonly actorService: BotActorService,
     private readonly actionRegistry: BotActionRegistryService,
     private readonly memberData: BotMemberDataService,
+    private readonly membershipPayments: BotMembershipPaymentService,
     @Optional() private readonly careEvents?: CareEventsService,
   ) {}
 
@@ -278,6 +280,19 @@ export class VoicePipelineService {
     const e164 = member.phoneNumber;
     const language = replyLanguage(member.preferredLanguage || detectedLanguage);
     const memberName = member.fullName?.trim() || null;
+
+    if (isVoice) {
+      const membershipRequest = this.membershipPayments.detectRequest(workingTranscript);
+      const reply = membershipRequest
+        ? await this.memberData.handleRequest({ id: userId, phoneNumber: e164 }, membershipRequest)
+        : this.membershipPayments.planChoiceReply(workingTranscript);
+      if (reply) {
+        return {
+          intakeUuid: sessionUuid, senderPhone, transcript: workingTranscript, detectedLanguage,
+          intent: 'ACCOUNT_AND_BILLING', intentConfidence: 1, patientMessage: reply, status: 'completed',
+        };
+      }
+    }
 
     await this.prisma.botMessageLog.create({
       data: {
@@ -482,18 +497,10 @@ export class VoicePipelineService {
       );
     }
 
-    if (classification.intent === 'ACCOUNT_AND_BILLING') {
-      const scope: MemberDataScope =
-        (classification.entities?.scope as MemberDataScope | undefined) ??
-        'ACCOUNT';
+    const accountScope = this.memberData.detectScope(workingTranscript);
+    if (classification.intent === 'ACCOUNT_AND_BILLING' && accountScope) {
       return this.runMemberRecordReply(
-        scope,
-        actionContext,
-        classification,
-        workingTranscript,
-        senderPhone,
-        sessionUuid,
-        detectedLanguage,
+        accountScope, actionContext, classification, workingTranscript, senderPhone, sessionUuid, detectedLanguage,
       );
     }
 
@@ -563,6 +570,12 @@ export class VoicePipelineService {
   ): Promise<BotActionResult | null> {
     const action = classification.action;
     if (!action || !this.actionRegistry.isKnown(action)) return null;
+
+    if (action === 'GET_MY_RECORDS') {
+      const scope = this.memberData.detectScope(ctx.message);
+      if (!scope) return null;
+      ctx = { ...ctx, entities: { ...ctx.entities, scope } };
+    }
 
     const allowedForIntent: Partial<Record<IntentType, BotActionName[]>> = {
       AVAILABILITY_INQUIRY: ['GET_AVAILABILITY'],
@@ -891,6 +904,9 @@ export class VoicePipelineService {
     transcript: string,
     history: ChatHistoryMessage[] = [],
   ): Promise<IntentClassification> {
+    if (isDirectConsultationRequest(transcript)) {
+      return { intent: 'BOOKING_SESSION', confidence: 1, action: null };
+    }
     const historyText = history
       .map((message) => `${message.role}: ${message.content}`)
       .join('\n');

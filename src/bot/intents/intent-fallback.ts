@@ -140,6 +140,10 @@ const RULES: Rule[] = [
 const EXPLICIT_BOOKING_RE =
   /\b(book|booking|schedule|reserve|appointment|miadi|nipange|nataka kuja|nafasi)\b/;
 
+export function isDirectConsultationRequest(message: string): boolean {
+  return /^(?:(?:yes|please|hi)[, ]+)?(?:(?:can|could|may) i |i(?: would like| want) to )?(?:book|schedule|make)(?: (?:a|an|my))? (?:dentist |dental )?appointment[.!?]?$/i.test(message.trim());
+}
+
 const SYMPTOM_RE =
   /\b(sore|aching|ache|pain|painful|hurts?|tender|toothache|bleed(ing)?|swell(ing|ed)?|sensitive|abscess|pus|trauma|maumivu|kuuma|naniuma|linaniuma|yananiuma|uvimbe|ufizi|damu)\b/;
 

@@ -220,7 +220,7 @@ export const INTENT_GUIDANCE: Record<IntentType, string> = {
   HEALTH_EDUCATION:
     'Teach the concept in plain language, give one practical action, and avoid lecturing. No diagnosis or prescriptions.',
   PRICING_AND_COVERAGE:
-    'Use only verified prices/plans. Separate the consultation fee from procedure costs, say what the membership tier covers, and point to the app/site for the final quote. Never invent a price.',
+    'Use only verified prices/plans. Separate the consultation fee from procedure costs, say what the membership tier covers, and offer to show membership options in chat. Never invent a price.',
   CLINIC_INFO:
     'Give the verified clinic name, area, hours, and contact. If they asked for directions, describe the landmark only if it is in your verified context; otherwise offer the clinic phone number.',
   PROCEDURE_EXPLAINER:

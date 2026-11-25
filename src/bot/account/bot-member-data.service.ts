@@ -129,18 +129,9 @@ export class BotMemberDataService {
     ];
     if (claims.some((pattern) => pattern.test(text))) return 'CLAIMS';
 
-    const account = [
-      /\baccount info\b/,
-      /\bmy account\b/,
-      /\bmy profile\b/,
-      /\bmy subscription\b/,
-      /\bmy plan\b/,
-      /\bmembership details\b/,
-      /\bcheck my (account|subscription|plan|membership|details|info)\b/,
-      /\baccount status\b/,
-      /\bam i (a )?(member|registered|active)\b/,
-    ];
-    if (account.some((pattern) => pattern.test(text))) return 'ACCOUNT';
+    if (/^(?:please\s+)?(?:show me |give me |send me )?(?:my |the )?(?:menodao )?account summary[.!?]?$/i.test(text.trim())) {
+      return 'ACCOUNT';
+    }
 
     return null;
   }
@@ -209,7 +200,7 @@ export class BotMemberDataService {
       await this.logAccess(member.id, scope, 'RATE_LIMITED');
       return (
         'For your security, I cannot send another verification code right now. ' +
-        'Please try again in about an hour, or open the app to view your records.'
+        'Please try again here in about an hour.'
       );
     }
 
@@ -293,7 +284,7 @@ export class BotMemberDataService {
         );
         return {
           reply:
-            'Too many incorrect codes. For your security this request is locked. Please start again in about an hour or open the app.',
+            'Too many incorrect codes. For your security this request is locked. Please start again here in about an hour.',
           verified: false,
         };
       }

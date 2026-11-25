@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { BotMembershipPaymentService } from './bot-membership-payment.service';
 
 function build() {
@@ -112,6 +113,44 @@ describe('BotMembershipPaymentService', () => {
       );
     }
     expect(prisma.botDataAccessSession.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('handles common Bronze selections and payer replies without an account summary', async () => {
+    const { service, prisma } = build();
+    expect(service.detectRequest('I want to pay for Bronze yearly')).toBe(
+      'MEMBERSHIP_JOIN:BRONZE:ANNUAL',
+    );
+    expect(service.detectRequest('Bronze monthly')).toBe(
+      'MEMBERSHIP_JOIN:BRONZE:MONTHLY',
+    );
+    expect(
+      service.payerNumberFromMessage('Please send the prompt to 0723 456 789'),
+    ).toBe('0723 456 789');
+    expect(service.payerNumberFromMessage('0723456789')).toBe('0723456789');
+    prisma.botDataAccessSession.findFirst.mockResolvedValue(null);
+    await expect(
+      service.acceptPayerReply('member', '0723456789'),
+    ).resolves.toBeNull();
+  });
+
+  it('invites an unstarted member to select a plan after verification', async () => {
+    const { service, prisma, contributions } = build();
+    prisma.subscription.findUnique.mockResolvedValue(null);
+    await expect(
+      service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'),
+    ).resolves.toContain('make your first payment right here');
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it('tells a paid-up member nothing more is due without opening a quote', async () => {
+    const { service, prisma, subscriptions, contributions } = build();
+    subscriptions.checkPaymentFrequencyRestriction.mockRejectedValue(
+      new BadRequestException('You have already made an annual payment.'),
+    );
+    await expect(service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'))
+      .resolves.toContain('Nothing extra is due right now');
+    expect(prisma.botDataAccessSession.upsert).not.toHaveBeenCalled();
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 
   it('rejects a changed price before initiating payment', async () => {

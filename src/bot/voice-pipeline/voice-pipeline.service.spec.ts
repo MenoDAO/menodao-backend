@@ -22,6 +22,7 @@ describe('voice transcription confidence', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const route = jest.spyOn(service, 'processTextPipeline');
     const result = await service.processVoicePipeline(
