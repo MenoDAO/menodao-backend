@@ -433,6 +433,19 @@ export class BotMembershipPaymentService {
     if (!quote)
       return 'There’s no open payment quote. Type “pay membership” to get started.';
 
+    const verification = await this.prisma.botDataAccessSession.findUnique({
+      where: {
+        id: quote.id.slice('membership-quote:'.length),
+        memberId,
+        status: 'VERIFIED',
+        verifiedUntil: { gt: now },
+      },
+      select: { id: true },
+    });
+    if (!verification) {
+      return 'Your SMS verification has expired. Please verify again before confirming a payment.';
+    }
+
     const [request, tier, frequency, amountText, subscriptionId, payer, code] =
       quote.scope.split('|') as [
         string,
