@@ -80,6 +80,11 @@ export interface PipelineExecutionResult {
 const CLINICAL_FALLBACK_REPLY = {
   en: `I'm sorry your tooth is hurting. How long has it been sore, and is there any swelling or bleeding? If the pain is severe, your face is swollen, or you can't breathe or swallow, please seek urgent care now.`,
   sw: `Samahani jino lako linaumia. Limekuwa likiuma kwa muda gani, na kuna uvimbe au damu yoyote? Kama maumivu ni makali sana, uso umevimba, au unashindwa kupumua au kumeza, tafadhali nenda kwa huduma ya dharura sasa.`,
+const CLINICAL_RECEIPT = {
+  en: (name: string, symptom: string, voice: boolean) =>
+    `Thank you${name ? `, ${name}` : ''}. I've received your ${voice ? 'voice note' : 'message'} about ${symptom} and forwarded it to our clinical team (Dr. Ruwa). We will get back to you on this number to arrange a visit or give you further guidance.\n\nIf the pain or swelling gets worse, please go to the nearest clinic immediately.\n\n---\n*Dr. Papi Foundation*`,
+  sw: (name: string, symptom: string, voice: boolean) =>
+    `Asante${name ? `, ${name}` : ''}. Nimepokea ${voice ? 'ujumbe wako wa sauti' : 'ujumbe wako'} kuhusu ${symptom} na kuupeleka kwa timu yetu ya kliniki (Dr. Ruwa). Tutawasiliana nawe kupitia nambari hii kupanga muda wa kuonana na daktari au kukupa maelekezo zaidi.\n\nKama maumivu au uvimbe unaongezeka, tafadhali nenda kliniki iliyo karibu mara moja.\n\n---\n*Dr. Papi Foundation*`,
 } as const;
 
 const UNRESOLVED_MEMBER_MESSAGE =

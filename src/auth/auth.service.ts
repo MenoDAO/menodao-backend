@@ -22,6 +22,12 @@ const MAX_OTP_REQUESTS_PER_HOUR = 10;
 /** Wrong guesses allowed before a code is burned. */
 const MAX_OTP_ATTEMPTS = 5;
 
+const OTP_TTL_MS = 10 * 60 * 1000;
+/** Per-phone SMS request cap. Protects against SMS-cost abuse and spam. */
+const MAX_OTP_REQUESTS_PER_HOUR = 10;
+/** Wrong guesses allowed before a code is burned. */
+const MAX_OTP_ATTEMPTS = 5;
+
 @Injectable()
 export class AuthService {
   constructor(

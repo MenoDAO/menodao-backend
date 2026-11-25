@@ -1551,6 +1551,7 @@ export class BookingService {
         }
         return t(ASK_DOCTOR, lang);
       case 'service': {
+      case 'service':
         if (clinics.length === 0) return t(ASK_SERVICE, lang);
         if (draft.clinicId) {
           const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;

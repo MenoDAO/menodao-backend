@@ -642,6 +642,38 @@ export class BotGatewayService {
       return;
     }
 
+    // New / unverified WhatsApp numbers start in the onboarding state machine;
+    // known (verified) members proceed straight to the AI reply path.
+    if (!member.isVerified) {
+      const session = await this.onboardingService.getSession(member.id);
+      if (!session || session.status === 'IN_PROGRESS') {
+        await this.handleOnboardingTurn({
+          memberId: member.id,
+          recipientPhone: member.phoneNumber,
+          messageText,
+          senderId,
+          chatContext,
+          preferredLanguage: member.preferredLanguage ?? 'en',
+        });
+        return;
+      }
+    }
+
+    // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
+    // verification code only while a pending challenge exists for this member.
+    const trimmed = (messageText || '').trim();
+    if (
+      /^\d{6}$/.test(trimmed) &&
+      (await this.memberDataService.hasPendingVerification(member.id))
+    ) {
+      const result = await this.memberDataService.verify(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        trimmed,
+      );
+      await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
+      return;
+    }
+
     const scope = this.memberDataService.detectScope(messageText);
     if (scope) {
       const reply = await this.memberDataService.handleRequest(
@@ -670,6 +702,64 @@ export class BotGatewayService {
     const now = Date.now();
     const expiresAt = this.recentUnmatchedReplies.get(phone);
     if (expiresAt && expiresAt > now) return;
+  private async handleOnboardingTurn(params: {
+    memberId: string;
+    recipientPhone: string;
+    messageText: string;
+    senderId: string;
+    chatContext: ChatContext;
+    preferredLanguage?: string;
+  }): Promise<void> {
+    const { memberId, recipientPhone, messageText, chatContext } = params;
+    const preferredLanguage = params.preferredLanguage ?? 'en';
+    const session = await this.onboardingService.start(
+      memberId,
+      preferredLanguage,
+    );
+
+    if (session.step === 'WELCOME') {
+      await this.onboardingService.setStep(memberId, 'INTEREST', {
+        source: 'welcome',
+        language: preferredLanguage,
+        welcomeSentAt: new Date().toISOString(),
+      });
+      await this.sendTextSafely(
+        recipientPhone,
+        ONBOARDING_WELCOME_MENU,
+        chatContext,
+      );
+      return;
+    }
+
+    const choice = this.resolveMenuChoice(messageText);
+    if (!choice) {
+      await this.sendTextSafely(
+        recipientPhone,
+        ONBOARDING_MENU_PROMPT,
+        chatContext,
+      );
+      return;
+    }
+
+    await this.onboardingService.setStep(memberId, 'MENU', {
+      choice: choice.key,
+      selectedAt: new Date().toISOString(),
+    });
+
+    // A bare menu number carries no intent — use the canonical phrasing.
+    const aiInput = /^[123]$/.test(messageText.trim())
+      ? choice.phrase
+      : messageText;
+
+    const replyText = await this.generateReplyText({
+      memberId,
+      recipientPhone,
+      messageText: aiInput,
+      senderId: params.senderId,
+    });
+    await this.sendTextSafely(recipientPhone, replyText, chatContext);
+    await this.onboardingService.complete(memberId);
+  }
 
     this.recentUnmatchedReplies.set(phone, now + this.UNMATCHED_REPLY_TTL_MS);
     const msg =

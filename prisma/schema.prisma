@@ -1726,6 +1726,26 @@ model BrandContextDocumentVersion {
   @@index([documentId, createdAt])
 }
 
+model BrandContextDocumentVersion {
+  id               String   @id @default(uuid())
+  documentId       String
+  document         BotContextDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version          Int
+  kind             String
+  title            String?
+  content          String   @db.Text
+  contentHash      String
+  source           String
+  externalRevision String?
+  // CREATE | UPDATE | SYNC | ROLLBACK | DELETE
+  changeType       String
+  createdByAdminId String?
+  createdAt        DateTime @default(now())
+
+  @@unique([documentId, version])
+  @@index([documentId, createdAt])
+}
+
 model BotLlmCallLog {
   id             String   @id @default(uuid())
   memberId       String?
