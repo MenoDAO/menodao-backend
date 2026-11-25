@@ -41,6 +41,8 @@ function build(env: Record<string, string> = {}) {
   const handleRequest = jest.fn().mockResolvedValue('I sent a 6-digit verification code by SMS.');
   const membershipPayments = new BotMembershipPaymentService({} as never, {} as never, {} as never);
   jest.spyOn(membershipPayments, 'acceptPayerReply').mockResolvedValue(null);
+  const pendingPaymentVerificationReply = jest.fn().mockResolvedValue(null);
+  jest.spyOn(membershipPayments, 'paymentPromptReply').mockResolvedValue(null);
   const service = new BotGatewayService(
     {} as PrismaService,
     config,
@@ -51,7 +53,7 @@ function build(env: Record<string, string> = {}) {
       recordOutbound: jest.fn().mockResolvedValue(undefined),
       latestSentReply,
     } as unknown as BotChatService,
-    { detectScope: jest.fn().mockReturnValue(null), handleRequest } as unknown as BotMemberDataService,
+    { detectScope: jest.fn().mockReturnValue(null), handleRequest, pendingPaymentVerificationReply } as unknown as BotMemberDataService,
     membershipPayments,
     { findAdminBySender: jest.fn().mockResolvedValue(null) } as unknown as AdminWhatsappAccessService,
     {} as never,
@@ -68,7 +70,7 @@ function build(env: Record<string, string> = {}) {
     }
   ).generateReplyText.bind(service) as (params: ReplyParams) => Promise<string>;
 
-  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher, latestSentReply, handleRequest };
+  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher, latestSentReply, handleRequest, pendingPaymentVerificationReply };
 }
 
 const params: ReplyParams = {
@@ -174,5 +176,18 @@ describe('membership acceptance', () => {
     );
     expect(processTextPipeline).not.toHaveBeenCalled();
     expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', expect.stringContaining('verification code'));
+  });
+});
+
+describe('payment verification is handled before conversational replies', () => {
+  it.each(['no code has arrived', 'yes'])('keeps %s in pending verification', async (messageText) => {
+    const { service, pendingPaymentVerificationReply, processTextPipeline, sendTextMessage } = build();
+    pendingPaymentVerificationReply.mockResolvedValue('I’m still waiting for the SMS code. No M-Pesa prompt has been sent.');
+    await service['handleUserTextMessage']({
+      senderId: '254712345678', fallbackPhone: '254712345678',
+      messageId: 'pending-payment', messageText,
+    });
+    expect(processTextPipeline).not.toHaveBeenCalled();
+    expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', expect.stringContaining('No M-Pesa prompt has been sent'));
   });
 });

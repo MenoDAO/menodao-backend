@@ -566,6 +566,20 @@ export class BotGatewayService {
       return;
     }
 
+    const waitingForVerification = await this.memberDataService.pendingPaymentVerificationReply(member.id, trimmed);
+    if (waitingForVerification) {
+      await this.sendTextSafely(member.phoneNumber, waitingForVerification, chatContext);
+      return;
+    }
+
+    if (this.membershipPayments.isPlanFollowUp(trimmed)) {
+      const quote = await this.membershipPayments.paymentPromptReply(member.id);
+      if (quote) {
+        await this.sendTextSafely(member.phoneNumber, quote);
+        return;
+      }
+    }
+
     const restartPayment = (scope: MembershipPaymentScope) =>
       this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
 

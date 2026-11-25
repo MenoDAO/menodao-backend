@@ -148,6 +148,29 @@ export class BotMemberDataService {
     return count > 0;
   }
 
+  async pendingPaymentVerificationReply(memberId: string, message: string): Promise<string | null> {
+    const waitingForCode = /\b(?:sms|otp|verification code|(?:no|the|my) code)\b/i.test(message) &&
+      /\b(?:no|not|never|haven['’]t|hasn['’]t|didn['’]t|missing|waiting|still|resend|arriv\w*|receiv\w*)\b/i.test(message);
+    if (
+      !waitingForCode &&
+      !this.membershipPayments.isPlanFollowUp(message) &&
+      !/^confirm m-?pesa\b/i.test(message.trim())
+    ) return null;
+
+    const session = await this.prisma.botDataAccessSession.findFirst({
+      where: {
+        memberId,
+        status: 'PENDING',
+        expiresAt: { gt: new Date() },
+        scope: { startsWith: 'MEMBERSHIP_' },
+      },
+      select: { id: true },
+    });
+    if (!session) return null;
+
+    return 'I’m still waiting for the 6-digit SMS code sent to your registered number. Reply with it when it arrives.\n\nNo M-Pesa prompt has been sent for this request.';
+  }
+
   /**
    * Entry point for a detected sensitive request. Answers from an existing
    * verified window, reuses a live OTP challenge, or sends a fresh one.

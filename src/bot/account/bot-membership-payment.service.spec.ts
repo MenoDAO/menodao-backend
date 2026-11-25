@@ -19,6 +19,7 @@ function build() {
       }),
     },
     botDataAccessSession: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'verified' }),
       upsert: jest.fn().mockResolvedValue(quote),
       findFirst: jest.fn().mockResolvedValue(quote),
       updateMany: jest
@@ -289,6 +290,13 @@ describe('BotMembershipPaymentService', () => {
         where: expect.objectContaining({ status: 'PAYMENT_QUOTED' }),
       }),
     );
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it('cannot send an STK prompt if the quote’s SMS verification has expired', async () => {
+    const { service, prisma, contributions } = build();
+    prisma.botDataAccessSession.findUnique.mockResolvedValue(null);
+    await expect(service.confirm('member')).resolves.toContain('verification has expired');
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 

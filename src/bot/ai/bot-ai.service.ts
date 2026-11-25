@@ -85,7 +85,14 @@ export class BotAiService {
       rawReply =
         language === 'sw' ? DR_PAPI_FALLBACK_REPLY_SW : DR_PAPI_FALLBACK_REPLY;
     }
-    const message = polishMemberReply(rawReply);
+    const polished = polishMemberReply(rawReply);
+    const claimsPromptWasSent = /\b(?:sent|requested|triggered|initiated)\b[^.!?\n]*\b(?:m-?pesa|stk|payment)\b[^.!?\n]*\bprompt\b/i.test(polished) ||
+      /\b(?:m-?pesa|stk|payment)\b[^.!?\n]*\bprompt\b[^.!?\n]*\b(?:sent|requested|triggered|initiated)\b/i.test(polished);
+    const message = claimsPromptWasSent
+      ? language === 'sw'
+        ? 'Ujumbe wa M-Pesa hutumwa baada ya kuthibitisha nambari yako na kiasi cha malipo.'
+        : 'The M-Pesa prompt is sent after SMS verification and explicit confirmation of the payment quote.'
+      : polished;
     const detectedLeadIntent = this.detectLeadIntent(userMessage, message);
     return { message, detectedLeadIntent };
   }
