@@ -11,7 +11,7 @@ export const welcome = (name?: string): string =>
     : `👋 Karibu *MenoAI*, msaidizi wako wa meno wa MenoDAO!\n\nNinaweza kukusaidia vipi leo?`;
 
 export const mainMenu = (name?: string): string =>
-  `${name ? `Habari *${name}*! ` : ''}Hapa kuna ninachoweza kukusaidia nacho:\n\nJibu kwa nambari au bonyeza chaguo hapa chini.`;
+  `${name ? `Habari *${name}*! ` : ''}Hapa kuna ninachoweza kukusaidia:\n\nJibu kwa nambari au bonyeza chaguo hapa chini.`;
 
 export const mainMenuSections = {
   accountTitle: 'Akaunti',
@@ -81,13 +81,13 @@ export const registrationLink =
 
 export const genericError =
   `Samahani, kuna tatizo upande wetu. Tafadhali jaribu tena baada ya muda mfupi.\n\n` +
-  `Ikiwa tatizo linaendelea, andika *menyu* kuanza upya au jibu *5* kuzungumza na daktari.`;
+  `Ikiwa tatizo linaendelea, andika *daktari* kuzungumza na mtu.`;
 
 export const rateLimitMessage = `⏳ Unatuma ujumbe haraka sana. Tafadhali subiri kidogo kabla ya kujaribu tena.`;
 
-export const fallbackLlm = `Nina tatizo la kuunganika sasa hivi. Ungependa kuzungumza na daktari wa meno?\n\nJibu *5* au andika *daktari*.`;
+export const fallbackLlm = `Nina tatizo la kuungana sasa hivi. Tafadhali jaribu tena, au andika *daktari* ukihitaji msaada wa haraka.`;
 
-export const unrecognisedInput = `Sikuelewa vizuri. Hapa kuna menyu kuu — tafadhali chagua chaguo:`;
+export const unrecognisedInput = `Samahani, sikuelewa vizuri. Unaweza kusema tena kwa maneno yako mwenyewe?`;
 
 export const sessionExpired = `Kikao chako kimeisha kwa sababu ya kutofanya kazi. Tuanze upya! 👋`;
 
@@ -201,7 +201,7 @@ export const claims = {
   noSubscription: `Unahitaji usajili unaofanya kazi ili kuwasilisha dai.\n\nUngependa kuona mipango inayopatikana?`,
 
   inWaitingPeriod: (eligibleDate: string): string =>
-    `⏳ Uko katika kipindi chako cha kusubiri sasa hivi.\n\nUtastahili kudai kuanzia *${eligibleDate}*.\n\nKuna kitu kingine ninachoweza kukusaidia nacho?`,
+    `⏳ Uko katika kipindi chako cha kusubiri sasa hivi.\n\nUtastahili kudai kuanzia *${eligibleDate}*.\n\nKuna kitu kingine ninachoweza kukusaidia?`,
 
   eligible: `✅ Unastahili kudai!\n\nMadai lazima yawasilishwe kwenye *kliniki ya MenoHub* na daktari wako wa meno.\n\nUngependa nikupate kliniki iliyo karibu nawe?`,
 
@@ -242,7 +242,7 @@ export const dentalAi = {
 // ─── Escalation Flow ─────────────────────────────────────────────────────────
 
 export const escalation = {
-  optionsPrompt: `👨‍⚕️ *Zungumza na Daktari wa Meno*\n\nUngependa kuunganika vipi?`,
+  optionsPrompt: `👨‍⚕️ *Zungumza na Daktari wa Meno*\n\nUngependa kuunganishwa vipi?`,
 
   optionWhatsApp: {
     id: 'escalate_whatsapp',

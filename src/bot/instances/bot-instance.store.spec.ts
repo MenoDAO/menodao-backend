@@ -107,7 +107,10 @@ describe('BotInstanceStore', () => {
 
       await store.storeApiKey('row-1', INSTANCE_KEY);
 
-      const data = prisma.botWhatsappInstance.update.mock.calls[0][0].data;
+      const calls = prisma.botWhatsappInstance.update.mock.calls as Array<
+        [{ data: { apiKeyCipher: string } }]
+      >;
+      const data = calls[0][0].data;
       expect(data.apiKeyCipher).not.toContain(INSTANCE_KEY);
       expect(data.apiKeyCipher.startsWith('v1.')).toBe(true);
     });

@@ -59,6 +59,7 @@ model Member {
   botLlmLogs        BotLlmCallLog[]
   botChatThreads    BotChatThread[]
   botDataAccessSessions BotDataAccessSession[]
+  fieldSubmissions  FieldSubmission[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -582,15 +583,16 @@ enum VisitStatus {
 
 // Dental procedure definitions
 model Procedure {
-  id           String   @id @default(uuid())
-  code         String   @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
-  name         String // e.g., "Consultation", "Simple Extraction"
-  description  String?
-  cost         Int // Cost in KES
-  allowedTiers Json // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(uuid())
+  code            String   @unique // e.g., "CONSULT", "EXTRACT_SIMPLE"
+  name            String // e.g., "Consultation", "Simple Extraction"
+  description     String?
+  cost            Int // Cost in KES
+  allowedTiers    Json // Array of PackageTier values: ["BRONZE", "SILVER", "GOLD"]
+  durationMinutes Int      @default(15) // expected chair time; booking uses this when set
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   visitProcedures VisitProcedure[]
 }
@@ -766,6 +768,8 @@ model Clinic {
   disbursals             Disbursal[]
   paymentConfig          ClinicPaymentConfig?
   appointments           Appointment[]
+  doctors                ClinicDoctor[]
+  operatingSchedule      ClinicOperatingHour[]
   parentClinic           Clinic?  @relation("ClinicBranches", fields: [parentClinicId], references: [id])
   branches               Clinic[] @relation("ClinicBranches")
 
@@ -828,9 +832,10 @@ model Appointment {
   memberId                   String
   clinicId                   String
   staffId                    String?
+  doctorId                   String?
   visitId                    String?           @unique
   scheduledAt                DateTime
-  durationMinutes            Int               @default(30)
+  durationMinutes            Int               @default(20)
   status                     AppointmentStatus @default(BOOKED)
   intakeReason               String
   painLevel                  Int?
@@ -851,14 +856,22 @@ model Appointment {
   member    Member              @relation(fields: [memberId], references: [id])
   clinic    Clinic              @relation(fields: [clinicId], references: [id])
   staff     StaffUser?          @relation(fields: [staffId], references: [id])
+  doctor    ClinicDoctor?       @relation(fields: [doctorId], references: [id])
   visit     Visit?              @relation(fields: [visitId], references: [id])
   events    AppointmentEvent[]
   reminders AppointmentReminder[]
+
+  /// External calendar the appointment was pushed to (GOOGLE | MICROSOFT).
+  /// Populated by the calendar sync layer once a doctor/clinic is connected.
+  externalCalendarProvider String?     @default("NONE")
+  externalEventId          String?
+  calendarSyncedAt         DateTime?
 
   @@index([memberId, scheduledAt])
   @@index([clinicId, scheduledAt])
   @@index([status, scheduledAt])
   @@index([staffId])
+  @@index([doctorId, scheduledAt])
 }
 
 model AppointmentEvent {
@@ -892,6 +905,88 @@ model AppointmentReminder {
 
   @@unique([appointmentId, kind, channel])
   @@index([appointmentId])
+}
+
+// ─── Booking: doctors, schedules, calendar sync ─────────────────────────────
+
+model ClinicDoctor {
+  id                  String   @id @default(uuid())
+  clinicId            String
+  name                String
+  title               String? // e.g. "Dr.", "DDS"
+  specialty           String?
+  isActive            Boolean  @default(true)
+  consultationMinutes Int      @default(15)
+  bufferMinutes       Int      @default(5)
+  timezone            String? // defaults to clinic/BOT_BOOKING_TIMEZONE when null
+  // External calendar (Google Calendar / MS365 / etc.) — future sync
+  calendarProvider    String? // GOOGLE | MICROSOFT | NONE
+  calendarId          String?
+  calendarSyncToken   String?  @db.Text
+  calendarConnectedAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  clinic       Clinic               @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  availability DoctorAvailability[]
+  appointments Appointment[]
+
+  @@index([clinicId, isActive])
+}
+
+model DoctorAvailability {
+  id        String   @id @default(uuid())
+  doctorId  String
+  dayOfWeek Int      // 0=Sunday ... 6=Saturday (JS/Date.getDay convention)
+  startTime String   // "HH:mm" 24h local
+  endTime   String   // "HH:mm" 24h local
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor ClinicDoctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, dayOfWeek, isActive])
+}
+
+model ClinicOperatingHour {
+  id        String   @id @default(uuid())
+  clinicId  String
+  dayOfWeek Int      // 0=Sunday ... 6=Saturday
+  openTime  String?  // "HH:mm"; null when isClosed
+  closeTime String?  // "HH:mm"; null when isClosed
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, dayOfWeek])
+  @@index([clinicId])
+}
+
+/// OAuth2 token connection to an external calendar for a clinic or a single
+/// doctor (Google Calendar / Microsoft 365). Tokens are stored encrypted at
+/// rest; plaintext API keys only live in env and are never persisted.
+model CalendarConnection {
+  id               String   @id @default(uuid())
+  /// "DOCTOR" or "CLINIC"
+  ownerType        String
+  ownerId          String
+  provider         String // "GOOGLE" | "MICROSOFT"
+  calendarId       String?
+  accountEmail    String?
+  accessToken      String   @db.Text
+  refreshToken     String?  @db.Text
+  tokenExpiresAt   DateTime?
+  scopes           String?  @db.Text
+  connectedAt      DateTime @default(now())
+  lastSyncedAt     DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([ownerType, ownerId, provider])
+  @@index([ownerType, ownerId])
 }
 
 // ─── Champion Referral System ────────────────────────────────────────────────
@@ -1234,6 +1329,82 @@ model BotMessageLog {
   @@index([createdAt])
 }
 
+/// WhatsApp field-data collection is restricted to an explicit health-personnel
+/// allowlist. Phone numbers are stored as E.164 digits so a JID or a typed "+"
+/// cannot create a second identity.
+model FieldContributor {
+  id           String                @id @default(uuid())
+  phoneNumber  String                @unique
+  displayName  String
+  role         FieldContributorRole  @default(HEALTH_PERSONNEL)
+  organization String?
+  isActive     Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  submissions FieldSubmission[]
+
+  @@index([isActive])
+  @@index([role, isActive])
+}
+
+enum FieldContributorRole {
+  DOCTOR
+  PHYSICIAN
+  HEALTH_PERSONNEL
+  NURSE
+}
+
+/// One inbound WhatsApp media item. Raw bytes stay encrypted in S3; only the
+/// model extraction and review metadata are stored here. Nothing is shown to
+/// ordinary members — the bot only acknowledges receipt.
+model FieldSubmission {
+  id                String               @id @default(uuid())
+  contributorId     String
+  contributor       FieldContributor     @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  memberId          String?
+  member            Member?              @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  providerMessageId String?              @unique
+  whatsappId        String?
+  kind              FieldMediaKind
+  mimeType          String
+  fileKey           String
+  fileSize          Int
+  originalFilename  String?
+  caption           String?              @db.Text
+  status            FieldSubmissionStatus @default(PENDING)
+  confidence        Float?
+  extracted         Json?
+  summary           String?              @db.Text
+  parseError        String?              @db.Text
+  missingFields     String[]             @default([])
+  needsAdminReview  Boolean              @default(false)
+  reviewedAt        DateTime?
+  reviewerAdminId   String?
+  reviewNotes       String?              @db.Text
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@index([contributorId, createdAt])
+  @@index([needsAdminReview, status])
+}
+
+enum FieldMediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+}
+
+enum FieldSubmissionStatus {
+  PENDING
+  PARSED
+  NEEDS_REVIEW
+  PROCESSED
+  REJECTED
+}
+
 /// OTP-gated access to a member's own records from WhatsApp. A session is
 /// created when a member asks for payments/appointments/visits/claims, then
 /// upgraded to VERIFIED for a short window after the SMS code is accepted.
@@ -1418,19 +1589,20 @@ model BotLead {
 }
 
 model BotBookingDraft {
-  id        String   @id @default(uuid())
-  memberId  String   @unique
-  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  clinicId  String?
-  service   String?
-  date      String?
-  time      String?
-  clientName String?
+  id               String   @id @default(uuid())
+  memberId         String   @unique
+  member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  clinicId         String?
+  doctorId         String?
+  service          String?
+  date             String?
+  time             String?
+  clientName       String?
   rawDateMentioned String?
-  language  String   @default("en")
-  status    String   @default("COLLECTING")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  language         String   @default("en")
+  status           String   @default("COLLECTING")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model BotOnboardingSession {
@@ -1451,8 +1623,10 @@ model BotContextDocument {
   title     String?
   content   String   @db.Text
   active    Boolean  @default(true)
-  // Where the document came from: MANUAL (written in the admin dashboard) or
-  // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id.
+  // Where the document came from: MANUAL (written in the admin dashboard),
+  // UPLOAD (extracted from a file the admin dropped in the dashboard) or
+  // GOOGLE_DRIVE (synced from a Drive file). externalId is the Drive file id
+  // for Drive documents and the upload's identity for uploaded ones.
   source      String    @default("MANUAL")
   // Source-document identity: the Drive file id for GOOGLE_DRIVE documents, or
   // a stable derived key for manual imports (so re-importing a guide updates
@@ -1473,11 +1647,83 @@ model BotContextDocument {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  // Set when this section was produced by extracting an uploaded file; traces
+  // the retrievable text back to the raw bytes held in S3.
+  fileId String?
+  file   BotContextFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
   versions BrandContextDocumentVersion[]
 
   @@unique([source, externalId, sectionKey])
   @@index([kind, active])
   @@index([source, externalId])
+  @@index([fileId])
+}
+
+/**
+ * A file the admin uploaded to the brand context library.
+ *
+ * The original bytes are stored untouched in S3 (`raw/…`), and the extracted,
+ * retrieval-friendly text is stored beside them (`text/…`) so re-processing a
+ * guide never has to re-run the expensive PDF/DOCX extraction. The sections
+ * that actually feed retrieval live on BotContextDocument, keyed back to this
+ * row through `fileId`.
+ */
+model BotContextFile {
+  id        String @id @default(uuid())
+  filename  String
+  // Original mime type reported by the browser, kept for diagnostics only:
+  // the extension decides how the bytes are parsed.
+  contentType String
+  byteSize    Int
+  sha256      String
+  // Stable identity of the effective title + extracted text. Two uploads with
+  // the same title and content collapse onto one row even if the source bytes
+  // differ (PDF vs DOCX re-export, metadata-only changes).
+  dedupeKey   String? @unique
+  // S3 key of the untouched original: raw/<sha256>/<filename>
+  storageKey  String
+  // S3 key of the extracted markdown: text/<sha256>/<filename>.md
+  textStorageKey String?
+  // UPLOADED | EXTRACTED | FAILED
+  status      String   @default("UPLOADED")
+  // Why extraction failed (unsupported type, no extractable text, corrupt).
+  extractError String?
+  extractedAt DateTime?
+  // How many retrievable sections this upload produced.
+  sectionCount Int     @default(0)
+  // Defaults applied to every section the file produced.
+  kind        String   @default("BIBLE")
+  title       String?
+  uploadedByAdminId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents BotContextDocument[]
+
+  @@index([sha256])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model BrandContextDocumentVersion {
+  id               String   @id @default(uuid())
+  documentId       String
+  document         BotContextDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version          Int
+  kind             String
+  title            String?
+  content          String   @db.Text
+  contentHash      String
+  source           String
+  externalRevision String?
+  // CREATE | UPDATE | SYNC | ROLLBACK | DELETE
+  changeType       String
+  createdByAdminId String?
+  createdAt        DateTime @default(now())
+
+  @@unique([documentId, version])
+  @@index([documentId, createdAt])
 }
 
 model BrandContextDocumentVersion {

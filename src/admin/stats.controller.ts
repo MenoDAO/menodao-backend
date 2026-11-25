@@ -73,6 +73,16 @@ export class StatsController {
     return this.statsService.getSmsMetrics(days || 30);
   }
 
+  @Get('voice-metrics')
+  @ApiOperation({
+    summary:
+      'Get WhatsApp voice conversation metrics and recent transcripts metadata',
+  })
+  @ApiQuery({ name: 'days', required: false, type: Number })
+  async getVoiceMetrics(@Query('days') days?: number) {
+    return this.statsService.getVoiceMetrics(days || 30);
+  }
+
   @Get('web3')
   @ApiOperation({ summary: 'Get Web3/Filecoin/Hypercert impact stats' })
   async getWeb3Stats() {

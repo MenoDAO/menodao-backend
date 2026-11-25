@@ -46,16 +46,18 @@ end-to-end impact verification pipeline that runs automatically after every trea
 ### Architecture Overview
 
 ```
-Staff Treatment Room (Next.js)
-        │
-        ▼ upload before/after dental images
-Filecoin/IPFS (Storacha)
-        │ returns content-addressed CIDs
-        ▼
-NestJS Backend (AWS ECS, Filecoin Calibration)
-        │
-        ├─▶ AI Agent (did:menodao:verifier-1)
-        │       evaluates dental improvement
+Staff Treatment Room (Next.js)      WhatsApp Member / Patient (Dr. Papi)
+        │                                         │
+        │ upload before/after                     ▼ (FlareSend / Waboxapp / Meta)
+        │ dental images                    NestJS Bot Gateway (`src/bot/`)
+        ▼                                         │
+Filecoin/IPFS (Storacha)                          ├─▶ Google Gemini LLM (`GeminiProvider`)
+        │ returns content-addressed CIDs          │     - gemini-3.5-flash / fallbacks
+        ▼                                         │     - Bilingual triage (EN/SW)
+NestJS Backend (AWS ECS, Filecoin Calibration)   │     - Guardrails: education only
+        │                                         ├─▶ AssemblyAI (Voice notes)
+        ├─▶ AI Agent (did:menodao:verifier-1)     ├─▶ Clinic Appointment Booking
+        │       evaluates dental improvement      └─▶ Live MenoDAO Member & Plan Context
         │       confidence score > 0.7 → approved
         │
         ├─▶ MenoDAOCases.sol (Calibration testnet)
@@ -172,6 +174,37 @@ stored on the visit record and surfaced to the member on their dashboard. On-cha
 via the Hypercerts SDK is architecturally ready — the `mintHypercert()` method has the full
 structured schema and the SDK call is stubbed pending their stable Node.js server-side support.
 
+### 5. Dr. Papi — WhatsApp Dental AI Assistant (Google Gemini LLM)
+
+To expand access to members without regular web browser access or who prefer conversational interaction,
+the backend features a dedicated WhatsApp AI assistant named **Dr. Papi** (developed in collaboration
+with the Dr. Papi Foundation, an oral health initiative based in Mombasa, Kenya).
+
+```typescript
+// src/bot/prompts/system-prompts.ts
+export function buildDrPapiSystemPrompt(context: DrPapiPromptContext): string
+// Grounded in verified MenoHub clinics, active procedure benefits, and member plan context
+```
+
+Key features of the Dr. Papi WhatsApp assistant include:
+
+- **Google Gemini LLM Core (`GeminiProvider`):** Powered by Google GenAI (`@google/genai`) using
+  `gemini-3.5-flash` with multi-model fallback resiliency (`gemini-3.6-flash`, `gemini-3.8-flash`).
+  If a primary model faces deprecation, high demand, or rate limits (429/503), the provider
+  automatically retries or cascades to the next operational model.
+- **Bilingual Conversations (English & Swahili):** Seamlessly recognizes the member's language and
+  replies in natural English or Kiswahili, preserving medical warmth and accessibility.
+- **Strict Clinical Guardrails:** Strictly constrained to non-diagnostic oral hygiene education,
+  benefit explanation, and triage. Prescribing medications or delivering definitive medical diagnoses
+  is strictly forbidden. If dental trauma, severe bleeding, or emergency symptoms are detected,
+  Dr. Papi immediately directs the patient to the nearest verified MenoHub clinic.
+- **Voice Note Processing:** Transcribes incoming WhatsApp audio/voice notes via AssemblyAI,
+  classifying patient voice queries into booking, clinical intake, or educational requests.
+- **Multi-Gateway Messaging:** Operates through multiple WhatsApp providers including FlareSend,
+  Waboxapp, and the Meta WhatsApp Business Cloud API with HMAC-SHA256 signature verification.
+- **Appointment Booking & Account Integration:** Members can inquire about their active MenoDAO tier,
+  annual benefit caps, nearby clinics, and book physical appointments directly over chat.
+
 ---
 
 ## What Makes This Unique
@@ -238,6 +271,16 @@ evaluations."
 
 ```
 src/
+├── bot/                           # Dr. Papi WhatsApp assistant & conversational stack
+│   ├── ai/
+│   │   ├── providers/gemini.provider.ts # Google Gemini LLM provider & fallback cascade
+│   │   └── bot-ai.service.ts      # Retrieval & dynamic prompt generation
+│   ├── prompts/system-prompts.ts  # Dr. Papi persona, bilingual instructions & guardrails
+│   ├── booking/                   # Clinic appointment booking & time validation
+│   ├── voice-pipeline/            # Audio transcription (AssemblyAI) & intent triage
+│   ├── whatsapp-clients/          # Outbound WhatsApp adapters (FlareSend, Waboxapp)
+│   └── webhook/                   # WhatsApp gateway webhook ingress
+├── whatsapp/                      # Meta Cloud API WhatsApp stack & interactive flows
 ├── web3/
 │   ├── filecoin.service.ts        # IPFS upload via Pinata/Storacha
 │   ├── ai-verifier.service.ts     # AI agent (did:menodao:verifier-1)
@@ -257,7 +300,7 @@ contracts/
 
 ---
 
-## Running the Web3 Pipeline Locally
+## Running Locally
 
 ```bash
 # 1. Clone and install
@@ -267,8 +310,17 @@ npm install
 
 # 2. Set environment variables
 cp .env.example .env
-# Add: PINATA_JWT, BLOCKCHAIN_PRIVATE_KEY, MENODAO_CONTRACT_ADDRESS,
-#      CALIBRATION_RPC, DEMO_PAYOUT_ETHER
+# Web3 / Blockchain:
+#   PINATA_JWT, BLOCKCHAIN_PRIVATE_KEY, MENODAO_CONTRACT_ADDRESS,
+#   CALIBRATION_RPC, DEMO_PAYOUT_ETHER
+# Dr. Papi WhatsApp Bot & Gemini LLM:
+#   BOT_LLM_PROVIDER=gemini
+#   GEMINI_API_KEY=your-gemini-api-key
+#   GEMINI_MODEL=gemini-3.5-flash
+#   GEMINI_FALLBACK_MODELS=gemini-3.6-flash,gemini-3.8-flash
+#   BOT_WHATSAPP_PROVIDER=flaresend (or waboxapp / meta)
+#   FLARESEND_API_KEY, FLARESEND_EMAIL, FLARESEND_PASSWORD
+#   ASSEMBLY_AI_API_KEY (for voice note transcription)
 
 # 3. Deploy the contract (needs tFIL from faucet.calibration.fildev.network)
 cd contracts && npm install
@@ -280,6 +332,11 @@ npm run start:dev
 # 5. Test the pipeline via the staff portal at http://localhost:3001/staff
 #    Check in a patient → add procedures → upload before/after images
 #    → trigger verification → watch the on-chain transactions appear
+#
+# 6. Test Dr. Papi WhatsApp Assistant & Chat Playground
+#    Interactive Browser Playground: http://localhost:3000/bot/playground
+#    Swagger API Docs: http://localhost:3000/api/docs
+#    Webhook: POST /bot/webhook/flaresend/:token or POST /whatsapp/webhook
 ```
 
 The pipeline runs in mock mode if env vars aren't set — useful for local development without
@@ -301,17 +358,20 @@ needing real tFIL or a Pinata account.
 
 ## Tech Stack
 
-| Layer           | Technology                                        |
-| --------------- | ------------------------------------------------- |
-| Backend         | NestJS + TypeScript, AWS ECS                      |
-| Database        | PostgreSQL + Prisma ORM                           |
-| Frontend        | Next.js 14, Tailwind CSS, AWS Amplify             |
-| Payments        | SasaPay M-Pesa (STK Push)                         |
-| IPFS            | Storacha                                          |
-| Smart Contracts | Solidity 0.8.24, Hardhat, ethers.js v6            |
-| Blockchain      | Filecoin Calibration Testnet (chainId 314159)     |
-| AI Agent        | Configurable vision API, `did:menodao:verifier-1` |
-| Auth            | JWT + SMS OTP                                     |
+| Layer                | Technology                                                       |
+| -------------------- | ---------------------------------------------------------------- |
+| Backend              | NestJS + TypeScript, AWS ECS                                     |
+| Database             | PostgreSQL + Prisma ORM                                          |
+| Frontend             | Next.js 14, Tailwind CSS, AWS Amplify                            |
+| WhatsApp Assistant   | Dr. Papi (FlareSend, Waboxapp, Meta WhatsApp Cloud API)          |
+| Conversational AI    | Google Gemini (`@google/genai`, `gemini-3.5-flash`, fallbacks)   |
+| Voice Processing     | AssemblyAI (Audio transcription & intent classification)         |
+| Payments             | SasaPay M-Pesa (STK Push)                                        |
+| IPFS                 | Storacha                                                         |
+| Smart Contracts      | Solidity 0.8.24, Hardhat, ethers.js v6                           |
+| Blockchain           | Filecoin Calibration Testnet (chainId 314159)                    |
+| AI Verification Agent| Configurable vision API, `did:menodao:verifier-1`                |
+| Auth                 | JWT + SMS OTP + WebAuthn                                         |
 
 ---
 

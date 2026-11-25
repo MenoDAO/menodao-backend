@@ -14,9 +14,11 @@ import { BotOnboardingService } from '../onboarding/bot-onboarding.service';
 import { BotChatService } from '../chat/bot-chat.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
+import { FieldDataService } from '../field-data/field-data.service';
 import { FlaresendWebhookPayload } from './flaresend-webhook.types';
 import { WaboxappWebhookPayload } from './waboxapp-webhook.types';
 import { WhatsappWebhookPayload } from './whatsapp-webhook.types';
+import { onboardingReprompt, onboardingWelcome } from './onboarding.messages';
 
 const WABOXAPP_INBOUND_DEDUPE_TTL_MS = 30_000;
 const MAX_TRACKED_WABOXAPP_INBOUND_MESSAGES = 1_000;
@@ -31,19 +33,6 @@ const FLARESEND_INBOUND_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_FALLBACK_REPLY =
   'Samahani, kuna hitilafu ya muda kwenye mfumo wetu. Tafadhali jaribu tena baada ya dakika chache. ' +
   'Sorry, we are having a temporary problem. Please try again in a few minutes.';
-
-const ONBOARDING_WELCOME_MENU =
-  'Kariba! 👋 Welcome to MenoDAO. Dr. Papi is here to help with your oral health.\n\n' +
-  'Reply with a number to choose:\n' +
-  '1️⃣ Book an appointment\n' +
-  '2️⃣ Health information / symptoms\n' +
-  '3️⃣ Help with my MenoDAO account';
-
-const ONBOARDING_MENU_PROMPT =
-  'Please reply with 1, 2 or 3 to continue:\n' +
-  '1️⃣ Book an appointment\n' +
-  '2️⃣ Health information / symptoms\n' +
-  '3️⃣ Help with my MenoDAO account';
 
 interface OnboardingMenuChoice {
   key: 'BOOKING' | 'HEALTH' | 'HELP';
@@ -70,6 +59,8 @@ export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
   private readonly recentWaboxappInboundMessages = new Map<string, number>();
   private readonly recentFlaresendInboundMessages = new Map<string, number>();
+  private readonly recentUnmatchedReplies = new Map<string, number>();
+  private readonly UNMATCHED_REPLY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   constructor(
     private readonly prisma: PrismaService,
@@ -80,6 +71,7 @@ export class BotGatewayService {
     private readonly chatService: BotChatService,
     private readonly memberDataService: BotMemberDataService,
     private readonly adminAccess: AdminWhatsappAccessService,
+    private readonly fieldDataService: FieldDataService,
     @Inject(WHATSAPP_CLIENT)
     private readonly whatsappClient: IWhatsappClient,
     private readonly metaApiClient: WhatsappApiClient,
@@ -211,7 +203,8 @@ export class BotGatewayService {
     const contactName = data.pushName || data.name || undefined;
     const messageText = this.extractFlaresendMessageText(data as any);
     const isAudio = Boolean(data.message?.audioMessage);
-    if (!isAudio && !messageText) return;
+    const fieldMedia = this.extractFlaresendFieldMedia(data.message);
+    if (!isAudio && !fieldMedia && !messageText) return;
 
     // FlareSend retries a delivery when it does not see a fast 2xx, and the
     // controller acknowledges before processing finishes. Drop repeats so a
@@ -265,9 +258,63 @@ export class BotGatewayService {
             instanceProviderId: payload.instanceId ?? null,
           });
         }
+
+        const audioSource = await this.flaresendClient.downloadMediaDescriptor(
+          data.message?.audioMessage,
+          data.id,
+          data.message?.audioMessage?.mimetype || 'audio/ogg',
+        );
+        if (audioSource) {
+          // Enforce 10 MB audio size limit
+          if (audioSource.buffer && audioSource.buffer.length > 10 * 1024 * 1024) {
+            const limitMsg =
+              member?.preferredLanguage === 'sw'
+                ? 'Ujumbe wako wa sauti ni mrefu mno. Tafadhali tuma ujumbe mfupi wa sauti (chini ya dakika 2) au uandike kwa maandishi ili tukusaidie.'
+                : 'Your voice note is too long. Please send a shorter voice note (under 2 minutes) or type a message so we can assist you.';
+            await this.sendTextSafely(
+              recipientPhone,
+              limitMsg,
+              member
+                ? {
+                    memberId: member.id,
+                    contactId: whatsappId,
+                    instanceProviderId: payload.instanceId,
+                  }
+                : undefined,
+            );
+            return;
+          }
+          try {
+            const result = await this.voicePipelineService.processVoicePipeline(
+              audioSource.buffer,
+              recipientPhone,
+              undefined,
+              member?.preferredLanguage,
+              data.id,
+            );
+            await this.sendTextSafely(
+              recipientPhone,
+              result.patientMessage ||
+                this.voiceFallback(member?.preferredLanguage),
+              member
+                ? {
+                    memberId: member.id,
+                    contactId: whatsappId,
+                    instanceProviderId: payload.instanceId,
+                  }
+                : undefined,
+            );
+            return;
+          } catch (error) {
+            this.logger.error(
+              `FlareSend audio handling failed for ${recipientPhone}: ${error}`,
+            );
+          }
+        }
+
         await this.sendTextSafely(
           recipientPhone,
-          'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!',
+          this.voiceFallback(member?.preferredLanguage),
           member
             ? {
                 memberId: member.id,
@@ -276,6 +323,17 @@ export class BotGatewayService {
               }
             : undefined,
         );
+        return;
+      }
+      if (fieldMedia) {
+        await this.handleFlaresendFieldMedia({
+          payload,
+          data,
+          whatsappId,
+          phoneHint,
+          contactName,
+          fieldMedia,
+        });
         return;
       }
       if (!messageText) return;
@@ -291,6 +349,136 @@ export class BotGatewayService {
       // Let the next retry try again rather than swallowing the message.
       this.recentFlaresendInboundMessages.delete(dedupeKey);
       throw error;
+    }
+  }
+
+  private extractFlaresendFieldMedia(message: any):
+    | {
+        kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+        descriptor: any;
+        mimeType: string;
+        caption?: string | null;
+      }
+    | null {
+    if (!message || typeof message !== 'object') return null;
+    const candidates: Array<{
+      key: string;
+      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+      mime: string;
+    }> = [
+      { key: 'imageMessage', kind: 'IMAGE', mime: 'image/jpeg' },
+      { key: 'videoMessage', kind: 'VIDEO', mime: 'video/mp4' },
+      { key: 'documentMessage', kind: 'DOCUMENT', mime: 'application/octet-stream' },
+    ];
+    for (const candidate of candidates) {
+      let descriptor = message[candidate.key];
+      if (!descriptor || typeof descriptor !== 'object') {
+        // Some FlareSend versions use a flat `{ type: "image", url: ... }`.
+        const type = typeof message.type === 'string' ? message.type.toLowerCase() : '';
+        if (type !== candidate.kind.toLowerCase() && !(candidate.kind === 'DOCUMENT' && type === 'document')) continue;
+        descriptor = message;
+      }
+      const mimeType =
+        typeof descriptor.mimetype === 'string' && descriptor.mimetype
+          ? descriptor.mimetype
+          : typeof descriptor.mimeType === 'string' && descriptor.mimeType
+            ? descriptor.mimeType
+            : candidate.mime;
+      return {
+        kind: candidate.kind,
+        descriptor,
+        mimeType,
+        caption:
+          typeof descriptor.caption === 'string' && descriptor.caption.trim()
+            ? descriptor.caption.trim()
+            : null,
+      };
+    }
+    return null;
+  }
+
+  private async handleFlaresendFieldMedia(params: {
+    payload: FlaresendWebhookPayload;
+    data: any;
+    whatsappId: string;
+    phoneHint?: string;
+    contactName?: string;
+    fieldMedia: {
+      kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+      descriptor: any;
+      mimeType: string;
+      caption?: string | null;
+    };
+  }): Promise<void> {
+    const { payload, data, whatsappId, phoneHint, contactName, fieldMedia } = params;
+    const member = await this.identity.resolveMember({
+      phoneDigitsFallback: this.isLid(whatsappId)
+        ? (phoneHint ?? undefined)
+        : whatsappId,
+      whatsappId,
+    });
+    const recipientPhone =
+      member?.phoneNumber ?? (this.isLid(whatsappId) ? undefined : whatsappId);
+
+    if (member) {
+      await this.chatService.recordInbound({
+        contactId: whatsappId,
+        contactName,
+        memberId: member.id,
+        content: `[field ${fieldMedia.kind.toLowerCase()} received]`,
+        contentType: fieldMedia.kind,
+        providerMessageId: data.id ?? null,
+        instanceProviderId: payload.instanceId ?? null,
+      });
+    }
+
+    const media = await this.flaresendClient.downloadMediaDescriptor(
+      fieldMedia.descriptor,
+      data.id,
+      fieldMedia.mimeType,
+    );
+    if (!media) {
+      if (recipientPhone) {
+        await this.sendTextSafely(
+          recipientPhone,
+          'Samahani, hatukuweza kupakua faili hii. Tafadhali tuma tena. ' +
+            'Sorry, we could not download this file. Please send it again.',
+          member
+            ? {
+                memberId: member.id,
+                contactId: whatsappId,
+                instanceProviderId: payload.instanceId,
+              }
+            : undefined,
+        );
+      }
+      return;
+    }
+
+    const result = await this.fieldDataService.ingestMedia({
+      phoneCandidates: [whatsappId, phoneHint, member?.phoneNumber],
+      memberId: member?.id,
+      providerMessageId: data.id ?? null,
+      whatsappId,
+      kind: fieldMedia.kind,
+      mimeType: media.mimeType,
+      buffer: media.buffer,
+      caption: fieldMedia.caption ?? null,
+      originalFilename: media.originalFilename,
+    });
+
+    if (recipientPhone) {
+      await this.sendTextSafely(
+        recipientPhone,
+        result.reply,
+        member
+          ? {
+              memberId: member.id,
+              contactId: whatsappId,
+              instanceProviderId: payload.instanceId,
+            }
+          : undefined,
+      );
     }
   }
 
@@ -323,12 +511,19 @@ export class BotGatewayService {
     const normalizedPhone = this.normalizePhoneNumber(message.from);
     if (message.type === 'audio' && message.audio?.id) {
       try {
+        const member = await this.identity.resolveMember({
+          phoneDigitsFallback: normalizedPhone,
+          whatsappId: normalizedPhone,
+        });
         const audioBuffer = await this.metaApiClient.downloadMedia(
           message.audio.id,
         );
         const result = await this.voicePipelineService.processVoicePipeline(
           audioBuffer,
           normalizedPhone,
+          undefined,
+          member?.preferredLanguage,
+          message.audio.id,
         );
         const replyText =
           result.patientMessage || 'Ujumbe wako wa sauti umepokelewa. Asante!';
@@ -404,7 +599,16 @@ export class BotGatewayService {
       whatsappId: senderId,
       contactName,
     });
-    if (!member) return;
+    if (!member) {
+      // Per v2 spec (Workstream 2 & 9): Never call LLM for unmatched senders.
+      this.logger.warn(
+        `Unmatched sender ${senderId} - NO LLM call made per v2 spec.`,
+      );
+      if (fallbackPhone && !this.isLid(senderId)) {
+        await this.sendStaticUnmatchedAutoReply(fallbackPhone);
+      }
+      return;
+    }
 
     const chatContext: ChatContext = {
       memberId: member.id,
@@ -422,6 +626,21 @@ export class BotGatewayService {
       providerMessageId: messageId || null,
       instanceProviderId,
     });
+
+    // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
+    // verification code only while a pending challenge exists for this member.
+    const trimmed = (messageText || '').trim();
+    if (
+      /^\d{6}$/.test(trimmed) &&
+      (await this.memberDataService.hasPendingVerification(member.id))
+    ) {
+      const result = await this.memberDataService.verify(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        trimmed,
+      );
+      await this.sendTextSafely(member.phoneNumber, result.reply, chatContext);
+      return;
+    }
 
     // New / unverified WhatsApp numbers start in the onboarding state machine;
     // known (verified) members proceed straight to the AI reply path.
@@ -465,6 +684,7 @@ export class BotGatewayService {
       return;
     }
 
+    // Direct conversational AI pipeline — no menu gates!
     const replyText = await this.generateReplyText({
       memberId: member.id,
       recipientPhone: member.phoneNumber,
@@ -475,10 +695,13 @@ export class BotGatewayService {
   }
 
   /**
-   * Onboarding state machine — drives a new member from the welcome menu to a
-   * resolved intent. The member's own words are handed to the AI pipeline once
-   * a menu option is recognised, so the rest of the bot behaves normally.
+   * Static auto-reply for unregistered senders (Workstream 9).
+   * Sent at most once per 24 hours per phone number.
    */
+  private async sendStaticUnmatchedAutoReply(phone: string): Promise<void> {
+    const now = Date.now();
+    const expiresAt = this.recentUnmatchedReplies.get(phone);
+    if (expiresAt && expiresAt > now) return;
   private async handleOnboardingTurn(params: {
     memberId: string;
     recipientPhone: string;
@@ -538,36 +761,15 @@ export class BotGatewayService {
     await this.onboardingService.complete(memberId);
   }
 
-  private resolveMenuChoice(messageText: string): OnboardingMenuChoice | null {
-    const text = (messageText ?? '').trim().toLowerCase();
-    if (!text) return null;
-    if (
-      /^(1|book|booking|appointment|miadi|ninapenda kupanga|book\s+appointment)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'BOOKING',
-        phrase: 'I want to book an appointment at a MenoDAO clinic.',
-      };
+    this.recentUnmatchedReplies.set(phone, now + this.UNMATCHED_REPLY_TTL_MS);
+    const msg =
+      'Karibu MenoDAO! Nambari hii haijasajiliwa kwenye mfumo wetu. Tafadhali tembelea https://app.menodao.org au wasiliana na kliniki yetu ili upate huduma.\n\n' +
+      'Welcome to MenoDAO! This phone number is not registered in our system. Please visit https://app.menodao.org or contact our clinic to access care.';
+    try {
+      await this.whatsappClient.sendTextMessage(phone, msg);
+    } catch (e) {
+      this.logger.warn(`Failed to send unmatched auto-reply to ${phone}: ${e}`);
     }
-    if (
-      /^(2|health|info|information|symptom|symptoms|pain|toothache|afya|maumivu)/.test(
-        text,
-      )
-    ) {
-      return {
-        key: 'HEALTH',
-        phrase: 'I have a question about my dental health.',
-      };
-    }
-    if (/^(3|help|support|account|memb|msaada)/.test(text)) {
-      return {
-        key: 'HELP',
-        phrase: 'I need help with my MenoDAO account.',
-      };
-    }
-    return null;
   }
 
   /** Shared reply generation: static override (if configured) or the AI pipeline. */
@@ -710,5 +912,62 @@ export class BotGatewayService {
       return normalized;
     }
     return undefined;
+  }
+
+  private async extractFlaresendAudioSource(
+    audio: any,
+  ): Promise<{ buffer: Buffer; mediaId?: string } | null> {
+    if (!audio || typeof audio !== 'object') return null;
+
+    const mediaId =
+      typeof audio.id === 'string'
+        ? audio.id
+        : typeof audio.mediaId === 'string'
+          ? audio.mediaId
+          : undefined;
+
+    if (typeof audio.data === 'string' && audio.data.trim()) {
+      try {
+        return { buffer: Buffer.from(audio.data.trim(), 'base64'), mediaId };
+      } catch {
+        return null;
+      }
+    }
+    if (typeof audio.base64 === 'string' && audio.base64.trim()) {
+      try {
+        return { buffer: Buffer.from(audio.base64.trim(), 'base64'), mediaId };
+      } catch {
+        return null;
+      }
+    }
+
+    const url =
+      typeof audio.url === 'string'
+        ? audio.url
+        : typeof audio.mediaUrl === 'string'
+          ? audio.mediaUrl
+          : typeof audio.downloadUrl === 'string'
+            ? audio.downloadUrl
+            : null;
+
+    if (url) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const arrayBuffer = await response.arrayBuffer();
+        return { buffer: Buffer.from(arrayBuffer), mediaId };
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  private voiceFallback(preferredLanguage?: string | null): string {
+    if ((preferredLanguage || '').toLowerCase().startsWith('sw')) {
+      return 'Samahani, hatuwezi kusikiliza ujumbe wa sauti kwa sasa. Tafadhali andika ujumbe wako kwa maneno au upige simu kliniki. Asante!';
+    }
+    return 'Sorry, voice notes are not available on this channel right now. Please type your message or call the clinic. Thank you!';
   }
 }

@@ -391,9 +391,9 @@ export class BotMemberDataService {
 
     const lines = recent.map(
       (item) =>
-        `• ${this.monthLabel(item.month)} — ${this.money(item.amount)} — ${this.titleCase(
+        `• ${this.monthLabel(item.month)}: ${this.money(item.amount)}, ${this.titleCase(
           item.status.replace(/_/g, ' ').toLowerCase(),
-        )}`,
+        )}.`,
     );
 
     if (completed.length === 0) {

@@ -40,6 +40,8 @@ export type FoundationImpact = {
   registeredMembers: number;
   contributingMembers: number;
   approvedFacilities: number;
+  campsConducted: number;
+  peopleServed: number;
   counties: number;
 };
 
@@ -108,6 +110,8 @@ type FoundationSettings = {
     registeredMembers: number | null;
     contributingMembers: number | null;
     approvedFacilities: number | null;
+    campsConducted: number | null;
+    peopleServed: number | null;
     counties: number | null;
   };
   clinicOverrides: Record<string, ClinicOverride>;
@@ -163,6 +167,8 @@ const EMPTY_IMPACT = {
   registeredMembers: null,
   contributingMembers: null,
   approvedFacilities: null,
+  campsConducted: null,
+  peopleServed: null,
   counties: null,
 };
 
@@ -313,6 +319,8 @@ export class FoundationSiteService {
           input.impact.contributingMembers,
         ),
         approvedFacilities: this.optionalCount(input.impact.approvedFacilities),
+        campsConducted: this.optionalCount(input.impact.campsConducted),
+        peopleServed: this.optionalCount(input.impact.peopleServed),
         counties: this.optionalCount(input.impact.counties),
       };
     }
@@ -466,15 +474,50 @@ export class FoundationSiteService {
   private async liveImpact(
     visibleFacilities: number,
   ): Promise<FoundationImpact> {
-    const [registeredMembers, contributingMembers] = await Promise.all([
-      this.prisma.member.count(),
-      this.prisma.subscription.count({ where: { isActive: true } }),
-    ]);
+    const [registeredMembers, contributingMembers, campsConducted, attendedRows, clinicCounties, memberCounties] =
+      await Promise.all([
+        this.prisma.member.count(),
+        this.prisma.subscription.count({ where: { isActive: true } }),
+        this.prisma.camp.count({ where: { isActive: true } }),
+        this.prisma.campRegistration.findMany({
+          where: { status: 'ATTENDED' },
+          select: { memberId: true, campId: true },
+        }),
+        this.prisma.clinic.findMany({
+          where: { status: 'APPROVED' },
+          select: { subCounty: true },
+        }),
+        this.prisma.member.findMany({
+          where: { county: { not: null } },
+          select: { county: true },
+          distinct: ['county'],
+        }),
+      ]);
+
+    // One person attended twice is still one person served. Registrations are
+    // the attendance source of truth; camps keep their own historical count.
+    const served = new Set<string>();
+    for (const row of attendedRows) {
+      if (row.memberId) served.add(`m:${row.memberId}`);
+      else if (row.campId) served.add(`c:${row.campId}`);
+    }
+    const counties = new Set<string>();
+    for (const clinic of clinicCounties) {
+      const value = clinic.subCounty?.trim();
+      if (value) counties.add(value.toLowerCase());
+    }
+    for (const member of memberCounties) {
+      const value = member.county?.trim();
+      if (value) counties.add(value.toLowerCase());
+    }
+
     return {
       registeredMembers,
       contributingMembers,
       approvedFacilities: visibleFacilities,
-      counties: 2,
+      campsConducted,
+      peopleServed: served.size,
+      counties: counties.size,
     };
   }
 
@@ -489,6 +532,8 @@ export class FoundationSiteService {
         settings.impact.contributingMembers ?? live.contributingMembers,
       approvedFacilities:
         settings.impact.approvedFacilities ?? live.approvedFacilities,
+      campsConducted: settings.impact.campsConducted ?? live.campsConducted,
+      peopleServed: settings.impact.peopleServed ?? live.peopleServed,
       counties: settings.impact.counties ?? live.counties,
     };
   }
@@ -840,6 +885,8 @@ function normalizeSettings(
       registeredMembers: input.impact?.registeredMembers ?? null,
       contributingMembers: input.impact?.contributingMembers ?? null,
       approvedFacilities: input.impact?.approvedFacilities ?? null,
+      campsConducted: input.impact?.campsConducted ?? null,
+      peopleServed: input.impact?.peopleServed ?? null,
       counties: input.impact?.counties ?? null,
     },
     clinicOverrides: input.clinicOverrides || {},

@@ -8,6 +8,7 @@ import { StatsService } from './stats.service';
 import { UsersController } from './users.controller';
 import { PaymentsController } from './payments.controller';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
+import { AdminBookingController } from './admin-booking.controller';
 import { RolesGuard } from './guards/roles.guard';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
@@ -22,6 +23,10 @@ import { AdminWhatsappService } from './whatsapp/whatsapp-instance.service';
 import { AdminBotChatController } from './whatsapp/bot-chat.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { CapabilityGuard } from './guards/capabilities.guard';
+import { CalendarModule } from '../calendar/calendar.module';
+import { AdminCalendarController } from '../calendar/calendar.controller';
+import { FieldDataModule } from '../bot/field-data/field-data.module';
+import { FieldDataController } from './field-data.controller';
 
 @Global()
 @Module({
@@ -34,6 +39,8 @@ import { CapabilityGuard } from './guards/capabilities.guard';
     BotInstancesModule,
     BotChatModule,
     WhatsappClientsModule,
+    CalendarModule,
+    FieldDataModule,
   ],
   controllers: [
     AdminController,
@@ -44,6 +51,9 @@ import { CapabilityGuard } from './guards/capabilities.guard';
     AdminBrandContextController,
     AdminWhatsappController,
     AdminBotChatController,
+    AdminBookingController,
+    AdminCalendarController,
+    FieldDataController,
   ],
   providers: [
     AdminService,

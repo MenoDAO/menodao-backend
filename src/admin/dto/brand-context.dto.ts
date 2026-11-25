@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -12,8 +15,15 @@ import {
 } from 'class-validator';
 import { BRAND_CONTEXT_KINDS } from '../../bot/context/brand-context.service';
 
-/** Where a context document comes from. GOOGLE_DRIVE is reserved for the sync. */
-export const BRAND_CONTEXT_SOURCES = ['MANUAL', 'GOOGLE_DRIVE'] as const;
+/**
+ * Where a context document comes from. GOOGLE_DRIVE is reserved for the sync,
+ * UPLOAD marks sections produced by extracting an uploaded file.
+ */
+export const BRAND_CONTEXT_SOURCES = [
+  'MANUAL',
+  'UPLOAD',
+  'GOOGLE_DRIVE',
+] as const;
 
 export type BrandContextSource = (typeof BRAND_CONTEXT_SOURCES)[number];
 
@@ -36,14 +46,18 @@ export class CreateBrandContextDocumentDto {
   @MaxLength(200)
   title?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example:
       'Never give a clinical diagnosis or name a medication. Escalate anything ' +
       'emergency-shaped to the nearest clinic.',
+    description:
+      'The document body. Optional so the admin form can be submitted with ' +
+      'uploaded files instead of typed text; a document with neither is ' +
+      'rejected.',
   })
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  content: string;
+  content?: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
@@ -188,4 +202,55 @@ export class PreviewBrandContextDto {
   @Min(1)
   @Max(10)
   topK?: number;
+}
+
+/**
+ * Text fields accompanying a single uploaded file. Multipart bodies deliver
+ * every field as a string, so booleans are coerced here rather than trusting
+ * the implicit conversion the JSON endpoints get.
+ */
+export class UploadBrandContextFileDto {
+  @ApiPropertyOptional({
+    enum: BRAND_CONTEXT_KINDS,
+    default: 'BIBLE',
+    description: 'Applied to every section the file produces.',
+  })
+  @IsOptional()
+  @IsIn([...BRAND_CONTEXT_KINDS])
+  kind?: (typeof BRAND_CONTEXT_KINDS)[number];
+
+  @ApiPropertyOptional({
+    description:
+      'Fallback title for content that has no headings of its own. Derived ' +
+      'from the filename when omitted.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
+
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Sent as the string "true" / "false" by multipart forms.',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : value === true || value === 'true',
+  )
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class BulkDeleteBrandContextDto {
+  @ApiProperty({
+    description: 'Context document IDs to delete',
+    type: [String],
+    example: ['ck...1', 'ck...2'],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  ids: string[];
 }

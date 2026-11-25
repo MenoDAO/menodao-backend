@@ -32,6 +32,7 @@ import { CareIntelligenceModule } from './care-intelligence/care-intelligence.mo
 import { AppointmentsModule } from './appointments/appointments.module';
 import { WebAuthnModule } from './webauthn/webauthn.module';
 import { FoundationSiteModule } from './foundation-site/foundation-site.module';
+import { CalendarModule } from './calendar/calendar.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { FoundationSiteModule } from './foundation-site/foundation-site.module';
     AppointmentsModule,
     WebAuthnModule,
     FoundationSiteModule,
+    CalendarModule,
   ],
   controllers: [AppController],
   providers: [AppService],

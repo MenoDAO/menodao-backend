@@ -14,6 +14,13 @@ import { SmsService } from '../sms/sms.service';
 import { ReferralService } from '../referrals/referral.service';
 import { CareEventsService } from '../care-intelligence/care-events.service';
 import { CareEventType } from '@prisma/client';
+import { hashOtpCode, verifyOtpCode } from './otp-hash.util';
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+/** Per-phone SMS request cap. Protects against SMS-cost abuse and spam. */
+const MAX_OTP_REQUESTS_PER_HOUR = 10;
+/** Wrong guesses allowed before a code is burned. */
+const MAX_OTP_ATTEMPTS = 5;
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 /** Per-phone SMS request cap. Protects against SMS-cost abuse and spam. */
@@ -152,10 +159,10 @@ export class AuthService {
       }
     }
 
-    // Create new OTP
+    // Create new OTP (stored as an HMAC hash, never plaintext).
     await this.prisma.oTPCode.create({
       data: {
-        code,
+        code: hashOtpCode(code),
         phoneNumber: normalizedPhone,
         expiresAt,
         memberId: member.id,
@@ -220,7 +227,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
-    if (otpRecord.code !== code) {
+    if (!verifyOtpCode(code, otpRecord.code)) {
       const attempts = otpRecord.attempts + 1;
       await this.prisma.oTPCode.update({
         where: { id: otpRecord.id },

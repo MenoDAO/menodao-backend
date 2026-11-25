@@ -14,8 +14,13 @@ function buildService(payload: Record<string, unknown>) {
     },
     clinic: { findMany: jest.fn().mockResolvedValue([]) },
     clinicOverride: undefined,
-    member: { count: jest.fn().mockResolvedValue(0) },
+    member: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     subscription: { count: jest.fn().mockResolvedValue(0) },
+    camp: { count: jest.fn().mockResolvedValue(0) },
+    campRegistration: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const config = {
     get: jest.fn().mockReturnValue(null),

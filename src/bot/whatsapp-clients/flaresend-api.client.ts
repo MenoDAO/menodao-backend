@@ -575,11 +575,256 @@ export class FlaresendApiClient implements IWhatsappClient {
   }
 
   /**
-   * FlareSend API does not currently expose an endpoint to download inbound media.
+   * Downloads inbound media using any of the shapes FlareSend/Baileys payloads
+   * use in practice: a signed URL, inline base64, or a media id that can be
+   * fetched from the authenticated API. We try all three rather than guessing
+   * which one a particular webhook version exposes.
    */
+  async downloadMediaDescriptor(
+    descriptor: any,
+    fallbackMediaId?: string,
+    expectedMimeType?: string,
+  ): Promise<{
+    buffer: Buffer;
+    mimeType: string;
+    originalFilename?: string;
+  } | null> {
+    if (!descriptor || typeof descriptor !== 'object') return null;
+    const mimeType =
+      (typeof descriptor.mimetype === 'string' && descriptor.mimetype) ||
+      (typeof descriptor.mimeType === 'string' && descriptor.mimeType) ||
+      expectedMimeType ||
+      'application/octet-stream';
+
+    const candidateIds = [
+      descriptor.id,
+      descriptor.mediaId,
+      descriptor.media_id,
+      descriptor.fileId,
+      descriptor.file_id,
+      fallbackMediaId,
+    ].filter((value): value is string => typeof value === 'string' && Boolean(value.trim()));
+
+    const base64Value = [
+      descriptor.base64,
+      descriptor.data,
+      descriptor.file,
+      descriptor.fileBase64,
+      descriptor.media,
+    ].find(
+      (value) =>
+        typeof value === 'string' && value.trim().length > 0 && !/^https?:\/\//i.test(value.trim()),
+    ) as string | undefined;
+    if (base64Value) {
+      try {
+        const cleaned = base64Value.includes(',')
+          ? base64Value.slice(base64Value.indexOf(',') + 1)
+          : base64Value;
+        const buffer = Buffer.from(cleaned.replace(/\s/g, ''), 'base64');
+        if (buffer.length > 0) {
+          return {
+            buffer,
+            mimeType,
+            originalFilename: this.mediaFilename(descriptor, mimeType),
+          };
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Invalid inline base64 media: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    const candidateUrls = [
+      descriptor.url,
+      descriptor.mediaUrl,
+      descriptor.media_url,
+      descriptor.downloadUrl,
+      descriptor.download_url,
+      descriptor.link,
+      descriptor.fileUrl,
+      descriptor.signedUrl,
+    ].filter((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value.trim()));
+
+    for (const url of candidateUrls) {
+      if (!this.isSafeMediaUrl(url)) {
+        this.logger.warn('Rejected an unsafe FlareSend media URL.');
+        continue;
+      }
+      try {
+        const response = await axios.get(url, {
+          responseType: 'arraybuffer',
+          timeout: 30_000,
+          maxContentLength: 30 * 1024 * 1024,
+          headers: this.isOwnBaseUrl(url)
+            ? await this.accountHeaders()
+            : undefined,
+        });
+        const buffer = Buffer.from(response.data);
+        if (buffer.length > 0) {
+          return {
+            buffer,
+            mimeType:
+              (response.headers['content-type'] as string | undefined)?.split(';')[0] ||
+              mimeType,
+            originalFilename: this.mediaFilename(descriptor, mimeType),
+          };
+        }
+      } catch (error) {
+        this.logger.warn(
+          `FlareSend media URL download failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    for (const mediaId of candidateIds) {
+      for (const path of this.mediaDownloadPaths()) {
+        try {
+          const response = await this.http.get(path.replace('{id}', encodeURIComponent(mediaId)), {
+            responseType: 'arraybuffer',
+            timeout: 30_000,
+            maxContentLength: 30 * 1024 * 1024,
+            headers: await this.accountHeaders(),
+          });
+          const buffer = Buffer.from(response.data);
+          if (buffer.length > 0) {
+            return {
+              buffer,
+              mimeType:
+                (response.headers['content-type'] as string | undefined)?.split(';')[0] ||
+                mimeType,
+              originalFilename: this.mediaFilename(descriptor, mimeType),
+            };
+          }
+        } catch (error) {
+          this.logger.debug(
+            `FlareSend media endpoint ${path} failed for ${mediaId.slice(0, 8)}…: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Backwards-compatible wrapper for consumers that only have a media id. */
   async downloadMedia(mediaId: string): Promise<Buffer> {
-    const errorMsg = `Media download is not supported by FlareSend API for media ID: ${mediaId}.`;
-    this.logger.warn(errorMsg);
-    throw new Error(errorMsg);
+    const result = await this.downloadMediaDescriptor(
+      { id: mediaId, mimetype: 'application/octet-stream' },
+      mediaId,
+    );
+    if (!result) {
+      throw new Error(`Could not download FlareSend media ${mediaId}.`);
+    }
+    return result.buffer;
+  }
+
+  private mediaDownloadPaths(): string[] {
+    const configured = this.configService
+      .get<string>('FLARESEND_MEDIA_DOWNLOAD_PATHS')
+      ?.split(',')
+      .map((path) => path.trim())
+      .filter(Boolean);
+    return configured?.length
+      ? configured
+      : ['/media/{id}', '/download-media/{id}', '/media/download/{id}'];
+  }
+
+  private isOwnBaseUrl(url: string): boolean {
+    try {
+      return new URL(url).host === new URL(this.baseUrl).host;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Blocks loopback/link-local/private targets even with a valid webhook token. */
+  private isSafeMediaUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      const host = parsed.hostname.toLowerCase();
+      return !(
+        host === 'localhost' ||
+        host === '0.0.0.0' ||
+        host === '::1' ||
+        host.endsWith('.localhost') ||
+        host.endsWith('.local') ||
+        /^10\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        /^127\./.test(host) ||
+        /^169\.254\./.test(host)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private mediaFilename(descriptor: any, mimeType: string): string {
+    const candidate =
+      descriptor.fileName ||
+      descriptor.filename ||
+      descriptor.name ||
+      descriptor.fileNameFromClient;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
+    return `field-upload.${extension}`;
+  }
+
+  /**
+   * Schedules a text message via POST /schedule-message.
+   * sendAt format expected by FlareSend: YYYY-MM-DD HH:mm:ss
+   */
+  async scheduleTextMessage(
+    to: string,
+    body: string,
+    sendAt: Date,
+  ): Promise<string | null> {
+    const recipient = this.formatRecipient(to);
+    if (!recipient) {
+      this.logger.error('Cannot schedule message: invalid recipient phone.');
+      return null;
+    }
+    const token = await this.resolveSendToken();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const sendAtStr = `${sendAt.getFullYear()}-${pad(sendAt.getMonth() + 1)}-${pad(sendAt.getDate())} ${pad(sendAt.getHours())}:${pad(sendAt.getMinutes())}:${pad(sendAt.getSeconds())}`;
+
+    try {
+      const response = await this.http.post<{ success?: boolean; task_id?: string; id?: string }>(
+        '/schedule-message',
+        {
+          recipients: [recipient],
+          type: 'text',
+          text: body,
+          sendAt: sendAtStr,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      return response.data?.task_id || response.data?.id || 'scheduled';
+    } catch (error) {
+      this.logger.warn(`Failed to schedule FlareSend message: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Cancels a scheduled message via DELETE /schedule-message/:id.
+   */
+  async cancelScheduledMessage(taskId: string): Promise<void> {
+    if (!taskId) return;
+    try {
+      const token = await this.resolveSendToken();
+      await this.http.delete(`/schedule-message/${taskId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (error) {
+      this.logger.warn(`Failed to cancel scheduled FlareSend message ${taskId}: ${error}`);
+    }
   }
 }

@@ -1,0 +1,157 @@
+import { ConfigService } from '@nestjs/config';
+import { FieldDataService, normalizeFieldPhone } from './field-data.service';
+
+function build(overrides: {
+  contributor?: unknown;
+  llmReply?: string;
+  llmError?: Error;
+} = {}) {
+  const submissions = new Map<string, any>();
+  const prisma = {
+    fieldContributor: {
+      findFirst: jest.fn().mockResolvedValue(
+        overrides.contributor === undefined
+          ? { id: 'c1', phoneNumber: '254712345678', role: 'DOCTOR' }
+          : overrides.contributor,
+      ),
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
+    },
+    fieldSubmission: {
+      create: jest.fn().mockImplementation(({ data }) => {
+        const row = {
+          id: data.id,
+          ...data,
+          status: data.status || 'PENDING',
+        };
+        submissions.set(row.id, row);
+        return Promise.resolve(row);
+      }),
+      update: jest.fn().mockImplementation(({ where, data }) => {
+        const row = { ...submissions.get(where.id), ...data };
+        submissions.set(where.id, row);
+        return Promise.resolve(row);
+      }),
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockImplementation(({ where }) =>
+        Promise.resolve(submissions.get(where.id) ?? null),
+      ),
+      delete: jest.fn(),
+    },
+  };
+  const storage = {
+    save: jest.fn().mockResolvedValue({
+      key: 'field-data/raw/test/image.jpg',
+      sha256: 'abc',
+    }),
+    read: jest.fn(),
+    newSubmissionId: jest.fn(() => `sub-${submissions.size + 1}`),
+  };
+  const llm = {
+    generateCompletion: jest.fn().mockImplementation(() => {
+      if (overrides.llmError) throw overrides.llmError;
+      return Promise.resolve(overrides.llmReply ?? '{}');
+    }),
+  };
+  const config = {
+    get: jest.fn().mockReturnValue(null),
+  } as unknown as ConfigService;
+  const service = new FieldDataService(
+    prisma as never,
+    storage as never,
+    config,
+    llm,
+  );
+  return { service, prisma, storage, llm };
+}
+
+const imageInput = {
+  phoneCandidates: ['+254712345678'],
+  kind: 'IMAGE' as const,
+  mimeType: 'image/jpeg',
+  buffer: Buffer.from('fake-image'),
+  caption: 'Camp attendance',
+};
+
+describe('FieldDataService', () => {
+  it('normalises Kenyan phone numbers to one canonical form', () => {
+    expect(normalizeFieldPhone('+254712345678')).toBe('254712345678');
+    expect(normalizeFieldPhone('0712345678')).toBe('254712345678');
+    expect(normalizeFieldPhone('712345678')).toBe('254712345678');
+  });
+
+  it('rejects uploads from senders who are not authorised contributors', async () => {
+    const { service, storage, llm } = build({ contributor: null });
+    const result = await service.ingestMedia(imageInput);
+    expect(result.accepted).toBe(false);
+    expect(result.reply).toContain('authorised');
+    expect(storage.save).not.toHaveBeenCalled();
+    expect(llm.generateCompletion).not.toHaveBeenCalled();
+  });
+
+  it('saves a high-confidence image extraction as PARSED', async () => {
+    const { service, llm } = build({
+      llmReply: JSON.stringify({
+        reportType: 'Clinic camp register',
+        eventDate: '2026-11-20',
+        location: 'Mikindani',
+        patientCount: 42,
+        peopleSeen: 42,
+        summary: 'Forty-two members attended the dental camp.',
+        observations: ['Register was legible'],
+        confidence: 0.92,
+        unclear: [],
+      }),
+    });
+    const result = await service.ingestMedia(imageInput);
+    expect(result.accepted).toBe(true);
+    expect(result.status).toBe('PARSED');
+    expect(llm.generateCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'field_data.parse',
+        responseFormat: 'json',
+        images: [expect.objectContaining({ mimeType: 'image/jpeg' })],
+      }),
+    );
+  });
+
+  it('routes low-confidence extractions to the admin review queue', async () => {
+    const { service } = build({
+      llmReply: JSON.stringify({
+        summary: 'Some text was hard to read',
+        confidence: 0.31,
+        unclear: ['patient count'],
+      }),
+    });
+    const result = await service.ingestMedia(imageInput);
+    expect(result.status).toBe('NEEDS_REVIEW');
+    expect(result.reply).toContain('administrator');
+  });
+
+  it('falls back to admin when the model returns invalid JSON', async () => {
+    const { service } = build({ llmReply: 'I cannot read this image.' });
+    const result = await service.ingestMedia(imageInput);
+    expect(result.status).toBe('NEEDS_REVIEW');
+  });
+
+  it('falls back to admin when the model call fails', async () => {
+    const { service } = build({ llmError: new Error('quota') });
+    const result = await service.ingestMedia(imageInput);
+    expect(result.status).toBe('NEEDS_REVIEW');
+  });
+
+  it('does not send video or documents to the text model', async () => {
+    const { service, llm } = build();
+    const result = await service.ingestMedia({
+      ...imageInput,
+      kind: 'VIDEO',
+      mimeType: 'video/mp4',
+    });
+    expect(result.status).toBe('NEEDS_REVIEW');
+    expect(llm.generateCompletion).not.toHaveBeenCalled();
+  });
+});

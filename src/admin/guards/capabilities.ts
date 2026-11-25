@@ -24,7 +24,9 @@ export type Capability =
   | 'conversations.read'
   | 'conversations.erase'
   | 'audit.read'
-  | 'staff.manage';
+  | 'staff.manage'
+  | 'field_data.read'
+  | 'field_data.write';
 
 export const ALL_CAPABILITIES: Capability[] = [
   'admins.manage',
@@ -46,6 +48,8 @@ export const ALL_CAPABILITIES: Capability[] = [
   'conversations.erase',
   'audit.read',
   'staff.manage',
+  'field_data.read',
+  'field_data.write',
 ];
 
 const SUPPORT_CAPABILITIES: Capability[] = [
@@ -57,6 +61,7 @@ const SUPPORT_CAPABILITIES: Capability[] = [
   'withdrawals.read',
   'clinics.read',
   'brand_context.read',
+  'field_data.read',
   'conversations.read',
 ];
 
@@ -70,6 +75,7 @@ const JUNIOR_CAPABILITIES: Capability[] = [
   'withdrawals.read',
   'clinics.read',
   'brand_context.read',
+  'field_data.read',
   'conversations.read',
 ];
 

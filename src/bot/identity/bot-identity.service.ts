@@ -99,35 +99,12 @@ export class BotIdentityService {
           isVerified: byPhone.isVerified,
         };
       }
-      // Unknown number → create unverified stub so leads/drafts have a FK.
-      // Full OTP verification still happens via the backend auth flow.
-      try {
-        const created = await this.prisma.member.create({
-          data: {
-            phoneNumber: fallbackE164,
-            fullName: params.contactName || null,
-            whatsappId: wid && !this.isLid(wid) ? wid : null,
-            whatsappLinkedAt: wid ? new Date() : null,
-            isVerified: false,
-          },
-          select: MEMBER_SELECT,
-        });
-        this.logger.log(
-          `Created bot-stub Member for ${this.mask(fallbackE164)} (unverified, pending OTP)`,
-        );
-        return { ...created, isVerified: created.isVerified };
-      } catch (error) {
-        // Race: two webhooks created concurrently — re-read by phone.
-        this.logger.warn(
-          `Stub create raced for ${this.mask(fallbackE164)}: ${
-            error instanceof Error ? error.message : String(error)
-          } — re-reading`,
-        );
-        return this.prisma.member.findUnique({
-          where: { phoneNumber: fallbackE164 },
-          select: MEMBER_SELECT,
-        });
-      }
+      // Unregistered number: per v2 spec (Workstream 2 & 9), do NOT create
+      // member stubs for unknown senders. Return null so no LLM call is made.
+      this.logger.log(
+        `Unmatched sender ${this.mask(fallbackE164)}: not registered in Member database.`,
+      );
+      return null;
     }
 
     if (wid && this.isLid(wid)) {

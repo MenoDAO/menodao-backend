@@ -94,7 +94,7 @@ You are bilingual. Respond in the same language the member uses (English or Swah
 const FALLBACK_EN =
   "I'm having trouble connecting right now. Would you like to speak with a human dentist instead? Reply _5_ or type _dentist_.";
 const FALLBACK_SW =
-  'Nina tatizo la kuunganika sasa hivi. Ungependa kuzungumza na daktari wa meno? Jibu _5_ au andika _daktari_.';
+  'Nina tatizo la kuungana sasa hivi. Tafadhali jaribu tena, au andika _daktari_ ukihitaji msaada wa haraka.';
 
 // ─── LlmService ───────────────────────────────────────────────────────────────
 
@@ -127,7 +127,7 @@ export class LlmService {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: INTENT_CLASSIFICATION_PROMPT },
       // last 4 turns for context
-      ...history.slice(-4).map(this.turnToParam),
+      ...history.slice(-4).map((turn) => this.turnToParam(turn)),
       { role: 'user', content: message },
     ];
 
@@ -169,7 +169,7 @@ export class LlmService {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: buildDentalSystemPrompt(memberContext) },
       // last 10 turns
-      ...history.slice(-10).map(this.turnToParam),
+      ...history.slice(-10).map((turn) => this.turnToParam(turn)),
       { role: 'user', content: message },
     ];
 

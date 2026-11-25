@@ -53,6 +53,22 @@ export class FoundationImpactOverrideDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
+  @Max(100_000)
+  campsConducted?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10_000_000)
+  peopleServed?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   @Max(47)
   counties?: number | null;
 }

@@ -13,10 +13,13 @@
  *   unverified stub members; staff verify later) — the REST path in
  *   AppointmentsService keeps the strict active-subscription guard.
  */
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
+import { CalendarSyncService } from '../../calendar/calendar-sync.service';
+import { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
+import { PiiSanitizer } from '../privacy/pii-sanitizer';
 import { AppointmentActor, AppointmentStatus } from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
@@ -35,16 +38,17 @@ import {
   anchors,
   nairobiNow,
   toScheduledAt,
-  validateSlot,
-  daySlots,
   openDayNames,
   snapToSlot,
 } from './booking-time.util';
+import type { SlotValidationResult } from './booking-time.util';
+import { parseBookingDateTime } from './swahili-datetime.util';
 import {
   BookingLang,
   t,
   ASK_SERVICE,
   ASK_SERVICE_CHOICE,
+  ASK_DOCTOR,
   ASK_DATE_TIME,
   ASK_NAME,
   ASK_CLINIC,
@@ -90,10 +94,6 @@ class BookingExtractionResult {
 
   @IsOptional()
   @IsString()
-  clientName?: string | null;
-
-  @IsOptional()
-  @IsString()
   service?: string | null;
 
   @IsOptional()
@@ -133,22 +133,49 @@ export interface BookingResult {
   error?: string;
 }
 
+type BotDoctor = {
+  id: string;
+  name: string;
+  title?: string | null;
+  specialty?: string | null;
+  isActive?: boolean;
+  clinicId?: string | null;
+  consultationMinutes: number;
+  bufferMinutes: number;
+  availability: Array<{
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+  }>;
+};
+
 type BotClinic = {
   id: string;
   name: string;
   services: string[];
+  doctors: BotDoctor[];
+  operatingSchedule: Array<{
+    dayOfWeek: number;
+    openTime: string | null;
+    closeTime: string | null;
+    isClosed: boolean;
+  }>;
 };
 
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
   private readonly cfg: BookingConfig;
+  private procedureDurations = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
     private readonly smsService: SmsService,
+    private readonly calendarSync: CalendarSyncService,
+    @Optional() private readonly flaresendClient?: FlaresendApiClient,
   ) {
     this.cfg = this.loadConfig();
   }
@@ -195,6 +222,132 @@ export class BookingService {
     );
   }
 
+  private getServiceDurationMinutes(service?: string | null): number {
+    if (!service) return this.cfg.slotMinutes;
+    const key = service.toLowerCase();
+    const direct = this.procedureDurations.get(key);
+    if (direct) return direct;
+    for (const [name, mins] of this.procedureDurations.entries()) {
+      if (key.includes(name) || name.includes(key)) return mins;
+    }
+    return this.cfg.slotMinutes;
+  }
+
+  /** JS day (0=Sun..6=Sat) -> Luxon ISO weekday (1=Mon..7=Sun). */
+  private jsDayToIso(day: number): number {
+    return day === 0 ? 7 : day;
+  }
+
+  private getClinicDayWindows(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+    doctorId?: string | null,
+  ): Array<{ open: string; close: string }> {
+    // Doctor availability takes precedence when any doctor has schedule for the day.
+    const doctors = doctorId
+      ? (clinic?.doctors ?? []).filter((d) => d.id === doctorId)
+      : (clinic?.doctors ?? []);
+    if (doctors.length > 0) {
+      const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
+      const windows: Array<{ open: string; close: string }> = [];
+      for (const doc of doctors) {
+        for (const a of doc.availability) {
+          if (a.isActive && a.dayOfWeek === jsDay) {
+            windows.push({ open: a.startTime, close: a.endTime });
+          }
+        }
+      }
+      if (windows.length > 0) return windows;
+    }
+    // Clinic operating schedule
+    const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
+    const row = clinic?.operatingSchedule?.find((r) => r.dayOfWeek === jsDay);
+    if (row) {
+      if (row.isClosed || !row.openTime || !row.closeTime) return [];
+      return [{ open: row.openTime, close: row.closeTime }];
+    }
+    // Kenyan medic default: Mon-Sat 08:00-17:00, Sun closed
+    if (isoWeekday === 7) return [];
+    return [{ open: this.cfg.openTime, close: this.cfg.closeTime }];
+  }
+
+  private isClinicOpenOnDay(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+    doctorId?: string | null,
+  ): boolean {
+    return this.getClinicDayWindows(clinic, isoWeekday, doctorId).length > 0;
+  }
+
+  private validateSlotForClinic(
+    dateIso: string,
+    timeHHmm: string,
+    now: DateTime,
+    clinic: BotClinic | null | undefined,
+    doctorId?: string | null,
+  ): SlotValidationResult {
+    const [hour, minute] = timeHHmm.split(':').map(Number);
+    const candidate = DateTime.fromISO(dateIso, {
+      zone: this.cfg.timezone,
+    }).set({
+      hour,
+      minute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (candidate <= now) return 'PAST';
+
+    const weekday = candidate.weekday;
+    const windows = this.getClinicDayWindows(clinic, weekday, doctorId);
+    if (windows.length === 0) return 'CLOSED_DAY';
+
+    const slotEndMinutes = hour * 60 + minute + this.cfg.slotMinutes;
+    const startMinutes = hour * 60 + minute;
+    const fitsWindow = windows.some((w) => {
+      const [openH, openM] = w.open.split(':').map(Number);
+      const [closeH, closeM] = w.close.split(':').map(Number);
+      const openMinutes = openH * 60 + openM;
+      const closeMinutes = closeH * 60 + closeM;
+      return startMinutes >= openMinutes && slotEndMinutes <= closeMinutes;
+    });
+    if (!fitsWindow) return 'OUTSIDE_HOURS';
+
+    // Boundary check: align to earliest opening window
+    const [refH, refM] = windows[0].open.split(':').map(Number);
+    const refOpen = refH * 60 + refM;
+    const minutesSinceOpen = startMinutes - refOpen;
+    if (minutesSinceOpen % this.cfg.slotMinutes !== 0) {
+      return 'NOT_ON_SLOT_BOUNDARY';
+    }
+    return 'OK';
+  }
+
+  private getClinicDaySlots(
+    clinic: BotClinic | null | undefined,
+    isoWeekday: number,
+    doctorId?: string | null,
+  ): string[] {
+    const windows = this.getClinicDayWindows(clinic, isoWeekday, doctorId);
+    const out: string[] = [];
+    for (const w of windows) {
+      const [openH, openM] = w.open.split(':').map(Number);
+      const [closeH, closeM] = w.close.split(':').map(Number);
+      const openMinutes = openH * 60 + openM;
+      const closeMinutes = closeH * 60 + closeM;
+      for (
+        let m = openMinutes;
+        m + this.cfg.slotMinutes <= closeMinutes;
+        m += this.cfg.slotMinutes
+      ) {
+        const hh = String(Math.floor(m / 60)).padStart(2, '0');
+        const mm = String(m % 60).padStart(2, '0');
+        const slot = `${hh}:${mm}`;
+        if (!out.includes(slot)) out.push(slot);
+      }
+    }
+    return out;
+  }
+
   private async loadClinics(): Promise<BotClinic[]> {
     const [clinics, procedures] = await Promise.all([
       this.prisma.clinic.findMany({
@@ -206,17 +359,65 @@ export class BookingService {
           subCounty: true,
           operatingHours: true,
           whatsappNumber: true,
+          doctors: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              title: true,
+              specialty: true,
+              isActive: true,
+              consultationMinutes: true,
+              bufferMinutes: true,
+              availability: {
+                where: { isActive: true },
+                select: {
+                  dayOfWeek: true,
+                  startTime: true,
+                  endTime: true,
+                  isActive: true,
+                },
+              },
+            },
+            orderBy: { name: 'asc' },
+          },
+          operatingSchedule: {
+            select: {
+              dayOfWeek: true,
+              openTime: true,
+              closeTime: true,
+              isClosed: true,
+            },
+          },
         },
         orderBy: { name: 'asc' },
       }),
       this.prisma.procedure.findMany({
         where: { isActive: true },
-        select: { name: true },
+        select: { name: true, durationMinutes: true },
         orderBy: { name: 'asc' },
       }),
     ]);
     const services = procedures.map((p) => p.name);
-    return clinics.map((c) => ({ id: c.id, name: c.name, services }));
+    this.procedureDurations = new Map(
+      procedures.map((p) => [p.name.toLowerCase(), p.durationMinutes ?? 15]),
+    );
+    return clinics.map((c) => ({
+      id: c.id,
+      name: c.name,
+      services,
+      doctors: c.doctors.map((d) => ({
+        id: d.id,
+        name: d.name,
+        title: d.title,
+        specialty: d.specialty,
+        isActive: d.isActive,
+        consultationMinutes: d.consultationMinutes ?? 15,
+        bufferMinutes: d.bufferMinutes ?? 5,
+        availability: d.availability,
+      })),
+      operatingSchedule: c.operatingSchedule,
+    }));
   }
 
   async handleDraftTurn(
@@ -261,7 +462,7 @@ export class BookingService {
               `- ID: ${c.id} | Name: ${c.name} | Services: ${c.services.join(', ')}`,
           )
           .join('\n')
-      : 'No specific clinics configured — use "Dr. Papi Dental Clinic" as default.';
+      : 'No specific clinics configured. Use "Dr. Papi Dental Clinic" as default.';
 
     const history = recentLogs
       .reverse()
@@ -298,9 +499,12 @@ export class BookingService {
     let extraction: BookingExtractionResult | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        const sanitizedUserPrompt = PiiSanitizer.sanitizeForLlm(userMessage, {
+          fullName: memberName,
+        });
         const raw = await this.llmProvider.generateCompletion({
           systemPrompt,
-          userPrompt: userMessage,
+          userPrompt: sanitizedUserPrompt,
           responseFormat: 'json',
           operation: 'booking_extraction',
         });
@@ -354,6 +558,7 @@ export class BookingService {
     const updates: Partial<{
       service: string;
       clinicId: string | null;
+      doctorId: string | null;
       date: string;
       time: string;
       clientName: string;
@@ -395,6 +600,27 @@ export class BookingService {
       resolvedClinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
     }
 
+    // Doctor selection: when the clinic has several doctors, accept the reply
+    // to ASK_DOCTOR as either its 1-based number or a doctor-name match.
+    // Single-doctor clinics are auto-assigned; otherwise the missing-fields
+    // flow asks the member which doctor they prefer.
+    if (
+      resolvedClinic &&
+      resolvedClinic.doctors.length > 0 &&
+      !draft.doctorId &&
+      !updates.doctorId
+    ) {
+      const selected = this.parseDoctorSelection(
+        userMessage,
+        resolvedClinic.doctors,
+      );
+      if (selected) {
+        updates.doctorId = selected.id;
+      } else if (resolvedClinic.doctors.length === 1) {
+        updates.doctorId = resolvedClinic.doctors[0].id;
+      }
+    }
+
     if (extraction.service) {
       const effectiveClinic =
         resolvedClinic ??
@@ -428,13 +654,34 @@ export class BookingService {
       }
     }
 
-    if (extraction.preferredDate) {
-      updates.date = extraction.preferredDate;
+    const parsedDateTime = parseBookingDateTime(
+      userMessage,
+      nairobiNow(this.cfg),
+      this.cfg.timezone,
+    );
+
+    const extractionDateIsValid =
+      !!extraction.preferredDate &&
+      /^\d{4}-\d{2}-\d{2}$/.test(extraction.preferredDate);
+    const extractionTimeIsValid =
+      !!extraction.preferredTime &&
+      /^\d{2}:\d{2}$/.test(extraction.preferredTime);
+
+    if (extractionDateIsValid) {
+      updates.date = extraction.preferredDate!;
       if (extraction.rawDateMentioned)
         updates.rawDateMentioned = extraction.rawDateMentioned;
+    } else if (parsedDateTime.dateIso) {
+      updates.date = parsedDateTime.dateIso;
+      updates.rawDateMentioned = parsedDateTime.rawDate ?? userMessage;
     }
-    if (extraction.preferredTime) {
-      updates.time = extraction.preferredTime;
+
+    if (extractionTimeIsValid) {
+      updates.time = extraction.preferredTime!;
+      if (draft.status === 'AWAITING_CONFIRMATION')
+        updates.status = 'COLLECTING';
+    } else if (parsedDateTime.timeHHmm) {
+      updates.time = parsedDateTime.timeHHmm;
       if (draft.status === 'AWAITING_CONFIRMATION')
         updates.status = 'COLLECTING';
     }
@@ -447,7 +694,17 @@ export class BookingService {
 
     if (mergedDate && mergedTime) {
       const now = nairobiNow(this.cfg);
-      const validation = validateSlot(mergedDate, mergedTime, now, this.cfg);
+      const clinicForValidation =
+        resolvedClinic ??
+        clinics.find((c) => c.id === (updates.clinicId ?? draft.clinicId)) ??
+        null;
+      const validation = this.validateSlotForClinic(
+        mergedDate,
+        mergedTime,
+        now,
+        clinicForValidation,
+        updates.doctorId ?? draft.doctorId ?? null,
+      );
       if (validation !== 'OK') {
         await this.saveDraft(userId, updates);
         const reply = this.buildSlotError(
@@ -460,12 +717,8 @@ export class BookingService {
       }
     }
 
-    if (extraction.clientName) {
-      updates.clientName = extraction.clientName;
-      await this.prisma.member.update({
-        where: { id: userId },
-        data: { fullName: extraction.clientName },
-      });
+    if (!draft.clientName && memberName) {
+      updates.clientName = memberName;
     }
 
     await this.saveDraft(userId, updates);
@@ -488,7 +741,25 @@ export class BookingService {
       );
     }
 
-    const missing = this.collectMissingFields(updatedDraft);
+    const meaningfulUpdate =
+      !!updates.service ||
+      !!updates.clinicId ||
+      !!updates.doctorId ||
+      !!updates.date ||
+      !!updates.time ||
+      !!updates.clientName ||
+      updates.status === 'COLLECTING';
+    if (this.isAvailabilityQuestion(userMessage) && !meaningfulUpdate) {
+      return {
+        reply: await this.describeAvailability(userMessage, effectiveLang, {
+          doctorId: updatedDraft.doctorId,
+          service: updatedDraft.service,
+        }),
+        triageFlag: false,
+      };
+    }
+
+    const missing = this.collectMissingFields(updatedDraft, clinics);
     if (missing.length > 0) {
       if (missing.includes('clinic') && clinics.length === 0) {
         return {
@@ -516,11 +787,20 @@ export class BookingService {
       'Dr. Papi Dental Clinic';
     return {
       reply: t(READ_BACK, effectiveLang, {
-        service: updatedDraft.service!,
+        service: updatedDraft.service ?? '',
         date: this.formatDate(updatedDraft.date!, effectiveLang),
         time: this.format24hTime(updatedDraft.time!),
         clinic: resolvedClinicName,
         name: updatedDraft.clientName ?? memberName ?? 'there',
+        doctor:
+          updatedDraft.doctorId &&
+          clinics
+            .find((c) => c.id === updatedDraft.clinicId)
+            ?.doctors.some((d) => d.id === updatedDraft.doctorId)
+            ? clinics
+                .find((c) => c.id === updatedDraft.clinicId)!
+                .doctors.find((d) => d.id === updatedDraft.doctorId)!.name
+            : '',
       }),
       triageFlag: false,
     };
@@ -530,6 +810,7 @@ export class BookingService {
     draft: {
       memberId: string;
       clinicId: string | null;
+      doctorId: string | null;
       service: string | null;
       date: string | null;
       time: string | null;
@@ -542,6 +823,8 @@ export class BookingService {
   ): Promise<{ reply: string; triageFlag: boolean }> {
     const scheduledAt = toScheduledAt(draft.date!, draft.time!, this.cfg);
     const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+    const doctorId = draft.doctorId;
+    const durationMinutes = this.getServiceDurationMinutes(draft.service);
 
     try {
       const appointment = await this.prisma.$transaction(async (tx) => {
@@ -577,18 +860,33 @@ export class BookingService {
         const taken = nearby.filter((row) =>
           this.overlaps(
             scheduledAt,
-            this.cfg.slotMinutes,
+            durationMinutes,
             row.scheduledAt,
             row.durationMinutes,
           ),
         ).length;
-        if (taken >= chairs) throw new Error('SLOT_CONFLICT');
+        if (doctorId) {
+          const doctorConflict = nearby.some(
+            (row) =>
+              scheduledAt.getTime() <
+                new Date(
+                  row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+                ).getTime() &&
+              new Date(row.scheduledAt).getTime() <
+                scheduledAt.getTime() + durationMinutes * 60_000,
+          );
+          if (doctorConflict) throw new Error('SLOT_CONFLICT');
+        } else if (taken >= chairs) {
+          throw new Error('SLOT_CONFLICT');
+        }
 
         const appt = await tx.appointment.create({
           data: {
             memberId: draft.memberId,
             clinicId: draft.clinicId,
+            doctorId: doctorId ?? undefined,
             scheduledAt,
+            durationMinutes,
             intakeReason: draft.service ?? 'General consultation',
             hasConsent: true,
             memberNotes: draft.rawDateMentioned
@@ -611,6 +909,24 @@ export class BookingService {
         return appt;
       });
 
+      // Best-effort push to the doctor's/clinic's connected external calendar.
+      try {
+        await this.calendarSync.createAppointmentEvent({
+          id: appointment.id,
+          scheduledAt,
+          durationMinutes,
+          doctorId,
+          clinicId: draft.clinicId!,
+          externalCalendarProvider: appointment.externalCalendarProvider,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `External calendar push failed for booking ${appointment.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
       // Notify clinic staff (doctor/physician) about the new booking —
       // general info only (member name + slot), no clinical details.
       await this.notifyStaffBooking(
@@ -619,6 +935,71 @@ export class BookingService {
         draft.service ?? null,
         scheduledAt,
       );
+
+      // Workstream 9: Schedule 24h and 2h reminders via FlareSend
+      if (this.flaresendClient && senderPhone) {
+        const appointmentTime = scheduledAt.getTime();
+        const nowMs = Date.now();
+        const clinicName = clinic?.name ?? 'MenoHub Clinic';
+
+        // 24 hours before
+        const reminder24h = new Date(appointmentTime - 24 * 60 * 60 * 1000);
+        if (reminder24h.getTime() > nowMs) {
+          const body24h =
+            lang === 'sw'
+              ? `Kikumbusho: Una miadi ya meno kesho saa ${this.format24hTime(draft.time!)} kwenye ${clinicName}. Tafadhali fika dakika 10 kabla.`
+              : `Reminder: You have a dental appointment tomorrow at ${this.format24hTime(draft.time!)} at ${clinicName}. Please arrive 10 minutes early.`;
+          this.flaresendClient
+            .scheduleTextMessage(senderPhone, body24h, reminder24h)
+            .then(async (taskId) => {
+              if (taskId) {
+                await this.prisma.appointmentReminder
+                  .create({
+                    data: {
+                      appointmentId: appointment.id,
+                      kind: 'DAY_BEFORE',
+                      channel: 'SMS',
+                      recipient: senderPhone,
+                      status: 'SCHEDULED',
+                    },
+                  })
+                  .catch(() => null);
+              }
+            })
+            .catch((err) =>
+              this.logger.warn(`Failed scheduling 24h reminder: ${err}`),
+            );
+        }
+
+        // 2 hours before
+        const reminder2h = new Date(appointmentTime - 2 * 60 * 60 * 1000);
+        if (reminder2h.getTime() > nowMs) {
+          const body2h =
+            lang === 'sw'
+              ? `Kikumbusho: Miadi yako ya meno kwenye ${clinicName} ni leo saa ${this.format24hTime(draft.time!)}. Tunakutakia safari njema!`
+              : `Reminder: Your dental appointment at ${clinicName} is today at ${this.format24hTime(draft.time!)}. See you soon!`;
+          this.flaresendClient
+            .scheduleTextMessage(senderPhone, body2h, reminder2h)
+            .then(async (taskId) => {
+              if (taskId) {
+                await this.prisma.appointmentReminder
+                  .create({
+                    data: {
+                      appointmentId: appointment.id,
+                      kind: 'HOUR_BEFORE',
+                      channel: 'SMS',
+                      recipient: senderPhone,
+                      status: 'SCHEDULED',
+                    },
+                  })
+                  .catch(() => null);
+              }
+            })
+            .catch((err) =>
+              this.logger.warn(`Failed scheduling 2h reminder: ${err}`),
+            );
+        }
+      }
 
       return {
         reply: t(BOOKING_CONFIRMED, lang, {
@@ -647,13 +1028,17 @@ export class BookingService {
           draft.clinicId,
           scheduledAt,
           3,
+          doctorId,
+          durationMinutes,
         );
-        const altText = alternatives
-          .map(
-            (d) =>
-              `• ${this.format24hTime(d.toFormat('HH:mm'))} on ${this.formatDate(d.toISODate()!, lang)}`,
-          )
-          .join('\n');
+        const altText = this.humanizeList(
+          alternatives.map((d) => {
+            const time = this.format24hTime(d.toFormat('HH:mm'));
+            const date = this.formatDate(d.toISODate()!, lang);
+            return lang === 'sw' ? `${time}, ${date}` : `${time} on ${date}`;
+          }),
+          lang,
+        );
         return {
           reply: t(SLOT_TAKEN, lang, { alternatives: altText }),
           triageFlag: false,
@@ -698,7 +1083,7 @@ export class BookingService {
     }).format(scheduledAt);
     const message =
       `MenoDAO: New booking for ${memberName}` +
-      (service ? ` — ${service}` : '') +
+      (service ? `, ${service}` : '') +
       ` at ${clinic.name} on ${when}. Reply or open the staff area to review.`;
     const smsResult = await this.smsService.sendSms(clinic.ownerPhone, message);
     if (!smsResult.success) {
@@ -708,21 +1093,276 @@ export class BookingService {
     }
   }
 
+  /**
+   * Answer an availability question (e.g. "what open slots are available at
+   * Mikindani clinic this week?") without creating or advancing a booking draft.
+   */
+  async describeAvailability(
+    message: string,
+    lang: BookingLang = 'en',
+    options: { doctorId?: string | null; service?: string | null } = {},
+  ): Promise<string> {
+    const clinics = await this.loadClinics();
+    if (clinics.length === 0) {
+      return t(BOOKING_UNAVAILABLE, lang);
+    }
+
+    const lower = message.toLowerCase();
+    const clinic =
+      clinics.find((c) => lower.includes(c.name.toLowerCase())) ??
+      this.fuzzyMatchClinic(
+        clinics.find((c) =>
+          c.name
+            .toLowerCase()
+            .split(/\s+/)
+            .some((tok) => tok.length > 3 && lower.includes(tok)),
+        )?.name ?? '',
+        clinics,
+      ) ??
+      (clinics.length === 1 ? clinics[0] : null);
+
+    const now = nairobiNow(this.cfg);
+    const rangeDays = this.inferAvailabilityRangeDays(lower);
+    const start = now.startOf('day');
+    const lines: string[] = [];
+
+    const targetClinics = clinic ? [clinic] : clinics.slice(0, 3);
+    for (const c of targetClinics) {
+      const header =
+        lang === 'sw'
+          ? `*${c.name}*: nafasi zinazopatikana:`
+          : `*${c.name}*: available slots:`;
+      lines.push(header);
+      let found = 0;
+      const slotDuration = options.service
+        ? this.getServiceDurationMinutes(options.service)
+        : this.cfg.slotMinutes;
+      for (
+        let dayOffset = 0;
+        dayOffset < rangeDays && found < 12;
+        dayOffset++
+      ) {
+        const day = start.plus({ days: dayOffset });
+        const daySlotsList = this.getClinicDaySlots(
+          c,
+          day.weekday,
+          options.doctorId ?? null,
+        );
+        if (daySlotsList.length === 0) continue;
+        const dayIso = day.toISODate()!;
+        const free: string[] = [];
+        for (const slot of daySlotsList) {
+          const candidate = toScheduledAt(dayIso, slot, this.cfg);
+          if (DateTime.fromJSDate(candidate) <= now) continue;
+          const taken = await this.isSlotTaken(
+            c.id,
+            candidate,
+            options.doctorId ?? null,
+            slotDuration,
+          );
+          if (!taken) free.push(this.format24hTime(slot));
+          if (free.length >= 6) break;
+        }
+        if (free.length > 0) {
+          const dayLabel = this.formatDate(dayIso, lang);
+          lines.push(`• ${dayLabel}: ${free.join(', ')}`);
+          found += free.length;
+        }
+      }
+      if (found === 0) {
+        lines.push(
+          lang === 'sw'
+            ? '• Hakuna nafasi wazi katika kipindi hiki. Jaribu siku nyingine.'
+            : '• No open slots in that window. Try another day or ask me to check further ahead.',
+        );
+      }
+      if (!clinic && targetClinics.length > 1) lines.push('');
+    }
+
+    if (!clinic && clinics.length > 1) {
+      lines.push(
+        lang === 'sw'
+          ? 'Taja kliniki (kwa mfano Mikindani au Palm Beach) ili nikupe nafasi maalum.'
+          : 'Mention a clinic name (for example Mikindani or Palm Beach) and I can narrow it down for you.',
+      );
+    } else {
+      lines.push(
+        lang === 'sw'
+          ? 'Ukitaka, niambie siku na saa unayopendelea nami nikuandikie miadi.'
+          : 'If you want, tell me the day and time you prefer and I can book it for you.',
+      );
+    }
+    return lines.join('\n').trim();
+  }
+
+  private inferAvailabilityRangeDays(lower: string): number {
+    if (/\btoday\b|\bleo\b/.test(lower)) return 1;
+    if (/\btomorrow\b|\bkesho\b/.test(lower)) return 2;
+    if (/\bthis week\b|\bwiki hii\b/.test(lower)) return 7;
+    if (/\bnext week\b|\bwki ijayo\b|\bwkijayo\b/.test(lower)) return 14;
+    if (/\bweek\b|\bwki\b/.test(lower)) return 7;
+    return 7;
+  }
+
+  private isAvailabilityQuestion(message: string): boolean {
+    const lower = message.toLowerCase();
+    const asksAvailability =
+      /\b(available|availability|open slots?|free slots?|openings?|when are you open|working hours|office hours|what times?|which slots?|any slots?)\b/.test(
+        lower,
+      ) ||
+      /(nafasi gani|nafasi zipo|kuna nafasi|mnafungua|muda gani)/.test(lower);
+    const asksToBook =
+      /\b(book|schedule|reserve|sign me up|panga|weka miadi|nataka kuja)\b/.test(
+        lower,
+      );
+    return asksAvailability && !asksToBook;
+  }
+
+  private async isSlotTaken(
+    clinicId: string,
+    scheduledAt: Date,
+    doctorId: string | null = null,
+    durationMinutes: number = this.cfg.slotMinutes,
+  ): Promise<boolean> {
+    const start = scheduledAt;
+    const end = new Date(scheduledAt.getTime() + durationMinutes * 60_000);
+    const windowStart = new Date(start.getTime() - durationMinutes * 60_000);
+    const windowEnd = new Date(end.getTime() + durationMinutes * 60_000);
+
+    const internalWhere: {
+      clinicId: string;
+      scheduledAt: { gte: Date; lt: Date };
+      status: { in: AppointmentStatus[] };
+      doctorId?: string;
+    } = {
+      clinicId,
+      scheduledAt: { gte: windowStart, lt: windowEnd },
+      status: {
+        in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
+      },
+    };
+    if (doctorId) internalWhere.doctorId = doctorId;
+
+    const internal = await this.prisma.appointment.findMany({
+      where: internalWhere as never,
+      select: { scheduledAt: true, durationMinutes: true },
+    });
+    const internalOverlap = internal.some(
+      (row) =>
+        start.getTime() <
+          new Date(
+            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
+    );
+
+    const externalBusy = doctorId
+      ? await this.getCalendarBusy('DOCTOR', doctorId, {
+          from: windowStart,
+          to: windowEnd,
+        })
+      : await this.getCalendarBusy('CLINIC', clinicId, {
+          from: windowStart,
+          to: windowEnd,
+        });
+    const externalOverlap = externalBusy.some(
+      (busy) =>
+        start.getTime() < busy.end.getTime() &&
+        busy.start.getTime() < end.getTime(),
+    );
+
+    if (doctorId) {
+      // Single-doctor booking: any overlap (internal or external) blocks the slot.
+      return internalOverlap || externalOverlap;
+    }
+
+    // Clinic-level booking: keep the chair-capacity semantics, and stay safe
+    // when an external calendar already occupies a doctor inside the window.
+    const clinic = await this.prisma.clinic.findUnique({
+      where: { id: clinicId },
+      select: { activeDentalChairs: true },
+    });
+    const chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
+    const internalOverlaps = internal.filter(
+      (row) =>
+        start.getTime() <
+          new Date(
+            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
+          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
+    ).length;
+    if (externalOverlap) return true;
+    return internalOverlaps >= chairs;
+  }
+
+  private async getCalendarBusy(
+    ownerType: 'DOCTOR' | 'CLINIC',
+    ownerId: string,
+    window: { from: Date; to: Date },
+  ): Promise<{ start: Date; end: Date }[]> {
+    const busy = await this.calendarSync.getBusyIntervals(ownerType, ownerId, {
+      from: window.from,
+      to: window.to,
+      timeZone: this.cfg.timezone,
+    });
+    return busy;
+  }
+
   async nextFreeSlots(
     clinicId: string | null,
     fromUtc: Date,
     count: number = 3,
+    doctorId: string | null = null,
+    durationMinutes: number = this.cfg.slotMinutes,
   ): Promise<DateTime[]> {
     const from = DateTime.fromJSDate(fromUtc).setZone(this.cfg.timezone);
-    const slots = daySlots(this.cfg);
     const results: DateTime[] = [];
-    let chairs = 1;
+    let clinic: BotClinic | null = null;
     if (clinicId) {
-      const clinic = await this.prisma.clinic.findUnique({
+      const row = await this.prisma.clinic.findUnique({
         where: { id: clinicId },
-        select: { activeDentalChairs: true },
+        select: {
+          id: true,
+          name: true,
+          activeDentalChairs: true,
+          doctors: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              title: true,
+              specialty: true,
+              isActive: true,
+              consultationMinutes: true,
+              bufferMinutes: true,
+              availability: {
+                where: { isActive: true },
+                select: {
+                  dayOfWeek: true,
+                  startTime: true,
+                  endTime: true,
+                  isActive: true,
+                },
+              },
+            },
+          },
+          operatingSchedule: {
+            select: {
+              dayOfWeek: true,
+              openTime: true,
+              closeTime: true,
+              isClosed: true,
+            },
+          },
+        },
       });
-      chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
+      if (row) {
+        clinic = {
+          id: row.id,
+          name: row.name,
+          services: [],
+          doctors: row.doctors,
+          operatingSchedule: row.operatingSchedule,
+        } as BotClinic;
+      }
     }
     for (
       let dayOffset = 0;
@@ -731,38 +1371,23 @@ export class BookingService {
     ) {
       const day = from.plus({ days: dayOffset });
       const dayIso = day.toISODate()!;
-      if (!this.cfg.openDays.includes(day.weekday)) continue;
+      const slots = this.getClinicDaySlots(clinic, day.weekday, doctorId);
+      if (slots.length === 0) continue;
       for (const slot of slots) {
         if (results.length >= count) break;
         const candidate = toScheduledAt(dayIso, slot, this.cfg);
         const candidateDt = DateTime.fromJSDate(candidate);
         if (candidateDt <= DateTime.fromJSDate(fromUtc)) continue;
-        if (clinicId) {
-          const windowStart = new Date(
-            candidate.getTime() - this.cfg.slotMinutes * 60_000,
-          );
-          const windowEnd = new Date(
-            candidate.getTime() + this.cfg.slotMinutes * 60_000,
-          );
-          const nearby = await this.prisma.appointment.findMany({
-            where: {
-              clinicId,
-              scheduledAt: { gte: windowStart, lt: windowEnd },
-              status: {
-                in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
-              },
-            },
-            select: { scheduledAt: true, durationMinutes: true },
-          });
-          const taken = nearby.filter((row) =>
-            this.overlaps(
-              candidate,
-              this.cfg.slotMinutes,
-              row.scheduledAt,
-              row.durationMinutes,
-            ),
-          ).length;
-          if (taken >= chairs) continue;
+        if (
+          clinicId &&
+          (await this.isSlotTaken(
+            clinicId,
+            candidate,
+            doctorId,
+            durationMinutes,
+          ))
+        ) {
+          continue;
         }
         results.push(DateTime.fromJSDate(candidate).setZone(this.cfg.timezone));
       }
@@ -816,6 +1441,7 @@ export class BookingService {
     data: Partial<{
       service: string;
       clinicId: string | null;
+      doctorId: string | null;
       date: string;
       time: string;
       clientName: string;
@@ -831,18 +1457,64 @@ export class BookingService {
     });
   }
 
-  private collectMissingFields(draft: {
-    service: string | null;
-    clinicId: string | null;
-    date: string | null;
-    time: string | null;
-    clientName: string | null;
-  }): string[] {
+  /**
+   * Resolve a doctor reply from ASK_DOCTOR: "2", "Dr. Achieng", "Achieng", …
+   * Only active doctors are selectable; fall back to all when none are active.
+   */
+  private parseDoctorSelection(
+    text: string,
+    doctors: BotDoctor[],
+  ): BotDoctor | null {
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) return null;
+    const active = doctors.filter((doctor) => doctor.isActive !== false);
+    const pool = active.length > 0 ? active : doctors;
+
+    const numbered = trimmed.match(/^(\d{1,2})\b/);
+    if (numbered) {
+      const index = Number(numbered[1]) - 1;
+      if (index >= 0 && index < pool.length) return pool[index];
+      return null;
+    }
+
+    const namePart = trimmed
+      .toLowerCase()
+      .replace(/^(dr|doctor)\.?\s+/, '')
+      .trim();
+    if (namePart.length < 3) return null;
+    return (
+      pool.find((doctor) => doctor.name.toLowerCase().includes(namePart)) ??
+      pool.find((doctor) => namePart.includes(doctor.name.toLowerCase())) ??
+      null
+    );
+  }
+
+  private collectMissingFields(
+    draft: {
+      service: string | null;
+      clinicId: string | null;
+      doctorId: string | null;
+      date: string | null;
+      time: string | null;
+      clientName: string | null;
+    },
+    clinics: BotClinic[],
+  ): string[] {
     const missing: string[] = [];
     if (!draft.service) missing.push('service');
     if (!draft.clinicId) missing.push('clinic');
+    const clinic = draft.clinicId
+      ? (clinics.find((c) => c.id === draft.clinicId) ?? null)
+      : null;
+    const doctorValid = draft.doctorId
+      ? (clinic?.doctors ?? []).some(
+          (doctor) => doctor.id === draft.doctorId && doctor.isActive !== false,
+        )
+      : false;
+    if ((clinic?.doctors.length ?? 0) > 0 && !doctorValid) {
+      missing.push('doctor');
+    }
     if (!draft.date || !draft.time) missing.push('datetime');
-    if (!draft.clientName) missing.push('name');
     return missing;
   }
 
@@ -852,6 +1524,7 @@ export class BookingService {
     draft: {
       service: string | null;
       clinicId: string | null;
+      doctorId: string | null;
       date: string | null;
       time: string | null;
       clientName: string | null;
@@ -859,6 +1532,25 @@ export class BookingService {
     clinics: BotClinic[],
   ): string {
     switch (field) {
+      case 'doctor':
+        if (clinics.length === 0) return t(ASK_DOCTOR, lang);
+        if (draft.clinicId) {
+          const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
+          const doctors =
+            clinic?.doctors.filter((d) => d.isActive !== false) ??
+            (clinic ? clinic.doctors : []);
+          if (doctors.length > 0) {
+            const doctorList = this.humanizeList(
+              doctors.map(
+                (d) => `${d.name}${d.specialty ? ` (${d.specialty})` : ''}`,
+              ),
+              lang,
+            );
+            return t(ASK_DOCTOR, lang, { doctorList });
+          }
+        }
+        return t(ASK_DOCTOR, lang);
+      case 'service': {
       case 'service':
         if (clinics.length === 0) return t(ASK_SERVICE, lang);
         if (draft.clinicId) {
@@ -869,31 +1561,61 @@ export class BookingService {
               : Array.from(new Set(clinics.flatMap((c) => c.services)));
           if (services.length > 0) {
             return t(ASK_SERVICE_CHOICE, lang, {
-              serviceList: services.map((s, i) => `${i + 1}. ${s}`).join('\n'),
+              serviceList: this.humanizeList(services, lang),
             });
           }
         }
+        const allServices = clinics
+          .flatMap((c) => c.services)
+          .filter((s, i, arr) => arr.indexOf(s) === i);
+        const fallbackServices =
+          lang === 'sw'
+            ? [
+                'kusafisha meno',
+                'ukaguzi',
+                'kuziba jino',
+                "kung'oa jino",
+                'kupamba meno',
+                'X-ray',
+              ]
+            : [
+                'cleaning',
+                'check-up',
+                'filling',
+                'extraction',
+                'whitening',
+                'X-ray',
+              ];
         return t(ASK_SERVICE_CHOICE, lang, {
-          serviceList:
-            clinics
-              .flatMap((c) => c.services)
-              .filter((s, i, arr) => arr.indexOf(s) === i)
-              .map((s, i) => `${i + 1}. ${s}`)
-              .join('\n') ||
-            'Cleaning\nCheck-up\nFilling\nExtraction\nWhitening\nX-Ray',
+          serviceList: this.humanizeList(
+            allServices.length ? allServices : fallbackServices,
+            lang,
+          ),
         });
+      }
       case 'clinic':
         if (clinics.length === 0) return t(BOOKING_UNAVAILABLE, lang);
         return t(ASK_CLINIC, lang, {
-          clinicList: clinics.map((c, i) => `${i + 1}. ${c.name}`).join('\n'),
+          clinicList: this.humanizeList(
+            clinics.map((c) => c.name),
+            lang,
+          ),
         });
       case 'datetime':
         return t(ASK_DATE_TIME, lang);
-      case 'name':
-        return t(ASK_NAME, lang);
       default:
         return t(ASK_SERVICE, lang);
     }
+  }
+
+  /** Turn a list into a sentence fragment instead of a numbered menu. */
+  private humanizeList(items: string[], lang: BookingLang = 'en'): string {
+    const joiner = lang === 'sw' ? 'na' : 'and';
+    const values = items.map((item) => item.trim()).filter(Boolean);
+    if (values.length === 0) return '';
+    if (values.length === 1) return values[0];
+    if (values.length === 2) return `${values[0]} ${joiner} ${values[1]}`;
+    return `${values.slice(0, -1).join(', ')} ${joiner} ${values[values.length - 1]}`;
   }
 
   private buildSlotError(

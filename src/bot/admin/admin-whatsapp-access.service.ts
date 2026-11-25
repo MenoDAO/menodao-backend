@@ -5,6 +5,7 @@ import { randomInt } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
 import { BotIdentityService } from '../identity/bot-identity.service';
+import { hashOtpCode, verifyOtpCode } from '../../auth/otp-hash.util';
 import {
   BotMemberDataService,
   MemberDataScope,
@@ -123,6 +124,21 @@ export class AdminWhatsappAccessService {
 
   async hasActiveSession(adminId: string): Promise<boolean> {
     return (await this.getActiveSession(adminId)) !== null;
+  }
+
+  /**
+   * The member a verified admin session is bound to, or null. Privileged
+   * actions must compare against this before reading another member's record;
+   * a boolean "has a session" is not enough, because the session may be for a
+   * different member.
+   */
+  async getVerifiedMemberId(adminId: string): Promise<string | null> {
+    const session = await this.getActiveSession(adminId);
+    if (!session || session.status !== 'VERIFIED') return null;
+    if (!session.verifiedUntil || session.verifiedUntil <= new Date()) {
+      return null;
+    }
+    return session.memberId ?? null;
   }
 
   async handleMessage(
@@ -310,7 +326,7 @@ export class AdminWhatsappAccessService {
       data: {
         adminId: admin.id,
         phoneNumber: adminPhone,
-        code,
+        code: hashOtpCode(code),
         expiresAt: new Date(now.getTime() + OTP_CODE_TTL_MS),
       },
     });
@@ -358,7 +374,7 @@ export class AdminWhatsappAccessService {
       return 'That verification code has expired. Send the member phone number again to start a new request.';
     }
 
-    if (otp.code !== code) {
+    if (!verifyOtpCode(code, otp.code)) {
       const otpAttempts = otp.attempts + 1;
       await this.prisma.adminOtpCode.update({
         where: { id: otp.id },

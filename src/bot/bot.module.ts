@@ -16,6 +16,9 @@ import { BrandContextService } from './context/brand-context.service';
 import { BotChatModule } from './chat/bot-chat.module';
 import { BotGatewayService } from './webhook/bot-gateway.service';
 import { BotGatewayController } from './webhook/bot-gateway.controller';
+import { BotActionsModule } from './actions/bot-actions.module';
+import { FieldDataModule } from './field-data/field-data.module';
+import { BotPlaygroundModule } from './playground/bot-playground.module';
 import { BotMemberDataService } from './account/bot-member-data.service';
 import { AdminWhatsappAccessService } from './admin/admin-whatsapp-access.service';
 import { AuthModule } from '../auth/auth.module';
@@ -67,6 +70,9 @@ const whatsappProviderFactory: Provider = {
     BotOnboardingModule,
     BrandContextModule,
     BotChatModule,
+    BotActionsModule,
+    FieldDataModule,
+    BotPlaygroundModule,
     AuthModule,
     SmsModule,
   ],
@@ -84,6 +90,7 @@ const whatsappProviderFactory: Provider = {
     BotOnboardingModule,
     BrandContextModule,
     BotGatewayService,
+    BotActionsModule,
     AuthModule,
   ],
 })
