@@ -155,7 +155,7 @@ export class BotMembershipPaymentService {
 
   payerNumberFromMessage(message: string): string | null {
     const candidate =
-      /(?:^pay from\s+|\b(?:send|prompt|use)\b[^\d+]*)(\+?[\d ()-]+)[.!?]?$/i.exec(
+      /(?:^pay from\s+|\b(?:send|prompt|use|number is)\b[^\d+]*)(\+?[\d ()-]+)(?:\s+(?:please|with (?:their|the payer’s|the payer's) consent))?[.!?]?$/i.exec(
         message,
       )?.[1] ?? (/^\+?[\d ()-]+$/.test(message) ? message : null);
     return candidate && this.normalizePayerPhone(candidate) ? candidate : null;
@@ -164,11 +164,55 @@ export class BotMembershipPaymentService {
   async acceptPayerReply(
     memberId: string,
     message: string,
+    restart?: (scope: MembershipPaymentScope) => Promise<string>,
   ): Promise<string | null> {
     const candidate = this.payerNumberFromMessage(message);
-    if (!candidate || !(await this.findOpenQuote(memberId, new Date())))
-      return null;
-    return this.changePayer(memberId, candidate);
+    if (!candidate) return null;
+    if (await this.findOpenQuote(memberId, new Date())) {
+      return this.changePayer(memberId, candidate);
+    }
+    const scope = restart && (await this.recentPaymentRequest(memberId));
+    if (!scope || !restart) return null;
+    const resumed = await restart(scope);
+    if (await this.findOpenQuote(memberId, new Date())) {
+      return this.changePayer(memberId, candidate);
+    }
+    return /6-digit|verification code/i.test(resumed)
+      ? `${resumed}\n\nAfter verification, send the payer number again so I can show the correct quote.`
+      : resumed;
+  }
+
+  async recentPaymentRequest(
+    memberId: string,
+  ): Promise<MembershipPaymentScope | null> {
+    const session = await this.prisma.botDataAccessSession.findFirst({
+      where: {
+        memberId,
+        status: { in: ['PAYMENT_QUOTED', 'PENDING', 'VERIFIED'] },
+        scope: { startsWith: 'MEMBERSHIP_' },
+        createdAt: { gt: new Date(Date.now() - 60 * 60_000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { scope: true },
+    });
+    const request = session?.scope.split('|')[0];
+    return request &&
+      request !== 'MEMBERSHIP_STATUS' &&
+      isMembershipPaymentScope(request)
+      ? request
+      : null;
+  }
+
+  async paymentPromptReply(memberId: string): Promise<string | null> {
+    const quote = await this.findOpenQuote(memberId, new Date());
+    if (!quote) return null;
+    const [, tier, frequency, amount, subscriptionId, payer, code] =
+      quote.scope.split('|');
+    if (!subscriptionId) return null;
+    return (
+      'The quote is still open. The prompt is sent after you confirm.\n\n' +
+      this.quoteReply(tier, frequency, Number(amount), payer ?? '', code)
+    );
   }
 
   describePlans(): string {
@@ -341,7 +385,9 @@ export class BotMembershipPaymentService {
     ].join('|');
     const payer = this.normalizePayerPhone(registeredPhone) ?? '';
     const id = `membership-quote:${verifiedSessionId}`;
-    const quote = await this.prisma.botDataAccessSession.upsert({
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 5 * 60_000);
+    let quote = await this.prisma.botDataAccessSession.upsert({
       where: { id },
       update: {},
       create: {
@@ -349,11 +395,30 @@ export class BotMembershipPaymentService {
         memberId,
         scope: [scope, payer].join('|'),
         status: 'PAYMENT_QUOTED',
-        expiresAt: new Date(Date.now() + 5 * 60_000),
+        expiresAt,
       },
     });
-    if (quote.status !== 'PAYMENT_QUOTED' || quote.expiresAt <= new Date()) {
-      return 'That payment window has closed. Please wait for any pending M-Pesa prompt or try again once your verification window expires.';
+    if (quote.status === 'PAYMENT_QUOTED' && quote.expiresAt <= now) {
+      const refreshedScope = [
+        scope,
+        payer,
+        randomBytes(3).toString('hex').toUpperCase(),
+      ].join('|');
+      const refreshed = await this.prisma.botDataAccessSession.updateMany({
+        where: {
+          id,
+          memberId,
+          status: 'PAYMENT_QUOTED',
+          expiresAt: { lte: now },
+        },
+        data: { scope: refreshedScope, expiresAt },
+      });
+      if (refreshed.count !== 1)
+        return 'The quote changed while I was refreshing it. Please check the latest payment message.';
+      quote = { ...quote, scope: refreshedScope, expiresAt };
+    }
+    if (quote.status !== 'PAYMENT_QUOTED') {
+      return 'This quote has already been used. Check your phone for the M-Pesa prompt or ask for your payment status.';
     }
     const stored = quote.scope.split('|');
     if (stored.slice(0, 5).join('|') !== scope) {

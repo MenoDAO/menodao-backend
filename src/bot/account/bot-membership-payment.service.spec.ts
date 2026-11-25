@@ -244,6 +244,51 @@ describe('BotMembershipPaymentService', () => {
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 
+  it('restarts verification when a payer number arrives before a quote', async () => {
+    const { service, prisma, contributions } = build();
+    prisma.botDataAccessSession.findFirst.mockReset();
+    prisma.botDataAccessSession.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ scope: 'MEMBERSHIP_JOIN:BRONZE:MONTHLY' })
+      .mockResolvedValueOnce(null);
+    const restart = jest
+      .fn()
+      .mockResolvedValue('Reply with the 6-digit verification code.');
+
+    const reply = await service.acceptPayerReply(
+      'member',
+      '0723456789',
+      restart,
+    );
+
+    expect(restart).toHaveBeenCalledWith('MEMBERSHIP_JOIN:BRONZE:MONTHLY');
+    expect(reply).toContain('After verification, send the payer number again');
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an expired quote using a new confirmation code', async () => {
+    const { service, prisma, quote, contributions } = build();
+    prisma.botDataAccessSession.upsert.mockResolvedValue({
+      ...quote,
+      expiresAt: new Date(Date.now() - 1000),
+    });
+
+    const reply = await service.offer(
+      'member',
+      'MEMBERSHIP_PAY',
+      'verified',
+      '+254712345678',
+    );
+
+    expect(reply).toMatch(/confirm M-Pesa [A-F0-9]{6}/);
+    expect(prisma.botDataAccessSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'PAYMENT_QUOTED' }),
+      }),
+    );
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
   it('rejects a changed price before initiating payment', async () => {
     const { service, subscriptions, contributions } = build();
     subscriptions.getPackages.mockReturnValue([
