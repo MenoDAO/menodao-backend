@@ -11,7 +11,7 @@ import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotChatService } from '../chat/bot-chat.service';
-import { BotMembershipPaymentService } from '../account/bot-membership-payment.service';
+import { BotMembershipPaymentService, type MembershipPaymentScope } from '../account/bot-membership-payment.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FieldDataService } from '../field-data/field-data.service';
@@ -566,18 +566,36 @@ export class BotGatewayService {
       return;
     }
 
+    const restartPayment = (scope: MembershipPaymentScope) =>
+      this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
+
     // Payer numbers and confirmation codes are kept out of the chat archive.
     const payer = /^pay from(?:\s+(.+))?$/i.exec(trimmed);
-    if (payer) {
-      const reply = await this.membershipPayments.changePayer(member.id, payer[1] ?? '');
+    const alternative = await this.membershipPayments.acceptPayerReply(member.id, trimmed, restartPayment);
+    if (payer || alternative) {
+      const reply = alternative ?? await this.membershipPayments.changePayer(member.id, payer?.[1] ?? '');
       await this.sendTextSafely(member.phoneNumber, reply);
       return;
     }
 
-    const alternative = await this.membershipPayments.acceptPayerReply(member.id, trimmed);
-    if (alternative) {
-      await this.sendTextSafely(member.phoneNumber, alternative);
-      return;
+    if (/\b(?:stk|m-?pesa|payment)\b.*\bprompt\b|\b(?:send|trigger|receive|got|get)\b.*\bprompt\b/i.test(trimmed)) {
+      const quote = await this.membershipPayments.paymentPromptReply(member.id);
+      const previous = quote ? null : await this.membershipPayments.recentPaymentRequest(member.id);
+      if (quote) {
+        await this.sendTextSafely(member.phoneNumber, quote);
+        return;
+      }
+      if (previous) {
+        await this.sendTextSafely(member.phoneNumber, await restartPayment(previous));
+        return;
+      }
+      if (/\b(?:stk|m-?pesa)\b/i.test(trimmed)) {
+        await this.sendTextSafely(
+          member.phoneNumber,
+          'I can send an M-Pesa prompt once you verify and confirm the amount. Tell me your plan and billing period, for example “Bronze monthly”, or say “pay membership” for your existing plan.',
+        );
+        return;
+      }
     }
 
     const confirmation = /^confirm m-?pesa(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(trimmed);
