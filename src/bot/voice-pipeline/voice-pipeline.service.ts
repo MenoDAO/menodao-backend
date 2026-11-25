@@ -324,6 +324,19 @@ export class VoicePipelineService {
       workingTranscript,
       recentHistory,
     );
+    const recentReply = recentHistory.at(-1);
+    const offeredBooking =
+      recentReply?.role === 'assistant' &&
+      /\b(?:would you like|shall i|do you want|can i help you)\b[^.!?]*\b(?:book|schedule|arrange)\b[^.!?]*\b(?:visit|appointment|consultation)\b/i.test(recentReply.content);
+    if (
+      !hasActiveDraft &&
+      !offeredBooking &&
+      this.membershipPayments.isPlanFollowUp(workingTranscript) &&
+      classification.intent === 'BOOKING_SESSION'
+    ) {
+      classification.intent = 'GENERAL_CONVERSATION';
+      classification.action = null;
+    }
     this.logger.log(
       `Intent classified [${sessionUuid}]: ${classification.intent} (${classification.confidence})` +
         (classification.action ? ` action=${classification.action}` : ''),

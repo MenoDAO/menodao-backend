@@ -626,14 +626,29 @@ export class BotGatewayService {
       return;
     }
 
+    const membershipScope = this.membershipPayments.detectRequest(trimmed) ??
+      (this.membershipPayments.isPlanFollowUp(trimmed)
+        ? this.membershipPayments.planFollowUpScope(
+            trimmed,
+            await this.chatService.latestSentReply(chatContext),
+          )
+        : null);
+    if (membershipScope) {
+      const reply = await this.memberDataService.handleRequest(
+        { id: member.id, phoneNumber: member.phoneNumber },
+        membershipScope,
+      );
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
     const planChoice = this.membershipPayments.planChoiceReply(trimmed);
     if (planChoice) {
       await this.sendTextSafely(member.phoneNumber, planChoice, chatContext);
       return;
     }
 
-    const scope = this.membershipPayments.detectRequest(messageText) ??
-      this.memberDataService.detectScope(messageText);
+    const scope = this.memberDataService.detectScope(messageText);
     if (scope) {
       const reply = await this.memberDataService.handleRequest(
         { id: member.id, phoneNumber: member.phoneNumber },

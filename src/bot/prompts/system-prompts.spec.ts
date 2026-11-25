@@ -57,6 +57,12 @@ describe('Dr. Papi system prompt', () => {
 });
 
 describe('polishMemberReply', () => {
+  it('keeps one blank line between paragraphs and preserves compact details', () => {
+    expect(polishMemberReply('Your quote\n\n \n\nMonthly: KES 800\nYearly: KES 8,000')).toBe(
+      'Your quote\n\nMonthly: KES 800\nYearly: KES 8,000',
+    );
+  });
+
   it('corrects "kariba" wherever it appears', () => {
     expect(polishMemberReply('Kariba! Habari')).toBe('Karibu! Habari');
     expect(polishMemberReply('Asante, kariba sana')).toBe(

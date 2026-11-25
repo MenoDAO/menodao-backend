@@ -75,6 +75,25 @@ export class BotChatService {
     });
   }
 
+  async latestSentReply(input: {
+    contactId: string;
+    memberId: string;
+    instanceProviderId?: string;
+  }): Promise<string | null> {
+    const instanceId = await this.resolveInstanceRowId(input.instanceProviderId);
+    const message = await this.prisma.botChatMessage.findFirst({
+      where: {
+        thread: { contactId: input.contactId, memberId: input.memberId, instanceId, status: 'OPEN' },
+        direction: 'OUTBOUND',
+        deliveryStatus: 'SENT',
+        sentAt: { gte: new Date(Date.now() - 15 * 60_000) },
+      },
+      orderBy: { sentAt: 'desc' },
+      select: { content: true },
+    });
+    return message?.content ?? null;
+  }
+
   private async record(
     direction: 'INBOUND' | 'OUTBOUND',
     input: RecordMessageInput,

@@ -30,6 +30,60 @@ export class BotMembershipPaymentService {
     private readonly contributions: ContributionsService,
   ) {}
 
+  isPlanFollowUp(message: string): boolean {
+    return /^(?:yes(?:[, ]+please)?|yeah|yep|sure|ok(?:ay)?|go ahead|ndiyo|sawa|monthly|yearly|annual)[.!]?$/i.test(
+      message.trim(),
+    );
+  }
+
+  planFollowUpScope(
+    message: string,
+    previousReply: string | null,
+  ): MembershipPaymentScope | null {
+    if (!previousReply || !this.isPlanFollowUp(message)) return null;
+    const choice = message.trim().toLowerCase().replace(/[.!]$/, '');
+    if (/^(?:monthly|yearly|annual)$/.test(choice)) {
+      const tiers = new Set(
+        [...previousReply.matchAll(/\b(?:meno)?(bronze|silver|gold)\b/gi)].map(
+          (match) => match[1].toUpperCase(),
+        ),
+      );
+      if (
+        tiers.size === 1 &&
+        /\bmonthly\b/i.test(previousReply) &&
+        /\b(?:yearly|annual)\b/i.test(previousReply) &&
+        /\b(?:choose|reply|which)\b/i.test(previousReply)
+      ) {
+        const tier = [...tiers][0] as PackageTier;
+        return `MEMBERSHIP_JOIN:${tier}:${choice === 'monthly' ? 'MONTHLY' : 'ANNUAL'}`;
+      }
+      return null;
+    }
+
+    const offer = previousReply
+      .trim()
+      .split(/(?<=[.!?])\s+/)
+      .at(-1);
+    if (
+      !offer ||
+      !/\b(?:would you like|shall we|do you want|ready to)\b/i.test(offer) ||
+      !/\b(?:start|set up|join|activate|sign up|subscribe|get)\b/i.test(
+        offer,
+      ) ||
+      !/\b(?:membership|plan|package|cover)\b/i.test(offer) ||
+      /\b(?:book(?:ing)?|appointment|consultation|clinic)\b/i.test(offer)
+    ) {
+      return null;
+    }
+    const plan =
+      /\b(?:meno)?(bronze|silver|gold)\s+(monthly|annual|yearly)\b/i.exec(
+        offer,
+      );
+    if (!plan) return null;
+    const tier = plan[1].toUpperCase() as PackageTier;
+    return `MEMBERSHIP_JOIN:${tier}:${plan[2].toLowerCase() === 'monthly' ? 'MONTHLY' : 'ANNUAL'}`;
+  }
+
   detectRequest(message: string): MembershipPaymentScope | null {
     const text = message
       .trim()
@@ -47,6 +101,13 @@ export class BotMembershipPaymentService {
     }
 
     if (
+      /\b(?:pay|renew|start|set up|activate|sign up for|lipia|lipa)\b.{0,35}\b(?:membership|subscription|plan|cover|uanachama)\b/.test(
+        text,
+      )
+    )
+      return 'MEMBERSHIP_PAY';
+
+    if (
       /\bmy (?:current )?(?:plan|membership|cover|subscription)\b|\b(?:mpango|uanachama) wangu\b/.test(
         text,
       ) &&
@@ -57,11 +118,7 @@ export class BotMembershipPaymentService {
       return 'MEMBERSHIP_STATUS';
     }
 
-    return /\b(?:pay|renew|lipia|lipa)\b.{0,35}\b(?:membership|subscription|plan|cover|uanachama)\b/.test(
-      text,
-    )
-      ? 'MEMBERSHIP_PAY'
-      : null;
+    return null;
   }
 
   private requestedTier(message: string): PackageTier | undefined {
@@ -70,7 +127,7 @@ export class BotMembershipPaymentService {
       /^(?:meno)?(?:bronze|silver|gold)(?: (?:monthly|annual|yearly))?$/i.test(
         message.trim(),
       ) ||
-      /\b(?:pay|buy|choose|join|take|want|like|get|select|jiunge|lipa|lipia)\b/i.test(
+      /\b(?:pay|buy|choose|join|take|want|like|get|select|start|set up|activate|subscribe|jiunge|lipa|lipia)\b/i.test(
         message,
       );
     return selecting
@@ -89,7 +146,11 @@ export class BotMembershipPaymentService {
       .find((item) => item.tier === tier);
     if (!plan) return null;
     const label = tier[0] + tier.slice(1).toLowerCase();
-    return `You can set up ${plan.displayName} right here. It’s KES ${plan.actualMonthlyCharge} monthly or KES ${plan.actualAnnualCharge} yearly. Which works for you? Reply “${label} monthly” or “${label} yearly”.`;
+    return [
+      `You can set up *${plan.displayName}* here in WhatsApp.`,
+      `Monthly: KES ${plan.actualMonthlyCharge.toLocaleString('en-KE')}\nYearly: KES ${plan.actualAnnualCharge.toLocaleString('en-KE')}`,
+      `Reply “${label} monthly” or “${label} yearly” to choose.`,
+    ].join('\n\n');
   }
 
   payerNumberFromMessage(message: string): string | null {
@@ -115,9 +176,14 @@ export class BotMembershipPaymentService {
       .getPackages()
       .map(
         (plan) =>
-          `${plan.displayName}: KES ${plan.actualMonthlyCharge} monthly or KES ${plan.actualAnnualCharge} yearly`,
+          `*${plan.displayName}*\nKES ${plan.actualMonthlyCharge.toLocaleString('en-KE')} monthly · KES ${plan.actualAnnualCharge.toLocaleString('en-KE')} yearly`,
       );
-    return `${plans.join('; ')}. To choose a plan, type “join bronze monthly”, for example. You can still book a visit without cover.`;
+    return [
+      '*Membership options*',
+      ...plans,
+      'To choose a plan, reply with the tier and billing period, for example “Bronze monthly”.',
+      'You can still book a visit without cover.',
+    ].join('\n\n');
   }
 
   private price(
@@ -149,9 +215,13 @@ export class BotMembershipPaymentService {
     const description = `Meno${tier[0]}${tier.slice(1).toLowerCase()} (${interval}) costs KES ${amount.toLocaleString('en-KE')}.`;
     const changeNumber =
       'To use another number with the payer’s consent, type “pay from” followed by their mobile number.';
-    if (!payer) return `${description} ${changeNumber}`;
+    if (!payer) return `${description}\n\n${changeNumber}`;
     const confirmation = code ? `confirm M-Pesa ${code}` : 'confirm M-Pesa';
-    return `${description} The prompt will go to the M-Pesa number ending in ${payer.slice(-4)}. Reply “${confirmation}” before the quote expires. ${changeNumber} The payer enters their PIN only on their phone.`;
+    return [
+      `${description}\nM-Pesa number ending in ${payer.slice(-4)}`,
+      `Reply “${confirmation}” before the quote expires. The payer enters their PIN only on their phone.`,
+      changeNumber,
+    ].join('\n\n');
   }
 
   private findOpenQuote(memberId: string, now: Date) {
@@ -209,7 +279,7 @@ export class BotMembershipPaymentService {
     });
     if (request === 'MEMBERSHIP_STATUS') {
       if (!subscription)
-        return 'You don’t have a MenoDAO plan yet. Type “membership options” to see the plans. You can still book a visit without cover.';
+        return 'You don’t have a MenoDAO plan yet.\n\nType “membership options” to see the plans. You can still book a visit without cover.';
       const interval =
         subscription.paymentFrequency === 'ANNUAL' ? 'annual' : 'monthly';
       const plan = this.subscriptions
@@ -218,7 +288,7 @@ export class BotMembershipPaymentService {
       const active =
         subscription.isActive &&
         (!subscription.endDate || subscription.endDate > new Date());
-      return `${plan?.displayName ?? subscription.tier} is ${active ? 'active' : 'inactive'} with ${interval} billing. To get a payment quote, type “pay membership”.`;
+      return `${plan?.displayName ?? subscription.tier} is ${active ? 'active' : 'inactive'} with ${interval} billing.\n\nTo get a payment quote, type “pay membership”.`;
     }
     const [, requestedTier, requestedFrequency] = request.split(':') as [
       string,
@@ -237,7 +307,7 @@ export class BotMembershipPaymentService {
     const tier = requestedTier ?? subscription?.tier;
     const frequency = requestedFrequency ?? subscription?.paymentFrequency;
     if ((!subscription?.isActive && !requestedTier) || !tier || !frequency) {
-      return `I couldn’t find an active membership. You can choose a tier and make your first payment right here. ${this.describePlans()}`;
+      return `I couldn’t find an active membership. You can choose a tier and make your first payment right here.\n\n${this.describePlans()}`;
     }
 
     try {
@@ -253,7 +323,7 @@ export class BotMembershipPaymentService {
             error.message,
           )
         ) {
-          return 'You’re all caught up on your membership payments. Thanks for being part of MenoDAO! Nothing extra is due right now. If you’d like to support the Foundation separately, you can ask about donating.';
+          return 'You’re all caught up on your membership payments. Thanks for being part of MenoDAO! Nothing extra is due right now.\n\nIf you’d like to support the Foundation separately, you can ask about donating.';
         }
         return error.message;
       }
@@ -373,7 +443,7 @@ export class BotMembershipPaymentService {
         frequency,
         { tier, amount },
       );
-      return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches. The payment is pending until M-Pesa confirms it.`;
+      return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches.\n\nThe payment is pending until M-Pesa confirms it.`;
     } catch {
       this.logger.warn(
         'WhatsApp membership payment could not be confirmed as initiated.',
