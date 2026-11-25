@@ -22,6 +22,10 @@ export interface PaymentResult {
 
 // Re-export SasaPay callback type for backward compatibility
 export type PaymentCallbackData = SasaPayC2BCallbackData;
+export interface StkCallbackProof {
+  reference: string;
+  token: string;
+}
 
 @Injectable()
 export class PaymentService {
@@ -79,8 +83,14 @@ export class PaymentService {
         this.sasaPayService.normalizePhoneNumber(phoneNumber);
 
       this.logger.log(
-        `Initiating SasaPay STK Push for ${normalizedPhone}, amount: ${amount}, ref: ${transactionRef}`,
+        `Initiating SasaPay STK Push for ***${normalizedPhone.slice(-4)}, amount: ${amount}, ref: ${transactionRef}`,
       );
+
+      // Store the exact merchant reference before asking the provider to charge.
+      await this.prisma.contribution.update({
+        where: { id: contributionId },
+        data: { paymentRef: transactionRef },
+      });
 
       const response = await this.sasaPayService.requestPayment(
         phoneNumber,
@@ -93,28 +103,10 @@ export class PaymentService {
         const checkoutRequestId = response.CheckoutRequestID;
         const merchantRequestId = response.MerchantRequestID;
 
-        // Get existing contribution to preserve metadata
-        const existingContribution = await this.prisma.contribution.findUnique({
-          where: { id: contributionId },
-        });
-
-        // Update contribution with payment reference and SasaPay IDs
-        // IMPORTANT: Merge with existing metadata to preserve upgrade info
+        const identifiers = { checkoutRequestId, merchantRequestId };
         await this.prisma.contribution.update({
           where: { id: contributionId },
-          data: {
-            paymentRef: transactionRef,
-            metadata: {
-              ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
-              checkoutRequestId,
-              merchantRequestId,
-              phoneNumber: normalizedPhone,
-              initiatedAt: new Date().toISOString(),
-              provider: 'sasapay',
-              responseCode: response.ResponseCode,
-              customerMessage: response.CustomerMessage,
-            },
-          },
+          data: identifiers,
         });
 
         this.logger.log(
@@ -166,6 +158,8 @@ export class PaymentService {
       where: { id: contributionId },
       data: {
         paymentRef: transactionRef,
+        checkoutRequestId: mockCheckoutId,
+        merchantRequestId: mockMerchantId,
         metadata: {
           ...((existingContribution?.metadata as object) || {}), // Preserve existing metadata
           checkoutRequestId: mockCheckoutId,
@@ -214,9 +208,9 @@ export class PaymentService {
 
       // Validate amount matches
       const expectedAmount = contribution.amount;
-      const receivedAmount = data.Amount || 0;
+      const receivedAmount = Number(data.Amount ?? data.TransAmount);
 
-      if (Math.abs(expectedAmount - receivedAmount) > 1) {
+      if (expectedAmount !== receivedAmount) {
         this.logger.warn(
           `Amount mismatch: expected ${expectedAmount}, received ${receivedAmount}`,
         );
@@ -236,380 +230,287 @@ export class PaymentService {
    */
   async processCallback(
     data: PaymentCallbackData,
-  ): Promise<{ success: boolean; message: string }> {
+    proof?: StkCallbackProof,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    contributionId?: string;
+    retryable?: boolean;
+  }> {
     try {
-      this.logger.log(`Processing SasaPay callback: ${JSON.stringify(data)}`);
-
-      const {
-        CheckoutRequestID,
-        MerchantRequestID,
-        ResultCode,
-        ResultDesc,
-        Amount,
-        MpesaReceiptNumber,
-        PhoneNumber,
-        TransactionDate,
-      } = data;
-
-      this.logger.log(
-        `Callback details - CheckoutRequestID: ${CheckoutRequestID}, ResultCode: ${ResultCode}, Amount: ${Amount}, Receipt: ${MpesaReceiptNumber}`,
+      if (
+        proof &&
+        !this.sasaPayService.verifyStkCallback(proof.reference, proof.token)
+      ) {
+        return { success: false, message: 'Invalid payment callback' };
+      }
+      const contribution = await this.findContributionByCallback(
+        data,
+        proof?.reference,
       );
-
-      // Find contribution by SasaPay callback identifiers
-      const contribution = await this.findContributionByCallback(data);
-
-      if (!contribution) {
-        this.logger.error(
-          `❌ CRITICAL: No contribution found for callback - CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}. This payment may be lost!`,
-        );
+      if (!contribution)
         return { success: false, message: 'Transaction not found' };
+      if (contribution.status === 'COMPLETED') {
+        return { success: true, message: 'Payment already processed' };
       }
 
-      this.logger.log(
-        `Found contribution ${contribution.id} for member ${contribution.memberId}, current status: ${contribution.status}`,
-      );
+      const metadata = contribution.metadata as {
+        isUpgrade?: boolean;
+        newTier?: PackageTier;
+        purchasedTier?: PackageTier;
+        purchasedMonthlyAmount?: number;
+        purchasedAnnualCap?: number;
+        paymentFrequency?: PaymentFrequency;
+        stkSource?: 'WEB' | 'WHATSAPP';
+      } | null;
+      const isDevelopmentMock =
+        this.isDevEnvironment &&
+        contribution.checkoutRequestId?.startsWith('MOCK_CHECKOUT_');
+      if (metadata?.stkSource && !isDevelopmentMock && !proof) {
+        return {
+          success: false,
+          message: 'Missing payment callback verification',
+        };
+      }
+      const isSuccess =
+        String(data.ResultCode) === '0' ||
+        (data.ResultCode == null && data.Paid === true);
+      const isFailure =
+        !isSuccess && (data.ResultCode != null || data.Paid === false);
+      if (!isSuccess && !isFailure)
+        return { success: false, message: 'Missing final payment result' };
+      const now = new Date();
 
-      // SasaPay: ResultCode '0' means success
-      const isSuccess = ResultCode === '0';
-
-      if (isSuccess) {
-        this.logger.log(
-          `✅ Payment SUCCESS for contribution ${contribution.id}, M-Pesa receipt: ${MpesaReceiptNumber}`,
-        );
-
-        // Check if this is an upgrade payment BEFORE updating (preserve original metadata)
-        const originalMetadata = contribution.metadata as {
-          isUpgrade?: boolean;
-          newTier?: PackageTier;
-        } | null;
-
-        // Log metadata for debugging
-        this.logger.log(
-          `[UPGRADE DEBUG] Contribution ${contribution.id} metadata: ${JSON.stringify(originalMetadata)}`,
-        );
-        this.logger.log(
-          `[UPGRADE DEBUG] isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
-        );
-
-        // Update contribution to completed
-        await this.prisma.contribution.update({
-          where: { id: contribution.id },
-          data: {
-            status: 'COMPLETED',
-            metadata: {
-              ...((contribution.metadata as object) || {}),
-              mpesaReceiptNumber: MpesaReceiptNumber,
-              transactionCode: MpesaReceiptNumber, // Backward compat
-              customerMobile: PhoneNumber,
-              transactionDate: TransactionDate,
-              completedAt: new Date().toISOString(),
-              resultCode: ResultCode,
-              resultDesc: ResultDesc,
-              confirmedAmount: Amount,
-            },
-          },
-        });
-
-        this.logger.log(
-          `✅ Contribution ${contribution.id} updated to COMPLETED, M-Pesa receipt: ${MpesaReceiptNumber}`,
-        );
-
-        if (contribution.status !== 'COMPLETED') {
-          void this.careEvents?.track({
-            type: CareEventType.MEMBERSHIP_PAYMENT_SUCCESS,
-            memberId: contribution.memberId,
-            metadata: { contributionId: contribution.id, amount: Amount },
-          });
-        }
-
-        // ── Champion Referral: credit commission (fire-and-forget) ──────────
-        try {
-          await this.referralService.creditCommission(contribution.id);
-        } catch (referralError) {
-          this.logger.error(
-            `[REFERRAL] Failed to credit commission for contribution ${contribution.id}: ${referralError?.message}`,
-          );
-          // Never rethrow — payment callback must not fail due to referral errors
-        }
-
-        // Process upgrade if this was an upgrade payment
-        if (originalMetadata?.isUpgrade && originalMetadata?.newTier) {
-          this.logger.log(
-            `[UPGRADE] Processing upgrade for member ${contribution.memberId} to ${originalMetadata.newTier}`,
-          );
-
-          // This is an upgrade payment - update subscription directly
-          const subscription = await this.prisma.subscription.findUnique({
-            where: { memberId: contribution.memberId },
-            include: { member: true },
-          });
-
-          if (subscription) {
-            this.logger.log(
-              `[UPGRADE] Found subscription for member ${contribution.memberId}, current tier: ${subscription.tier}`,
-            );
-
-            const tierCaps: Record<PackageTier, number> = {
-              BRONZE: 6000,
-              SILVER: 10000,
-              GOLD: 15000,
-            };
-
-            const tierPrices: Record<PackageTier, number> = {
-              BRONZE: 350,
-              SILVER: 550,
-              GOLD: 700,
-            };
-
-            const oldTier = subscription.tier;
-
-            await this.prisma.subscription.update({
-              where: { memberId: contribution.memberId },
-              data: {
-                tier: originalMetadata.newTier,
-                monthlyAmount: tierPrices[originalMetadata.newTier],
-                annualCapLimit: tierCaps[originalMetadata.newTier],
-              },
-            });
-
-            this.logger.log(
-              `[UPGRADE] ✅ Upgrade completed for member ${contribution.memberId}: ${oldTier} -> ${originalMetadata.newTier}`,
-            );
-
-            // Send SMS notification for upgrade
-            try {
-              const waitingDays =
-                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
-              const eligibleDate = new Date(
-                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
-              );
-              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              });
-
-              const isSwahili =
-                (subscription.member as any).preferredLanguage === 'sw';
-              const tierName = `Meno${originalMetadata.newTier.charAt(0) + originalMetadata.newTier.slice(1).toLowerCase()}`;
-              const memberName = subscription.member.fullName || 'Member';
-
-              const message = isSwahili
-                ? `Habari ${memberName}, Usajili wako wa MenoDAO umeboreshwa hadi ${tierName}. Faida zako mpya zimeanza. Unaweza kuanza kudai tarehe ${formattedDate} (siku ${waitingDays} za kusubiri). Asante kwa kuchagua MenoDAO!`
-                : `Dear ${memberName}, Your MenoDAO subscription has been upgraded to ${tierName}. Your new benefits are now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Thank you for choosing MenoDAO!`;
-
-              await this.smsService.sendSms(
-                subscription.member.phoneNumber,
-                message,
-              );
-
-              this.logger.log(
-                `[SMS] Upgrade notification sent to ${subscription.member.phoneNumber}`,
-              );
-            } catch (smsError) {
-              this.logger.error(
-                `[SMS] Failed to send upgrade notification: ${smsError.message}`,
-              );
-              // Don't fail the payment callback if SMS fails
-            }
-          } else {
-            this.logger.error(
-              `[UPGRADE] ❌ No subscription found for member ${contribution.memberId} during upgrade`,
-            );
-          }
-        } else {
-          this.logger.log(
-            `[UPGRADE DEBUG] Not an upgrade payment - isUpgrade: ${originalMetadata?.isUpgrade}, newTier: ${originalMetadata?.newTier}`,
-          );
-
-          // This is a new subscription payment - activate and send welcome SMS
-          const subscription = await this.prisma.subscription.findUnique({
-            where: { memberId: contribution.memberId },
-            include: { member: true },
-          });
-
-          if (subscription && !subscription.isActive) {
-            // Activate the subscription
-            await this.prisma.subscription.update({
-              where: { memberId: contribution.memberId },
-              data: { isActive: true },
-            });
-
-            this.logger.log(
-              `[SUBSCRIPTION] ✅ Activated subscription for member ${contribution.memberId}`,
-            );
-
-            // ── Champion Referral: update active referral count (fire-and-forget) ──
-            try {
-              const referredMember = await this.prisma.member.findUnique({
-                where: { id: contribution.memberId },
-                select: { referredBy: true },
-              });
-              if (referredMember?.referredBy) {
-                await this.referralService.updateActiveReferralCount(
-                  referredMember.referredBy,
-                );
-              }
-            } catch (referralError) {
-              this.logger.error(
-                `[REFERRAL] Failed to update active referral count for member ${contribution.memberId}: ${referralError?.message}`,
-              );
-              // Never rethrow
-            }
-
-            // Send SMS notification for new subscription
-            try {
-              const waitingDays =
-                subscription.paymentFrequency === 'ANNUAL' ? 14 : 60;
-              const eligibleDate = new Date(
-                Date.now() + waitingDays * 24 * 60 * 60 * 1000,
-              );
-              const formattedDate = eligibleDate.toLocaleDateString('en-KE', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              });
-
-              const isSwahili =
-                (subscription.member as any).preferredLanguage === 'sw';
-              const tierName = `Meno${subscription.tier.charAt(0) + subscription.tier.slice(1).toLowerCase()}`;
-
-              const message = isSwahili
-                ? `Karibu MenoDAO! Usajili wako wa ${tierName} umewashwa. Unaweza kuanza kudai tarehe ${formattedDate} (siku ${waitingDays} za kusubiri). Tembelea dashibodi yako kuona faida zako. Asante kwa kujiunga nasi!`
-                : `Welcome to MenoDAO! Your ${tierName} subscription is now active. You can start making claims on ${formattedDate} (${waitingDays} days waiting period). Visit your dashboard to explore your benefits. Thank you for joining us!`;
-
-              await this.smsService.sendSms(
-                subscription.member.phoneNumber,
-                message,
-              );
-
-              this.logger.log(
-                `[SMS] Welcome notification sent to ${subscription.member.phoneNumber}`,
-              );
-            } catch (smsError) {
-              this.logger.error(
-                `[SMS] Failed to send welcome notification: ${smsError.message}`,
-              );
-              // Don't fail the payment callback if SMS fails
-            }
-          } else if (subscription && subscription.isActive) {
-            this.logger.log(
-              `[SUBSCRIPTION] Subscription already active for member ${contribution.memberId}`,
-            );
-          }
-        }
-
-        return { success: true, message: 'Payment processed successfully' };
-      } else {
-        this.logger.warn(
-          `❌ Payment FAILED for contribution ${contribution.id}: ResultCode=${ResultCode}, ResultDesc=${ResultDesc}`,
-        );
-
-        // Update contribution to failed
-        await this.prisma.contribution.update({
-          where: { id: contribution.id },
+      if (isFailure) {
+        const failed = await this.prisma.contribution.updateMany({
+          where: { id: contribution.id, status: 'PENDING' },
           data: {
             status: 'FAILED',
             metadata: {
-              ...((contribution.metadata as object) || {}),
-              failedAt: new Date().toISOString(),
-              resultCode: ResultCode,
-              resultDesc: ResultDesc,
+              ...metadata,
+              failedAt: now.toISOString(),
+              resultCode: data.ResultCode,
+              resultDesc: data.ResultDesc,
             },
           },
         });
-
-        this.logger.warn(
-          `Payment failed for contribution ${contribution.id}: ${ResultDesc}`,
-        );
-        void this.careEvents?.track({
-          type: CareEventType.MEMBERSHIP_PAYMENT_FAILED,
-          memberId: contribution.memberId,
-          metadata: { contributionId: contribution.id, resultCode: ResultCode },
-        });
+        if (failed.count) {
+          void this.careEvents?.track({
+            type: CareEventType.MEMBERSHIP_PAYMENT_FAILED,
+            memberId: contribution.memberId,
+            source: metadata?.stkSource,
+            metadata: {
+              contributionId: contribution.id,
+              resultCode: data.ResultCode,
+            },
+          });
+        }
         return { success: true, message: 'Payment failure recorded' };
       }
+
+      const amount = Number(data.Amount ?? data.TransAmount);
+      const receipt =
+        data.MpesaReceiptNumber || data.TransactionCode || data.TransID;
+      if (amount !== contribution.amount || !receipt) {
+        this.logger.warn(
+          'Rejected a payment callback with an invalid amount or missing receipt.',
+        );
+        return {
+          success: false,
+          message: 'Payment amount or receipt could not be verified',
+        };
+      }
+
+      const outcome = await this.prisma.$transaction(async (tx) => {
+        const completed = await tx.contribution.updateMany({
+          where: { id: contribution.id, status: { in: ['PENDING', 'FAILED'] } },
+          data: {
+            status: 'COMPLETED',
+            confirmedAt: now,
+            mpesaReceiptNumber: receipt,
+            metadata: {
+              ...metadata,
+              mpesaReceiptNumber: receipt,
+              transactionCode: receipt,
+              completedAt: now.toISOString(),
+              resultCode: data.ResultCode,
+              confirmedAmount: amount,
+            },
+          },
+        });
+        if (!completed.count) return null;
+
+        // Serialise entitlement updates across different payments by one member.
+        await tx.$queryRaw`SELECT id FROM "Subscription" WHERE "memberId" = ${contribution.memberId} FOR UPDATE`;
+        const subscription = await tx.subscription.findUnique({
+          where: { memberId: contribution.memberId },
+          include: { member: true },
+        });
+        if (!subscription)
+          throw new Error('The paid member has no subscription to activate.');
+        const newerPayment = await tx.contribution.findFirst({
+          where: {
+            memberId: contribution.memberId,
+            status: 'COMPLETED',
+            paymentMethod: 'MPESA',
+            createdAt: { gt: contribution.createdAt },
+          },
+          select: { id: true },
+        });
+        if (newerPayment) return { subscription, sendNotice: false };
+
+        const tier =
+          metadata?.purchasedTier ?? metadata?.newTier ?? subscription.tier;
+        const tierPrices = { BRONZE: 350, SILVER: 550, GOLD: 700 };
+        const tierCaps = { BRONZE: 6000, SILVER: 10000, GOLD: 15000 };
+        const frequency =
+          metadata?.paymentFrequency ?? subscription.paymentFrequency;
+        const activated = await tx.subscription.update({
+          where: { memberId: contribution.memberId },
+          data: {
+            isActive: true,
+            tier,
+            paymentFrequency: frequency,
+            monthlyAmount:
+              metadata?.purchasedMonthlyAmount ??
+              (metadata?.isUpgrade
+                ? tierPrices[tier]
+                : subscription.monthlyAmount),
+            annualCapLimit:
+              metadata?.purchasedAnnualCap ??
+              (metadata?.isUpgrade
+                ? tierCaps[tier]
+                : subscription.annualCapLimit),
+          },
+          include: { member: true },
+        });
+        await tx.contribution.update({
+          where: { id: contribution.id },
+          data: { claimLimitsAssigned: true, claimLimitsAssignedAt: now },
+        });
+        return {
+          subscription: activated,
+          sendNotice: !subscription.isActive || tier !== subscription.tier,
+        };
+      });
+      if (!outcome)
+        return { success: true, message: 'Payment already processed' };
+
+      void this.careEvents?.track({
+        type: CareEventType.MEMBERSHIP_PAYMENT_SUCCESS,
+        memberId: contribution.memberId,
+        source: metadata?.stkSource,
+        metadata: { contributionId: contribution.id, amount },
+      });
+
+      const followUps: Promise<unknown>[] = [
+        this.referralService.creditCommission(contribution.id),
+      ];
+      if (outcome.sendNotice) {
+        const { subscription } = outcome;
+        if (subscription.member.referredBy) {
+          followUps.push(
+            this.referralService.updateActiveReferralCount(
+              subscription.member.referredBy,
+            ),
+          );
+        }
+        const tier =
+          subscription.tier[0] + subscription.tier.slice(1).toLowerCase();
+        const message =
+          subscription.member.preferredLanguage === 'sw'
+            ? `Malipo yako yamepokelewa. Uanachama wako wa Meno${tier} sasa unatumika.`
+            : `Your payment was received and your Meno${tier} membership is active.`;
+        followUps.push(
+          this.smsService.sendSms(subscription.member.phoneNumber, message),
+        );
+      }
+      for (const result of await Promise.allSettled(followUps)) {
+        if (result.status === 'rejected') {
+          this.logger.warn('A follow-up failed after payment was confirmed.');
+        }
+      }
+
+      return {
+        success: true,
+        message: 'Payment processed successfully',
+        contributionId: contribution.id,
+      };
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`❌ CRITICAL: Callback processing error: ${errMsg}`);
-      this.logger.error(`Callback data: ${JSON.stringify(data)}`);
-      return { success: false, message: 'Callback processing failed' };
+      this.logger.error(
+        `Callback processing failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        success: false,
+        retryable: true,
+        message: 'Callback processing failed',
+      };
     }
   }
 
-  /**
-   * Find contribution by SasaPay callback identifiers
-   * Matches CheckoutRequestID or MerchantRequestID stored in metadata
-   * IMPORTANT: Also checks FAILED status to handle retry callbacks
-   */
-  private async findContributionByCallback(data: PaymentCallbackData) {
-    const { CheckoutRequestID, MerchantRequestID } = data;
-
-    // Try to find by CheckoutRequestID in metadata first (most reliable)
-    // Check both PENDING and FAILED status to handle retries
-    if (CheckoutRequestID) {
-      const contribution = await this.prisma.contribution.findFirst({
-        where: {
-          status: { in: ['PENDING', 'FAILED'] }, // Allow updating FAILED payments
-          metadata: {
-            path: ['checkoutRequestId'],
-            equals: CheckoutRequestID,
-          },
-        },
-        include: { member: true },
-        orderBy: { createdAt: 'desc' }, // Get most recent if multiple exist
-      });
-
-      if (contribution) {
-        this.logger.log(
-          `Found contribution ${contribution.id} by CheckoutRequestID: ${CheckoutRequestID}, status: ${contribution.status}`,
-        );
-        return contribution;
-      }
-    }
-
-    // Fallback: find by MerchantRequestID in metadata
-    if (MerchantRequestID) {
-      const contribution = await this.prisma.contribution.findFirst({
-        where: {
-          status: { in: ['PENDING', 'FAILED'] }, // Allow updating FAILED payments
-          metadata: {
-            path: ['merchantRequestId'],
-            equals: MerchantRequestID,
-          },
-        },
-        include: { member: true },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (contribution) {
-        this.logger.log(
-          `Found contribution ${contribution.id} by MerchantRequestID: ${MerchantRequestID}, status: ${contribution.status}`,
-        );
-        return contribution;
-      }
-    }
-
-    // Last resort: find most recent pending/failed contribution with menodao_ ref
-    const contribution = await this.prisma.contribution.findFirst({
+  private async findContributionByCallback(
+    data: PaymentCallbackData,
+    verifiedReference?: string,
+  ) {
+    const checkoutId = data.CheckoutRequestID?.trim();
+    const merchantId = data.MerchantRequestID?.trim();
+    const references = [
+      data.BillRefNumber,
+      data.ThirdPartyTransID,
+      merchantId,
+      verifiedReference,
+    ].filter(
+      (value): value is string =>
+        typeof value === 'string' && /^menodao_[a-z0-9]+$/i.test(value),
+    );
+    if (!checkoutId && !merchantId && !references.length) return null;
+    const candidates = await this.prisma.contribution.findMany({
       where: {
-        paymentRef: { startsWith: 'menodao_' },
-        status: { in: ['PENDING', 'FAILED'] },
+        OR: [
+          ...(checkoutId
+            ? [
+                { checkoutRequestId: checkoutId },
+                {
+                  metadata: { path: ['checkoutRequestId'], equals: checkoutId },
+                },
+              ]
+            : []),
+          ...(merchantId
+            ? [
+                { merchantRequestId: merchantId },
+                {
+                  metadata: { path: ['merchantRequestId'], equals: merchantId },
+                },
+              ]
+            : []),
+          ...(references.length ? [{ paymentRef: { in: references } }] : []),
+        ],
       },
-      orderBy: { createdAt: 'desc' },
-      include: { member: true },
+      take: 2,
     });
-
-    if (contribution) {
-      this.logger.log(
-        `Found contribution ${contribution.id} by paymentRef (last resort), status: ${contribution.status}`,
-      );
-    } else {
-      this.logger.warn(
-        `No contribution found for CheckoutRequestID=${CheckoutRequestID}, MerchantRequestID=${MerchantRequestID}`,
-      );
-    }
-
+    if (candidates.length !== 1) return null;
+    const contribution = candidates[0];
+    if (verifiedReference && contribution.paymentRef !== verifiedReference)
+      return null;
+    const metadata = contribution.metadata as {
+      checkoutRequestId?: string;
+      merchantRequestId?: string;
+    } | null;
+    const recordedCheckout =
+      contribution.checkoutRequestId ?? metadata?.checkoutRequestId;
+    const recordedMerchant =
+      contribution.merchantRequestId ?? metadata?.merchantRequestId;
+    if (
+      (checkoutId && recordedCheckout && checkoutId !== recordedCheckout) ||
+      (merchantId &&
+        recordedMerchant &&
+        merchantId !== recordedMerchant &&
+        merchantId !== contribution.paymentRef) ||
+      (references.length &&
+        contribution.paymentRef &&
+        !references.includes(contribution.paymentRef))
+    )
+      return null;
     return contribution;
   }
 
@@ -636,7 +537,9 @@ export class PaymentService {
     return {
       status: contribution.status,
       transactionCode:
-        metadata?.mpesaReceiptNumber || metadata?.transactionCode,
+        contribution.mpesaReceiptNumber ||
+        metadata?.mpesaReceiptNumber ||
+        metadata?.transactionCode,
     };
   }
 

@@ -11,6 +11,7 @@ import { BlockchainService } from '../blockchain/blockchain.service';
 import {
   PaymentService,
   PaymentCallbackData,
+  StkCallbackProof,
 } from '../payments/payment.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { PackageTier, PaymentFrequency, PaymentStatus } from '@prisma/client';
@@ -39,6 +40,7 @@ export class ContributionsService {
     newTier?: string,
     paymentFrequency?: PaymentFrequency,
     expectedCharge?: { tier: PackageTier; amount: number },
+    stkSource: 'WEB' | 'WHATSAPP' = 'WEB',
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -125,27 +127,35 @@ export class ContributionsService {
       throw new BadRequestException('Maximum contribution is KES 100,000');
     }
 
-    // Create contribution record (store original amount for display)
+    const purchasedTier =
+      isUpgrade && normalizedNewTier
+        ? normalizedNewTier
+        : member.subscription.tier;
+    const purchasedPlan = this.subscriptionsService
+      .getPackages()
+      .find((plan) => plan.tier === purchasedTier);
+    if (!purchasedPlan)
+      throw new BadRequestException('Membership plan was not found.');
     const contribution = await this.prisma.contribution.create({
       data: {
         memberId,
         amount: actualAmount,
         month: new Date(),
         paymentMethod: 'MPESA',
+        paymentFrequency: normalizedFrequency,
         status: PaymentStatus.PENDING,
-        metadata: isUpgrade
-          ? {
-              isUpgrade: true,
-              newTier: normalizedNewTier,
-              displayAmount: amount,
-              paymentFrequency: normalizedFrequency,
-              chargedAmount: actualAmount,
-            }
-          : {
-              paymentFrequency: normalizedFrequency,
-              displayAmount: amount,
-              chargedAmount: actualAmount,
-            },
+        metadata: {
+          ...(isUpgrade && normalizedNewTier
+            ? { isUpgrade: true, newTier: normalizedNewTier }
+            : {}),
+          stkSource,
+          purchasedTier,
+          purchasedMonthlyAmount: purchasedPlan.monthlyPrice,
+          purchasedAnnualCap: purchasedPlan.annualCap,
+          paymentFrequency: normalizedFrequency,
+          displayAmount: amount,
+          chargedAmount: actualAmount,
+        },
       },
     });
 
@@ -169,9 +179,8 @@ export class ContributionsService {
     );
 
     if (!paymentResult.success) {
-      // Update contribution to failed if STK push fails
-      await this.prisma.contribution.update({
-        where: { id: contribution.id },
+      await this.prisma.contribution.updateMany({
+        where: { id: contribution.id, status: PaymentStatus.PENDING },
         data: { status: PaymentStatus.FAILED },
       });
 
@@ -267,58 +276,43 @@ export class ContributionsService {
   /**
    * Handle payment callback/confirmation
    */
-  async handlePaymentCallback(payload: PaymentCallbackData) {
+  async handlePaymentCallback(
+    payload: PaymentCallbackData,
+    proof?: StkCallbackProof,
+  ) {
     this.logger.log('Payment callback received');
 
-    const result = await this.paymentService.processCallback(payload);
+    const result = await this.paymentService.processCallback(payload, proof);
 
-    // If payment was successful, activate subscription and record on blockchain
-    if (result.success && payload.ResultCode === '0') {
+    if (result.contributionId) {
       try {
-        // Find the completed contribution
-        const contribution = await this.prisma.contribution.findFirst({
-          where: {
-            paymentRef: { startsWith: 'menodao_' },
-            status: PaymentStatus.COMPLETED,
-          },
-          orderBy: { updatedAt: 'desc' },
-          include: { member: { include: { subscription: true } } },
+        const contribution = await this.prisma.contribution.findUnique({
+          where: { id: result.contributionId },
         });
-
-        if (contribution) {
-          // Activate subscription if not already active
-          if (
-            contribution.member?.subscription &&
-            !contribution.member.subscription.isActive
-          ) {
-            await this.subscriptionsService.activateSubscription(
-              contribution.memberId,
-            );
-            this.logger.log(
-              `Subscription activated for member ${contribution.memberId}`,
-            );
-          }
-
-          // Record on blockchain
+        if (contribution && !contribution.txHash) {
           const txHash = await this.blockchainService.recordContribution(
             contribution.memberId,
             contribution.amount,
           );
-
           if (txHash) {
             await this.prisma.contribution.update({
               where: { id: contribution.id },
               data: { txHash },
             });
-            this.logger.log(`Blockchain record created: ${txHash}`);
           }
         }
       } catch (error) {
-        this.logger.error(`Post-payment processing failed: ${error.message}`);
+        this.logger.error(
+          `Post-payment ledger recording failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
-    return result;
+    return {
+      success: result.success,
+      message: result.message,
+      retryable: result.retryable,
+    };
   }
 
   /**

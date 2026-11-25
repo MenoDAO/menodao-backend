@@ -507,6 +507,7 @@ export class BotMembershipPaymentService {
         undefined,
         frequency,
         { tier, amount },
+        'WHATSAPP',
       );
       return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches.\n\nThe payment is pending until M-Pesa confirms it.`;
     } catch {

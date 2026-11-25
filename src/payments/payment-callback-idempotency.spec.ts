@@ -1,266 +1,175 @@
-// Feature: whatsapp-ai-chatbot, Property 11: Payment Callback Idempotency
-
-import * as fc from 'fast-check';
-import { PaymentService, PaymentCallbackData } from './payment.service';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
+import { createHmac } from 'node:crypto';
 import { SasaPayService } from '../sasapay/sasapay.service';
-import { SmsService } from '../sms/sms.service';
-import { ReferralService } from '../referrals/referral.service';
+import { ConfigService } from '@nestjs/config';
+import { PaymentCallbackData, PaymentService } from './payment.service';
 
-/**
- * Validates: Requirements 5.6, 5.7
- *
- * Property 11: Payment Callback Idempotency
- * For any contributionId already in COMPLETED status, calling
- * PaymentService.processCallback() a second time SHALL NOT re-activate
- * the subscription or create duplicate records.
- */
-describe('PaymentService — Property 11: Payment Callback Idempotency', () => {
-  let service: PaymentService;
-
-  // Track calls to subscription update and contribution create
-  const mockSubscriptionUpdate = jest.fn();
-  const mockContributionUpdate = jest.fn();
-  const mockContributionCreate = jest.fn();
-  const mockContributionFindFirst = jest.fn();
-  const mockContributionFindUnique = jest.fn();
-  const mockSubscriptionFindUnique = jest.fn();
-  const mockMemberFindUnique = jest.fn();
-
-  const mockPrisma = {
+function build() {
+  const contribution = {
+    id: 'contribution',
+    memberId: 'beneficiary',
+    amount: 350,
+    status: 'PENDING',
+    checkoutRequestId: 'provider-checkout',
+    merchantRequestId: 'provider-merchant',
+    paymentRef: 'menodao_reference',
+    createdAt: new Date(),
+    metadata: {
+      stkSource: 'WHATSAPP',
+      purchasedTier: 'BRONZE',
+      purchasedMonthlyAmount: 350,
+      purchasedAnnualCap: 6000,
+      paymentFrequency: 'MONTHLY',
+    },
+  };
+  const subscription = {
+    id: 'subscription',
+    tier: 'SILVER',
+    isActive: false,
+    member: { phoneNumber: '+254712345678', preferredLanguage: 'en' },
+  };
+  const callback: PaymentCallbackData = {
+    CheckoutRequestID: 'provider-checkout',
+    MerchantRequestID: 'provider-merchant',
+    ResultCode: '0',
+    Amount: 350,
+    MpesaReceiptNumber: 'RECEIPT',
+    PhoneNumber: '254711111111',
+  };
+  const prisma = {
     contribution: {
-      findFirst: mockContributionFindFirst,
-      findUnique: mockContributionFindUnique,
-      update: mockContributionUpdate,
-      create: mockContributionCreate,
+      findMany: jest.fn().mockImplementation(() => [{ ...contribution }]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      updateMany: jest.fn().mockImplementation(({ data }) => {
+        contribution.status = data.status;
+        return { count: 1 };
+      }),
+      update: jest.fn(),
     },
     subscription: {
-      findUnique: mockSubscriptionFindUnique,
-      update: mockSubscriptionUpdate,
+      findUnique: jest.fn().mockResolvedValue(subscription),
+      update: jest
+        .fn()
+        .mockResolvedValue({ ...subscription, tier: 'BRONZE', isActive: true }),
     },
-    member: {
-      findUnique: mockMemberFindUnique,
-    },
-  } as unknown as PrismaService;
-
-  const mockConfigService = {
-    get: jest.fn((key: string) => {
-      if (key === 'NODE_ENV') return 'test';
-      return undefined;
-    }),
-  } as unknown as ConfigService;
-
-  const mockSasaPayService = {
-    isConfigured: jest.fn().mockReturnValue(false),
-    normalizePhoneNumber: jest.fn((p: string) => p),
-  } as unknown as SasaPayService;
-
-  const mockSmsService = {
-    sendSms: jest.fn().mockResolvedValue(undefined),
-  } as unknown as SmsService;
-
-  const mockReferralService = {
+    $queryRaw: jest.fn(),
+    $transaction: jest.fn(),
+  };
+  prisma.$transaction.mockImplementation((run) => run(prisma));
+  const sms = { sendSms: jest.fn().mockResolvedValue(undefined) };
+  const referrals = {
     creditCommission: jest.fn().mockResolvedValue(undefined),
-    updateActiveReferralCount: jest.fn().mockResolvedValue(undefined),
-  } as unknown as ReferralService;
+  };
+  const proof = { reference: 'menodao_reference', token: 'callback-token' };
+  const provider = { verifyStkCallback: jest.fn().mockReturnValue(true) };
+  const service = new PaymentService(
+    new ConfigService(),
+    prisma as never,
+    provider as never,
+    sms as never,
+    referrals as never,
+  );
+  return { service, prisma, callback, sms, referrals, provider, proof };
+}
 
-  beforeEach(() => {
-    jest.clearAllMocks();
+describe('SasaPay settlement', () => {
+  it('credits the original beneficiary and quoted tier exactly once, even with a different payer phone', async () => {
+    const { service, prisma, callback, sms, referrals, proof } = build();
 
-    service = new PaymentService(
-      mockConfigService,
-      mockPrisma,
-      mockSasaPayService,
-      mockSmsService,
-      mockReferralService,
+    await expect(
+      service.processCallback(callback, proof),
+    ).resolves.toMatchObject({
+      success: true,
+      contributionId: 'contribution',
+    });
+    await expect(service.processCallback(callback, proof)).resolves.toEqual({
+      success: true,
+      message: 'Payment already processed',
+    });
+    await service.processCallback({ ...callback, ResultCode: '1032' }, proof);
+
+    expect(prisma.contribution.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.contribution.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'COMPLETED',
+          confirmedAt: expect.any(Date),
+          metadata: expect.objectContaining({ stkSource: 'WHATSAPP' }),
+        }),
+      }),
+    );
+    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { memberId: 'beneficiary' },
+        data: expect.objectContaining({
+          tier: 'BRONZE',
+          isActive: true,
+          annualCapLimit: 6000,
+        }),
+      }),
+    );
+    expect(referrals.creditCommission).toHaveBeenCalledTimes(1);
+    expect(sms.sendSms).toHaveBeenCalledWith(
+      '+254712345678',
+      expect.stringContaining('MenoBronze'),
     );
   });
 
-  /**
-   * Property 11: Payment Callback Idempotency
-   *
-   * For any contributionId already in COMPLETED status, calling
-   * processCallback() a second time SHALL NOT:
-   *   1. Call subscription activation (subscription.update with isActive: true)
-   *   2. Create a new contribution record
-   *   3. Throw an error (returns gracefully)
-   *
-   * The mechanism: findContributionByCallback() only queries for
-   * contributions with status IN ['PENDING', 'FAILED']. A COMPLETED
-   * contribution is invisible to the callback lookup, so the second
-   * call returns { success: false, message: 'Transaction not found' }
-   * without touching any subscription or contribution records.
-   */
-  it('Property 11: second callback on COMPLETED contribution does not re-activate subscription or create duplicates', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        // Generate arbitrary contributionId strings
-        fc
-          .string({ minLength: 1, maxLength: 64 })
-          .filter((s) => s.trim().length > 0),
-        // Generate arbitrary CheckoutRequestID strings
-        fc
-          .string({ minLength: 1, maxLength: 64 })
-          .filter((s) => s.trim().length > 0),
-        async (contributionId, checkoutRequestId) => {
-          jest.clearAllMocks();
-
-          // Simulate: contribution is already COMPLETED — findContributionByCallback
-          // queries only PENDING/FAILED, so it returns null for a COMPLETED contribution
-          mockContributionFindFirst.mockResolvedValue(null);
-          mockContributionFindUnique.mockResolvedValue(null);
-
-          const callbackData: PaymentCallbackData = {
-            CheckoutRequestID: checkoutRequestId,
-            MerchantRequestID: `merchant_${checkoutRequestId}`,
-            ResultCode: '0', // success result
-            ResultDesc: 'The service request is processed successfully.',
-            Amount: 350,
-            MpesaReceiptNumber: `LGR${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
-            PhoneNumber: '254712345678',
-            TransactionDate: '20250101120000',
-          };
-
-          // Call processCallback() — simulating the second call on an already-COMPLETED contribution
-          const result = await service.processCallback(callbackData);
-
-          // 1. SHALL return gracefully (no error thrown)
-          expect(result).toBeDefined();
-          expect(typeof result.success).toBe('boolean');
-          expect(typeof result.message).toBe('string');
-
-          // 2. SHALL NOT re-activate the subscription
-          //    (subscription.update should never be called with isActive: true)
-          const subscriptionActivationCalls =
-            mockSubscriptionUpdate.mock.calls.filter(
-              (call) => call[0]?.data?.isActive === true,
-            );
-          expect(subscriptionActivationCalls).toHaveLength(0);
-
-          // 3. SHALL NOT create a new contribution record
-          expect(mockContributionCreate).not.toHaveBeenCalled();
-
-          // 4. The result message should indicate the transaction was not found
-          //    (not a processing error — the idempotency guard is working correctly)
-          expect(result.message).toBe('Transaction not found');
-        },
+  it('rejects unidentified callbacks and amount mismatches', async () => {
+    const { service, prisma, callback, proof } = build();
+    await expect(
+      service.processCallback({ ...callback, Amount: 100 }, proof),
+    ).resolves.toMatchObject({ success: false });
+    await expect(
+      service.processCallback(
+        { ...callback, CheckoutRequestID: 'different' },
+        proof,
       ),
-      { numRuns: 100 },
-    );
+    ).resolves.toMatchObject({ success: false });
+    await expect(
+      service.processCallback({ ResultCode: '0', Amount: 350 }),
+    ).resolves.toMatchObject({ success: false });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.contribution.findMany).toHaveBeenCalledTimes(2);
   });
 
-  it('Property 11 (variant): subscription activation count stays at 1 after multiple callbacks', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc
-          .string({ minLength: 1, maxLength: 36 })
-          .filter((s) => s.trim().length > 0),
-        fc.integer({ min: 2, max: 10 }), // number of duplicate callback calls
-        async (memberId, duplicateCallCount) => {
-          jest.clearAllMocks();
+  it('keeps a new STK contribution pending if callback proof is missing or invalid', async () => {
+    const { service, prisma, callback, provider, proof } = build();
+    await expect(service.processCallback(callback)).resolves.toMatchObject({
+      success: false,
+    });
+    provider.verifyStkCallback.mockReturnValue(false);
+    await expect(
+      service.processCallback(callback, proof),
+    ).resolves.toMatchObject({ success: false });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 
-          const checkoutRequestId = `checkout_${memberId}`;
-          const contributionId = `contrib_${memberId}`;
+  it('does not let an older payment replace a newer settled membership', async () => {
+    const { service, prisma, callback, proof } = build();
+    prisma.contribution.findFirst.mockResolvedValue({ id: 'newer' });
+    await expect(
+      service.processCallback(callback, proof),
+    ).resolves.toMatchObject({
+      success: true,
+    });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+});
 
-          // First call: contribution is PENDING — found and processed
-          const pendingContribution = {
-            id: contributionId,
-            memberId,
-            amount: 350,
-            status: 'PENDING',
-            metadata: {
-              checkoutRequestId,
-              merchantRequestId: `merchant_${memberId}`,
-            },
-            member: {
-              id: memberId,
-              phoneNumber: '+254712345678',
-              fullName: 'Test Member',
-              preferredLanguage: 'en',
-              referredBy: null,
-            },
-          };
-
-          const activeSubscription = {
-            id: `sub_${memberId}`,
-            memberId,
-            tier: 'BRONZE',
-            isActive: false, // not yet active before first callback
-            paymentFrequency: 'MONTHLY',
-            monthlyAmount: 350,
-            member: {
-              id: memberId,
-              phoneNumber: '+254712345678',
-              fullName: 'Test Member',
-              preferredLanguage: 'en',
-            },
-          };
-
-          // First call: PENDING contribution found
-          mockContributionFindFirst
-            .mockResolvedValueOnce(pendingContribution) // first call finds PENDING
-            .mockResolvedValue(null); // subsequent calls find nothing (COMPLETED is invisible)
-
-          mockContributionUpdate.mockResolvedValue({
-            ...pendingContribution,
-            status: 'COMPLETED',
-          });
-
-          mockSubscriptionFindUnique.mockResolvedValue(activeSubscription);
-          mockSubscriptionUpdate.mockResolvedValue({
-            ...activeSubscription,
-            isActive: true,
-          });
-
-          mockMemberFindUnique.mockResolvedValue({
-            id: memberId,
-            referredBy: null,
-          });
-
-          const callbackData: PaymentCallbackData = {
-            CheckoutRequestID: checkoutRequestId,
-            MerchantRequestID: `merchant_${memberId}`,
-            ResultCode: '0',
-            ResultDesc: 'The service request is processed successfully.',
-            Amount: 350,
-            MpesaReceiptNumber: 'LGR12345678',
-            PhoneNumber: '254712345678',
-            TransactionDate: '20250101120000',
-          };
-
-          // First callback — processes the payment
-          await service.processCallback(callbackData);
-
-          const activationCountAfterFirst =
-            mockSubscriptionUpdate.mock.calls.filter(
-              (call) => call[0]?.data?.isActive === true,
-            ).length;
-
-          // Reset mocks to simulate subsequent duplicate callbacks
-          // (contribution is now COMPLETED, so findFirst returns null)
-          jest.clearAllMocks();
-          mockContributionFindFirst.mockResolvedValue(null);
-          mockContributionFindUnique.mockResolvedValue(null);
-
-          // Duplicate callbacks (2nd through Nth)
-          for (let i = 1; i < duplicateCallCount; i++) {
-            await service.processCallback(callbackData);
-          }
-
-          // Subscription activation should have happened exactly once (in the first call)
-          // The duplicate calls should not trigger any additional activations
-          const activationCountAfterDuplicates =
-            mockSubscriptionUpdate.mock.calls.filter(
-              (call) => call[0]?.data?.isActive === true,
-            ).length;
-
-          expect(activationCountAfterFirst).toBe(1);
-          expect(activationCountAfterDuplicates).toBe(0); // no new activations from duplicates
-          expect(mockContributionCreate).not.toHaveBeenCalled();
-        },
-      ),
-      { numRuns: 50 },
+describe('SasaPay checkout callback proof', () => {
+  it('authenticates only the exact signed merchant reference', () => {
+    const secret = 'test-secret';
+    const service = new SasaPayService(
+      new ConfigService({ SASAPAY_CLIENT_SECRET: secret }),
     );
+    const reference = 'menodao_test';
+    const token = createHmac('sha256', secret)
+      .update(`menodao-stk-callback:${reference}`)
+      .digest('hex');
+
+    expect(service.verifyStkCallback(reference, token)).toBe(true);
+    expect(service.verifyStkCallback('menodao_another', token)).toBe(false);
+    expect(service.verifyStkCallback(reference, 'bad-token')).toBe(false);
   });
 });
