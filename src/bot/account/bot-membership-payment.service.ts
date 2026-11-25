@@ -36,12 +36,15 @@ export class BotMembershipPaymentService {
       .toLowerCase()
       .replace(/[.!?]+$/, '');
     if (/^(?:how|where)\b.*\b(?:pay|renew)\b/.test(text)) return null;
-    const join =
-      /^(?:join|jiunge) (?:meno)?(bronze|silver|gold) (monthly|annual)$/.exec(
-        text,
-      );
-    if (join)
-      return `MEMBERSHIP_JOIN:${join[1].toUpperCase() as PackageTier}:${join[2].toUpperCase() as PaymentFrequency}`;
+    const tier = this.requestedTier(text);
+    const cadence = /\b(monthly|annual|yearly|per month|per year)\b/.exec(
+      text,
+    )?.[1];
+    if (tier && cadence) {
+      const frequency =
+        cadence === 'monthly' || cadence === 'per month' ? 'MONTHLY' : 'ANNUAL';
+      return `MEMBERSHIP_JOIN:${tier}:${frequency}`;
+    }
 
     if (
       /\bmy (?:current )?(?:plan|membership|cover|subscription)\b|\b(?:mpango|uanachama) wangu\b/.test(
@@ -59,6 +62,52 @@ export class BotMembershipPaymentService {
     )
       ? 'MEMBERSHIP_PAY'
       : null;
+  }
+
+  private requestedTier(message: string): PackageTier | undefined {
+    const tier = /\b(?:meno)?(bronze|silver|gold)\b/i.exec(message)?.[1];
+    const selecting =
+      /^(?:meno)?(?:bronze|silver|gold)(?: (?:monthly|annual|yearly))?$/i.test(
+        message.trim(),
+      ) ||
+      /\b(?:pay|buy|choose|join|take|want|like|get|select|jiunge|lipa|lipia)\b/i.test(
+        message,
+      );
+    return selecting
+      ? (tier?.toUpperCase() as PackageTier | undefined)
+      : undefined;
+  }
+
+  planChoiceReply(message: string): string | null {
+    const tier = this.requestedTier(
+      message.toLowerCase().replace(/[.!?]+$/, ''),
+    );
+    if (!tier || this.detectRequest(message)?.startsWith('MEMBERSHIP_JOIN:'))
+      return null;
+    const plan = this.subscriptions
+      .getPackages()
+      .find((item) => item.tier === tier);
+    if (!plan) return null;
+    const label = tier[0] + tier.slice(1).toLowerCase();
+    return `You can set up ${plan.displayName} right here. It’s KES ${plan.actualMonthlyCharge} monthly or KES ${plan.actualAnnualCharge} yearly. Which works for you? Reply “${label} monthly” or “${label} yearly”.`;
+  }
+
+  payerNumberFromMessage(message: string): string | null {
+    const candidate =
+      /(?:^pay from\s+|\b(?:send|prompt|use)\b[^\d+]*)(\+?[\d ()-]+)[.!?]?$/i.exec(
+        message,
+      )?.[1] ?? (/^\+?[\d ()-]+$/.test(message) ? message : null);
+    return candidate && this.normalizePayerPhone(candidate) ? candidate : null;
+  }
+
+  async acceptPayerReply(
+    memberId: string,
+    message: string,
+  ): Promise<string | null> {
+    const candidate = this.payerNumberFromMessage(message);
+    if (!candidate || !(await this.findOpenQuote(memberId, new Date())))
+      return null;
+    return this.changePayer(memberId, candidate);
   }
 
   describePlans(): string {
@@ -176,13 +225,19 @@ export class BotMembershipPaymentService {
       PackageTier | undefined,
       PaymentFrequency | undefined,
     ];
-    if (requestedTier && subscription?.isActive) {
-      return 'You already have an active plan. To pay for that plan, type “pay membership”.';
+    if (
+      requestedTier &&
+      subscription?.isActive &&
+      (requestedTier !== subscription.tier ||
+        requestedFrequency !== subscription.paymentFrequency)
+    ) {
+      return 'You already have active cover. To check your current plan, ask “my plan”. To check whether a payment is due, say “pay membership”.';
     }
+    const paymentRequest = subscription?.isActive ? 'MEMBERSHIP_PAY' : request;
     const tier = requestedTier ?? subscription?.tier;
     const frequency = requestedFrequency ?? subscription?.paymentFrequency;
-    if (!tier || !frequency) {
-      return `You don’t have a plan on record. ${this.describePlans()}`;
+    if ((!subscription?.isActive && !requestedTier) || !tier || !frequency) {
+      return `I couldn’t find an active membership. You can choose a tier and make your first payment right here. ${this.describePlans()}`;
     }
 
     try {
@@ -191,14 +246,24 @@ export class BotMembershipPaymentService {
         frequency,
       );
     } catch (error) {
-      if (error instanceof BadRequestException) return error.message;
+      if (error instanceof BadRequestException) {
+        if (
+          subscription?.isActive &&
+          /already made (?:a payment this month|an annual payment)/i.test(
+            error.message,
+          )
+        ) {
+          return 'You’re all caught up on your membership payments. Thanks for being part of MenoDAO! Nothing extra is due right now. If you’d like to support the Foundation separately, you can ask about donating.';
+        }
+        return error.message;
+      }
       throw error;
     }
     const amount = this.price(tier, frequency);
     if (!amount)
       return 'I couldn’t check the price right now. Please try again shortly.';
     const scope = [
-      request,
+      paymentRequest,
       tier,
       frequency,
       amount,

@@ -574,6 +574,12 @@ export class BotGatewayService {
       return;
     }
 
+    const alternative = await this.membershipPayments.acceptPayerReply(member.id, trimmed);
+    if (alternative) {
+      await this.sendTextSafely(member.phoneNumber, alternative);
+      return;
+    }
+
     const confirmation = /^confirm m-?pesa(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(trimmed);
     if (confirmation) {
       const reply = await this.membershipPayments.confirm(member.id, confirmation[1]);
@@ -609,6 +615,20 @@ export class BotGatewayService {
         this.membershipPayments.describePlans(),
         chatContext,
       );
+      return;
+    }
+
+    if (/\b(?:donate|donation|support the foundation)\b/i.test(trimmed)) {
+      await this.sendTextSafely(member.phoneNumber,
+        'Thank you for wanting to support the Dr. Papi Foundation. Donations are optional and separate from membership. You can reach the Foundation at info@drpapifoundation.org.',
+        chatContext,
+      );
+      return;
+    }
+
+    const planChoice = this.membershipPayments.planChoiceReply(trimmed);
+    if (planChoice) {
+      await this.sendTextSafely(member.phoneNumber, planChoice, chatContext);
       return;
     }
 
@@ -717,19 +737,19 @@ export class BotGatewayService {
 
     try {
       const normalized = code.trim().toUpperCase();
-      const existing = await this.prisma.voucher.findUnique({
-        where: { code: normalized },
-      });
-      if (!existing) {
-        if (hasIntent || params.messageText.trim().toUpperCase() === normalized) {
-          await this.sendTextSafely(
-            params.recipientPhone,
-            `I could not find voucher ${normalized}. Please check the code and send it again.`,
-            params.chatContext,
-          );
-          return true;
-        }
-        return false;
+      const verification = await this.voucherService.verifyPublic(normalized);
+      const redeemRequested = /^(?:please\s+)?(?:redeem|tumia)(?:\s+(?:voucher|vocha))?\s+[a-z0-9]+-[a-z0-9]+[.!]?$/i.test(params.messageText.trim());
+
+      if (!verification.valid || !redeemRequested) {
+        const reply = verification.valid
+          ? `Voucher ${normalized} is valid and unused. To use it now, reply “redeem ${normalized}”.`
+          : verification.status === 'REDEEMED'
+            ? `Voucher ${normalized} has already been redeemed.`
+            : verification.status
+              ? `Voucher ${normalized} is ${verification.status.toLowerCase()}.`
+              : `I couldn’t find voucher ${normalized}. Please check the code and try again.`;
+        await this.sendTextSafely(params.recipientPhone, reply, params.chatContext);
+        return true;
       }
 
       const redeemed = await this.voucherService.redeemByCode(normalized, {
@@ -741,12 +761,9 @@ export class BotGatewayService {
       });
       const status = String((redeemed as any)?.status ?? '');
       if (status === 'REDEEMED') {
-        const already = existing.status === 'REDEEMED';
         await this.sendTextSafely(
           params.recipientPhone,
-          already
-            ? `Voucher ${normalized} has already been redeemed. If you need help using it for care, reply with BOOKING or talk to our team.`
-            : `Voucher ${normalized} is confirmed and redeemed. You can present this code at participating care points or reply BOOKING to get help accessing care.`,
+          `Voucher ${normalized} is marked as redeemed. If you need help using it for care, reply “book an appointment”.`,
           params.chatContext,
         );
         return true;

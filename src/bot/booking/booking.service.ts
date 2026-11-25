@@ -1,3 +1,4 @@
+import { isDirectConsultationRequest } from '../intents/intent-fallback';
 /**
  * booking.service.ts (bot monolith port)
  *
@@ -514,8 +515,14 @@ export class BookingService {
       }),
     ].join('');
 
-    let extraction: BookingExtractionResult | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const startingConsultation = !draft.service && isDirectConsultationRequest(userMessage);
+    let extraction: BookingExtractionResult | null = startingConsultation
+      ? Object.assign(new BookingExtractionResult(), {
+          action: 'PROVIDE_DETAILS',
+          confidence: 1,
+        })
+      : null;
+    for (let attempt = 0; !extraction && attempt < 2; attempt++) {
       try {
         const raw = await this.llmProvider.generateCompletion({
           systemPrompt,
@@ -671,9 +678,10 @@ export class BookingService {
       }
     }
 
-    if (!updates.service && !draft.service && resolvedClinic) {
-      const consultation = resolvedClinic.services.find((service) => /\bconsultation\b/i.test(service));
+    if (!updates.service && !draft.service && (resolvedClinic || startingConsultation)) {
+      const consultation = resolvedClinic?.services.find((service) => /\bconsultation\b/i.test(service));
       if (consultation) updates.service = consultation;
+      else if (startingConsultation) updates.service = 'General consultation';
     }
 
     const parsedDateTime = parseBookingDateTime(
@@ -800,7 +808,12 @@ export class BookingService {
         updatedDraft,
         clinics,
       );
-      return { reply, triageFlag: false };
+      const introduction = startingConsultation && field !== 'service'
+        ? effectiveLang === 'sw'
+          ? 'Ndiyo, naweza kukusaidia kupanga uchunguzi na daktari wa meno. '
+          : 'Of course. I can help arrange a consultation with a dentist. '
+        : '';
+      return { reply: introduction + reply, triageFlag: false };
     }
 
     await this.prisma.botBookingDraft.update({
@@ -1499,8 +1512,8 @@ export class BookingService {
     clinics: BotClinic[],
   ): string[] {
     const missing: string[] = [];
-    if (!draft.service) missing.push('service');
     if (!draft.clinicId) missing.push('clinic');
+    if (!draft.service) missing.push('service');
     const clinic = draft.clinicId
       ? (clinics.find((c) => c.id === draft.clinicId) ?? null)
       : null;

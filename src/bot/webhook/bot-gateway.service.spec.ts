@@ -34,6 +34,7 @@ function build(env: Record<string, string> = {}) {
   const member = {
     id: 'guest', phoneNumber: '+254712345678', isVerified: false, preferredLanguage: null,
   };
+  const voucher = { verifyPublic: jest.fn().mockResolvedValue({ valid: true }), redeemByCode: jest.fn().mockResolvedValue({ status: 'REDEEMED' }) };
   const sendTextMessage = jest.fn().mockResolvedValue(undefined);
   const service = new BotGatewayService(
     {} as PrismaService,
@@ -45,10 +46,10 @@ function build(env: Record<string, string> = {}) {
       recordOutbound: jest.fn().mockResolvedValue(undefined),
     } as unknown as BotChatService,
     { detectScope: jest.fn().mockReturnValue(null) } as unknown as BotMemberDataService,
-    { detectRequest: jest.fn().mockReturnValue(null) } as never,
+    { detectRequest: jest.fn().mockReturnValue(null), planChoiceReply: jest.fn().mockReturnValue(null), acceptPayerReply: jest.fn().mockResolvedValue(null) } as never,
     { findAdminBySender: jest.fn().mockResolvedValue(null) } as unknown as AdminWhatsappAccessService,
     {} as never,
-    {} as never,
+    voucher as never,
     { sendTextMessage, markMessageAsRead: jest.fn() } as unknown as IWhatsappClient,
     {} as WhatsappApiClient,
     {} as FlaresendApiClient,
@@ -61,7 +62,7 @@ function build(env: Record<string, string> = {}) {
     }
   ).generateReplyText.bind(service) as (params: ReplyParams) => Promise<string>;
 
-  return { generateReplyText, processTextPipeline, service, sendTextMessage };
+  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher };
 }
 
 const params: ReplyParams = {
@@ -134,4 +135,20 @@ describe('first message from a new WhatsApp number', () => {
     );
     expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', 'How long has it been sore?');
   });
+});
+
+describe('voucher intent', () => {
+  it.each(['is this voucher valid? SMILE-F6S22', 'SMILE-F6S22', 'can I redeem SMILE-F6S22?'])(
+    'checks without redeeming for %s', async (messageText) => {
+      const { service, voucher, sendTextMessage } = build();
+      await service['handleVoucherMessage']({
+        member: { id: 'm', phoneNumber: '+254712345678' },
+        recipientPhone: '+254712345678', messageText,
+        chatContext: { memberId: 'm', contactId: 'm' },
+      });
+      expect(voucher.verifyPublic).toHaveBeenCalledWith('SMILE-F6S22');
+      expect(voucher.redeemByCode).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith('+254712345678', expect.stringContaining('valid and unused'));
+    },
+  );
 });

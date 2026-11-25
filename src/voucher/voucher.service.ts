@@ -354,17 +354,23 @@ export class VoucherService {
     });
     if (!voucher) throw new NotFoundException('Voucher not found.');
     if (voucher.status === 'REDEEMED') return this.mapVoucher(voucher);
-    if (voucher.status === 'VOID' || voucher.status === 'EXPIRED') {
-      throw new BadRequestException(`Voucher is ${voucher.status.toLowerCase()}.`);
-    }
-    const updated = await this.prisma.voucher.update({
-      where: { id: voucher.id },
+    const now = new Date();
+    const result = await this.prisma.voucher.updateMany({
+      where: {
+        id: voucher.id,
+        status: 'ISSUED',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       data: {
         status: 'REDEEMED',
-        redeemedAt: new Date(),
+        redeemedAt: now,
         redeemedByAdminId: input.adminId || input.redeemedBy || null,
         redemptionNotes: input.notes?.trim() || null,
       },
+    });
+    if (result.count !== 1) throw new BadRequestException('Voucher is no longer available.');
+    const updated = await this.prisma.voucher.findUniqueOrThrow({
+      where: { id: voucher.id },
       include: { batch: true },
     });
     return this.mapVoucher(updated);

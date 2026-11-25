@@ -71,7 +71,7 @@ describe('BotMemberDataService', () => {
       ['show me my booking history', 'APPOINTMENTS'],
       ['what treatment did i get last time', 'VISITS'],
       ['what happened to my claim', 'CLAIMS'],
-      ['check my membership details', 'ACCOUNT'],
+      ['show me my account summary', 'ACCOUNT'],
     ])('maps %s to %s', (text, scope) => {
       expect(service.detectScope(text)).toBe(scope);
     });
