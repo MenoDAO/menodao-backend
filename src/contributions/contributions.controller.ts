@@ -15,6 +15,10 @@ import { ContributionsService } from './contributions.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { JwtCaptchaGuard } from '../captcha/guards/jwt-captcha.guard';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
+import {
+  ConsultationPaymentService,
+  CONSULTATION_REFERENCE_PREFIX,
+} from '../appointments/consultation-payment.service';
 import { ClaimsService } from '../claims/claims.service';
 import type {
   SasaPayC2BCallbackData,
@@ -29,6 +33,7 @@ export class ContributionsController {
   constructor(
     private contributionsService: ContributionsService,
     private claimsService: ClaimsService,
+    private consultationPayments: ConsultationPaymentService,
   ) {}
 
   @Get('summary')
@@ -147,7 +152,8 @@ export class ContributionsController {
         payload as SasaPayC2BCallbackData,
       );
 
-      if (result.retryable) throw new ServiceUnavailableException(result.message);
+      if (result.retryable)
+        throw new ServiceUnavailableException(result.message);
       this.logger.log(`C2B callback result: ${JSON.stringify(result)}`);
       this.logger.log('='.repeat(80));
 
@@ -163,7 +169,6 @@ export class ContributionsController {
 
       if (error instanceof ServiceUnavailableException) throw error;
       throw new ServiceUnavailableException('Callback processing failed');
-
     }
   }
 
@@ -174,8 +179,26 @@ export class ContributionsController {
     @Param('token') token: string,
     @Body() payload: SasaPayC2BCallbackData,
   ) {
-    const result = await this.contributionsService.handlePaymentCallback(payload, { reference, token });
-    if (result.retryable) throw new ServiceUnavailableException('Payment processing can be retried');
+    if (reference.startsWith(CONSULTATION_REFERENCE_PREFIX)) {
+      const result = await this.consultationPayments.settle(
+        reference,
+        token,
+        payload,
+      );
+      if (result.retryable)
+        throw new ServiceUnavailableException(
+          'Payment processing can be retried',
+        );
+      return { ResultCode: result.success ? '0' : '1' };
+    }
+    const result = await this.contributionsService.handlePaymentCallback(
+      payload,
+      { reference, token },
+    );
+    if (result.retryable)
+      throw new ServiceUnavailableException(
+        'Payment processing can be retried',
+      );
     return {
       ResultCode: result.success ? '0' : '1',
       ResultDesc: result.message,

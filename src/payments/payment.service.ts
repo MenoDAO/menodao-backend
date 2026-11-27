@@ -361,7 +361,12 @@ export class PaymentService {
           },
           select: { id: true },
         });
-        if (usedReceipt) return 'receipt-in-use' as const;
+        const usedConsultationReceipt = await tx.appointment.findFirst({
+          where: { consultationReceipt: receipt },
+          select: { id: true },
+        });
+        if (usedReceipt || usedConsultationReceipt)
+          return 'receipt-in-use' as const;
 
         const completed = await tx.contribution.updateMany({
           where: { id: contribution.id, status: { in: ['PENDING', 'FAILED'] } },

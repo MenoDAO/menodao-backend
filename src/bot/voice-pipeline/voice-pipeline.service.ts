@@ -7,7 +7,10 @@ import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from '../ai/interfaces/llm-provider.interface';
 import { randomUUID } from 'crypto';
 import { normalizeVoiceTranscript } from './voice-transcript.util';
-import { BookingService } from '../booking/booking.service';
+import {
+  BookingService,
+  bookingPaymentChoice,
+} from '../booking/booking.service';
 import { BotAiService } from '../ai/bot-ai.service';
 import type { ChatHistoryMessage } from '../ai/interfaces/llm-provider.interface';
 import {
@@ -31,7 +34,10 @@ import type {
   IntentEntities,
   IntentType,
 } from '../intents/intent.types';
-import { fallbackClassification, isDirectConsultationRequest } from '../intents/intent-fallback';
+import {
+  fallbackClassification,
+  isDirectConsultationRequest,
+} from '../intents/intent-fallback';
 import { BotActorService } from '../actions/bot-actor.service';
 import { BotActionRegistryService } from '../actions/bot-action-registry.service';
 import type {
@@ -123,9 +129,7 @@ export class VoicePipelineService {
     }
 
     const sessionUuid = intakeUuid || randomUUID();
-    this.logger.log(
-      `Starting voice pipeline execution [${sessionUuid}]`,
-    );
+    this.logger.log(`Starting voice pipeline execution [${sessionUuid}]`);
     try {
       const keyterms = await this.loadVoiceKeyterms();
       const sttResult = await this.assemblyAiService.transcribeAudio(
@@ -134,9 +138,14 @@ export class VoicePipelineService {
       );
       const transcript = normalizeVoiceTranscript(sttResult.text);
       const language = sttResult.languageCode || languageHint || undefined;
-      const words = sttResult.words?.filter((word) => Number.isFinite(word.confidence)) ?? [];
-      const confidence = sttResult.confidence ??
-        (words.length ? words.reduce((sum, word) => sum + word.confidence, 0) / words.length : undefined);
+      const words =
+        sttResult.words?.filter((word) => Number.isFinite(word.confidence)) ??
+        [];
+      const confidence =
+        sttResult.confidence ??
+        (words.length
+          ? words.reduce((sum, word) => sum + word.confidence, 0) / words.length
+          : undefined);
       const unclearWords = words.filter((word) => word.confidence < 0.5).length;
       if (
         !/[\p{L}\p{N}]/u.test(transcript) ||
@@ -152,9 +161,10 @@ export class VoicePipelineService {
           intent: 'GENERAL_CONVERSATION',
           intentConfidence: confidence ?? 0,
           transcript: '',
-          patientMessage: replyLanguage(languageHint || language) === 'sw'
-            ? 'Samahani, sikupata ujumbe wako vizuri. Unaweza kuandika au kutuma ujumbe mwingine wa sauti ulio wazi zaidi?'
-            : 'I couldn’t make out your voice note clearly. Could you type what you wanted to tell me, or send a clearer recording?',
+          patientMessage:
+            replyLanguage(languageHint || language) === 'sw'
+              ? 'Samahani, sikupata ujumbe wako vizuri. Unaweza kuandika au kutuma ujumbe mwingine wa sauti ulio wazi zaidi?'
+              : 'I couldn’t make out your voice note clearly. Could you type what you wanted to tell me, or send a clearer recording?',
           status: 'failed',
           error: 'LOW_CONFIDENCE_TRANSCRIPTION',
         };
@@ -278,18 +288,30 @@ export class VoicePipelineService {
     }
     const userId = member.id;
     const e164 = member.phoneNumber;
-    const language = replyLanguage(member.preferredLanguage || detectedLanguage);
+    const language = replyLanguage(
+      member.preferredLanguage || detectedLanguage,
+    );
     const memberName = member.fullName?.trim() || null;
 
     if (isVoice) {
-      const membershipRequest = this.membershipPayments.detectRequest(workingTranscript);
+      const membershipRequest =
+        this.membershipPayments.detectRequest(workingTranscript);
       const reply = membershipRequest
-        ? await this.memberData.handleRequest({ id: userId, phoneNumber: e164 }, membershipRequest)
+        ? await this.memberData.handleRequest(
+            { id: userId, phoneNumber: e164 },
+            membershipRequest,
+          )
         : this.membershipPayments.planChoiceReply(workingTranscript);
       if (reply) {
         return {
-          intakeUuid: sessionUuid, senderPhone, transcript: workingTranscript, detectedLanguage,
-          intent: 'ACCOUNT_AND_BILLING', intentConfidence: 1, patientMessage: reply, status: 'completed',
+          intakeUuid: sessionUuid,
+          senderPhone,
+          transcript: workingTranscript,
+          detectedLanguage,
+          intent: 'ACCOUNT_AND_BILLING',
+          intentConfidence: 1,
+          patientMessage: reply,
+          status: 'completed',
         };
       }
     }
@@ -319,6 +341,18 @@ export class VoicePipelineService {
       }
     }
 
+    if (hasActiveDraft && bookingPaymentChoice(workingTranscript)) {
+      return this.runBookingDraftTurn(
+        workingTranscript,
+        e164,
+        userId,
+        sessionUuid,
+        detectedLanguage,
+        language,
+        memberName,
+      );
+    }
+
     const recentHistory = await this.loadChatHistory(userId, sessionUuid);
     const classification = await this.classifyIntent(
       workingTranscript,
@@ -327,7 +361,9 @@ export class VoicePipelineService {
     const recentReply = recentHistory.at(-1);
     const offeredBooking =
       recentReply?.role === 'assistant' &&
-      /\b(?:would you like|shall i|do you want|can i help you)\b[^.!?]*\b(?:book|schedule|arrange)\b[^.!?]*\b(?:visit|appointment|consultation)\b/i.test(recentReply.content);
+      /\b(?:would you like|shall i|do you want|can i help you)\b[^.!?]*\b(?:book|schedule|arrange)\b[^.!?]*\b(?:visit|appointment|consultation)\b/i.test(
+        recentReply.content,
+      );
     if (
       !hasActiveDraft &&
       !offeredBooking &&
@@ -513,7 +549,13 @@ export class VoicePipelineService {
     const accountScope = this.memberData.detectScope(workingTranscript);
     if (classification.intent === 'ACCOUNT_AND_BILLING' && accountScope) {
       return this.runMemberRecordReply(
-        accountScope, actionContext, classification, workingTranscript, senderPhone, sessionUuid, detectedLanguage,
+        accountScope,
+        actionContext,
+        classification,
+        workingTranscript,
+        senderPhone,
+        sessionUuid,
+        detectedLanguage,
       );
     }
 

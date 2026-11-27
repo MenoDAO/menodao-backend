@@ -804,6 +804,8 @@ model ClinicPaymentConfig {
 }
 
 enum AppointmentStatus {
+  AWAITING_PAYMENT
+  PAYMENT_FAILED
   BOOKED
   RESCHEDULED
   CANCELLED_BY_MEMBER
@@ -839,6 +841,10 @@ model Appointment {
   durationMinutes            Int               @default(20)
   status                     AppointmentStatus @default(BOOKED)
   intakeReason               String
+  consultationMethod         String?
+  consultationReference      String?           @unique
+  consultationCheckoutId     String?
+  consultationReceipt        String?
   painLevel                  Int?
   allergies                  String?
   currentMedications         String?

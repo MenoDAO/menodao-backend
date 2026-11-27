@@ -24,6 +24,7 @@ export interface SasaPayC2BRequest {
 }
 
 export interface SasaPayC2BResponse {
+  requestRejected?: boolean;
   status: boolean;
   detail: string;
   MerchantRequestID?: string;
@@ -299,6 +300,7 @@ export class SasaPayService {
         `${this.baseUrl}/api/v1/payments/request-payment/`,
         requestBody,
         {
+          timeout: 15000,
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
@@ -320,6 +322,7 @@ export class SasaPayService {
           status: false,
           detail:
             errorData?.detail || errorData?.message || 'Payment request failed',
+          requestRejected: [400, 401, 403, 422].includes(error.response.status),
         };
       }
 

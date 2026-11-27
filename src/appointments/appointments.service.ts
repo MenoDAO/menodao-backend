@@ -41,6 +41,7 @@ const OPEN: AppointmentStatus[] = [
   AppointmentStatus.BOOKED,
   AppointmentStatus.RESCHEDULED,
 ];
+const OCCUPIED = [...OPEN, AppointmentStatus.AWAITING_PAYMENT];
 
 @Injectable()
 export class AppointmentsService {
@@ -92,7 +93,7 @@ export class AppointmentsService {
         ? await this.prisma.appointment.findMany({
             where: {
               clinicId,
-              status: { in: OPEN },
+              status: { in: OCCUPIED },
               scheduledAt: { gte: dayStart, lt: dayEnd },
             },
             select: { scheduledAt: true, durationMinutes: true },
@@ -686,7 +687,7 @@ export class AppointmentsService {
     const existing = await this.prisma.appointment.findMany({
       where: {
         clinicId,
-        status: { in: OPEN },
+        status: { in: OCCUPIED },
         scheduledAt: { gte: windowStart, lt: windowEnd },
         ...(ignoreId ? { id: { not: ignoreId } } : {}),
       },

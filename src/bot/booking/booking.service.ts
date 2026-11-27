@@ -14,12 +14,21 @@ import { isDirectConsultationRequest } from '../intents/intent-fallback';
  *   unverified stub members; staff verify later) — the REST path in
  *   AppointmentsService keeps the strict active-subscription guard.
  */
+import { randomBytes } from 'node:crypto';
+import {
+  ConsultationPaymentService,
+  CONSULTATION_REFERENCE_PREFIX,
+} from '../../appointments/consultation-payment.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SmsService } from '../../sms/sms.service';
 import { CalendarSyncService } from '../../calendar/calendar-sync.service';
-import { AppointmentActor, AppointmentStatus, CareEventType } from '@prisma/client';
+import {
+  AppointmentActor,
+  AppointmentStatus,
+  CareEventType,
+} from '@prisma/client';
 import { DateTime } from 'luxon';
 import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { LLM_PROVIDER } from '../ai/interfaces/llm-provider.interface';
@@ -59,7 +68,6 @@ import {
   SLOT_NOT_ON_BOUNDARY,
   SLOT_TAKEN,
   READ_BACK,
-  BOOKING_AWAITING_CONFIRMATION,
   BOOKING_CONFIRMED,
   EMERGENCY_GUIDANCE,
   BOOKING_CANCELLED,
@@ -72,6 +80,13 @@ import {
   IsString,
   validateSync,
 } from 'class-validator';
+
+export function bookingPaymentChoice(message: string) {
+  if (/^(?:pay consultation|lipa uchunguzi)[.!]?$/i.test(message.trim()))
+    return 'MPESA';
+  if (/^(?:pay cash|lipa taslimu)[.!]?$/i.test(message.trim())) return 'CASH';
+  return undefined;
+}
 
 type BookingAction =
   | 'PROVIDE_DETAILS'
@@ -177,6 +192,7 @@ export class BookingService {
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
     private readonly smsService: SmsService,
     private readonly calendarSync: CalendarSyncService,
+    private readonly consultationPayments: ConsultationPaymentService,
   ) {
     this.cfg = this.loadConfig();
   }
@@ -452,15 +468,35 @@ export class BookingService {
       return bookingDraft;
     });
     const lang = (draft.language ?? preferredLanguage ?? 'en') as BookingLang;
+    const paymentChoice = bookingPaymentChoice(userMessage);
+    if (
+      paymentChoice &&
+      draft.status === 'AWAITING_CONFIRMATION' &&
+      draft.clinicId &&
+      draft.date &&
+      draft.time
+    ) {
+      return this.finalizeBooking(
+        draft,
+        senderPhone,
+        lang,
+        await this.loadClinics(),
+        paymentChoice,
+      );
+    }
 
     if (
       draft.status === 'AWAITING_CONFIRMATION' &&
-      /\b(?:is|are|was|were|has|have|did)\b.{0,50}\b(?:appointment|booking|slot)\b.{0,40}\b(?:confirm(?:ed)?|booked|saved)\b|\\b(?:confirm(?:ed)?|booked|saved)\\b.{0,40}\\b(?:appointment|booking|slot)\\b/i.test(
+      /\b(?:is|are|was|were|has|have|did)\b.{0,50}\b(?:appointment|booking|slot)\b.{0,40}\b(?:confirm(?:ed)?|booked|saved)\b|\b(?:confirm(?:ed)?|booked|saved)\b.{0,40}\b(?:appointment|booking|slot)\b/i.test(
         userMessage,
       )
     ) {
       return {
-        reply: t(BOOKING_AWAITING_CONFIRMATION, lang),
+        reply:
+          (lang === 'sw'
+            ? 'Miadi bado haijathibitishwa. '
+            : 'Your appointment is still unconfirmed. ') +
+          (await this.membershipBookingNote(userId, lang)).trim(),
         triageFlag: false,
       };
     }
@@ -515,7 +551,8 @@ export class BookingService {
       }),
     ].join('');
 
-    const startingConsultation = !draft.service && isDirectConsultationRequest(userMessage);
+    const startingConsultation =
+      !draft.service && isDirectConsultationRequest(userMessage);
     let extraction: BookingExtractionResult | null = startingConsultation
       ? Object.assign(new BookingExtractionResult(), {
           action: 'PROVIDE_DETAILS',
@@ -678,8 +715,14 @@ export class BookingService {
       }
     }
 
-    if (!updates.service && !draft.service && (resolvedClinic || startingConsultation)) {
-      const consultation = resolvedClinic?.services.find((service) => /\bconsultation\b/i.test(service));
+    if (
+      !updates.service &&
+      !draft.service &&
+      (resolvedClinic || startingConsultation)
+    ) {
+      const consultation = resolvedClinic?.services.find((service) =>
+        /\bconsultation\b/i.test(service),
+      );
       if (consultation) updates.service = consultation;
       else if (startingConsultation) updates.service = 'General consultation';
     }
@@ -808,11 +851,12 @@ export class BookingService {
         updatedDraft,
         clinics,
       );
-      const introduction = startingConsultation && field !== 'service'
-        ? effectiveLang === 'sw'
-          ? 'Ndiyo, naweza kukusaidia kupanga uchunguzi na daktari wa meno. '
-          : 'Of course. I can help arrange a consultation with a dentist. '
-        : '';
+      const introduction =
+        startingConsultation && field !== 'service'
+          ? effectiveLang === 'sw'
+            ? 'Ndiyo, naweza kukusaidia kupanga uchunguzi na daktari wa meno. '
+            : 'Of course. I can help arrange a consultation with a dentist. '
+          : '';
       return { reply: introduction + reply, triageFlag: false };
     }
 
@@ -826,9 +870,8 @@ export class BookingService {
       'Dr. Papi Dental Clinic';
     const membershipNote = await this.membershipBookingNote(
       userId,
-      updatedDraft.service,
       effectiveLang,
-    ).catch(() => '');
+    );
     return {
       reply: t(READ_BACK, effectiveLang, {
         service: updatedDraft.service ?? '',
@@ -851,32 +894,31 @@ export class BookingService {
     };
   }
 
-  private async membershipBookingNote(
-    memberId: string,
-    service: string | null,
-    language: BookingLang,
-  ): Promise<string> {
-    if (!service || !/\bconsultation\b/i.test(service)) return '';
-    const [membership, procedure] = await Promise.all([
-      this.prisma.subscription.findUnique({
-        where: { memberId },
-        select: { isActive: true, endDate: true },
-      }),
-      this.prisma.procedure.findFirst({
-        where: { name: { equals: service, mode: 'insensitive' }, isActive: true },
-        select: { allowedTiers: true },
-      }),
-    ]);
-    if (membership?.isActive && (!membership.endDate || membership.endDate > new Date())) return '';
-    const tiers = ['BRONZE', 'SILVER', 'GOLD'].filter(
-      (tier) => Array.isArray(procedure?.allowedTiers) && procedure.allowedTiers.includes(tier),
-    ).map((tier) => `Meno${tier[0]}${tier.slice(1).toLowerCase()}`);
-    if (!tiers.length) return '';
-
-    const plans = this.humanizeList(tiers, language);
-    return language === 'sw'
-      ? `${plans} inaweza kusaidia kulipia uchunguzi wa daktari kulingana na masharti ya kifurushi. Andika “membership options” kuona bei. Unaweza kuthibitisha miadi bila uanachama.\n\n`
-      : `${plans} can help cover this consultation so the dentist can assess what’s bothering you, subject to plan terms. Type “membership options” to see prices. You can confirm your visit without cover.\n\n`;
+  private async membershipBookingNote(memberId: string, language: BookingLang) {
+    const { covered, cashAllowed } =
+      await this.consultationPayments.options(memberId);
+    if (covered)
+      return language === 'sw'
+        ? 'Uanachama wako unagharamia uchunguzi. Jibu *Ndiyo* kuthibitisha au niambie cha kubadilisha.'
+        : 'Your active membership covers the consultation. Reply *Yes* to confirm or tell me what to change.';
+    if (language === 'sw') {
+      return (
+        'Uchunguzi unagharimu KES 500. Jibu *Lipa uchunguzi* kulipa kwa M-Pesa.\n\n' +
+        'Au andika *pay Bronze monthly* kujiunga kwa KES 350 kila mwezi. Uanachama hai unajumuisha uchunguzi bila kikomo. Matibabu na huduma maalum zinaweza kutozwa kando. Baada ya kujiunga, rudi hapa ujibu *Ndiyo* kuthibitisha miadi.' +
+        (cashAllowed
+          ? '\n\nUnaweza pia kujibu *Lipa taslimu* na kulipa kliniki.'
+          : '') +
+        '\n\n'
+      );
+    }
+    return (
+      'Consultation is KES 500. Reply *Pay consultation* to request M-Pesa.\n\n' +
+      'Or type *pay Bronze monthly* to join for KES 350 per month. Active membership includes unlimited consultations. Procedures and specialist services may cost extra. After joining, return here and reply *Yes* to confirm your appointment.' +
+      (cashAllowed
+        ? '\n\nYou can also reply *Pay cash* and pay at the clinic.'
+        : '') +
+      '\n\n'
+    );
   }
 
   private async finalizeBooking(
@@ -894,6 +936,7 @@ export class BookingService {
     senderPhone: string,
     lang: BookingLang,
     clinics: BotClinic[],
+    paymentChoice?: 'MPESA' | 'CASH',
   ): Promise<{ reply: string; triageFlag: boolean }> {
     const scheduledAt = toScheduledAt(draft.date!, draft.time!, this.cfg);
     const clinic = clinics.find((c) => c.id === draft.clinicId) ?? null;
@@ -905,6 +948,45 @@ export class BookingService {
         // clinicId is mandatory on Appointment; the draft state machine
         // requires it before confirmation, so this is a defensive guard.
         if (!draft.clinicId) throw new Error('MISSING_CLINIC');
+        const validation = this.validateSlotForClinic(
+          draft.date!,
+          draft.time!,
+          nairobiNow(this.cfg),
+          clinic,
+        );
+        if (validation !== 'OK') throw new Error('SLOT_CONFLICT');
+        await tx.$queryRaw`SELECT id FROM "Member" WHERE id = ${draft.memberId} FOR UPDATE`;
+        const currentDraft = await tx.botBookingDraft.findUnique({
+          where: { id: draft.id },
+        });
+        if (
+          !currentDraft ||
+          currentDraft.status !== 'AWAITING_CONFIRMATION' ||
+          currentDraft.date !== draft.date ||
+          currentDraft.time !== draft.time ||
+          currentDraft.clinicId !== draft.clinicId ||
+          currentDraft.doctorId !== draft.doctorId ||
+          currentDraft.service !== draft.service
+        )
+          throw new Error('DRAFT_CHANGED');
+        const { covered, cashAllowed } =
+          await this.consultationPayments.options(draft.memberId, tx);
+        if (
+          !covered &&
+          (!paymentChoice || (paymentChoice === 'CASH' && !cashAllowed))
+        )
+          throw new Error('CHOOSE_PAYMENT');
+        const needsStk = !covered && paymentChoice === 'MPESA';
+        const existing = await tx.appointment.findFirst({
+          where: {
+            memberId: draft.memberId,
+            status: { in: [AppointmentStatus.AWAITING_PAYMENT] },
+            scheduledAt: { gt: new Date() },
+          },
+          select: { id: true },
+        });
+        if (existing) throw new Error('PAYMENT_PENDING');
+        await tx.$queryRaw`SELECT id FROM "Clinic" WHERE id = ${draft.clinicId} FOR UPDATE`;
 
         // Match AppointmentsService capacity semantics: count overlapping
         // appointments against the clinic's active chairs, not "any booking
@@ -926,7 +1008,11 @@ export class BookingService {
             clinicId: draft.clinicId,
             scheduledAt: { gte: windowStart, lt: windowEnd },
             status: {
-              in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
+              in: [
+                AppointmentStatus.BOOKED,
+                AppointmentStatus.RESCHEDULED,
+                AppointmentStatus.AWAITING_PAYMENT,
+              ],
             },
           },
           select: { scheduledAt: true, durationMinutes: true },
@@ -963,17 +1049,26 @@ export class BookingService {
             durationMinutes,
             intakeReason: draft.service ?? 'General consultation',
             hasConsent: true,
+            status: needsStk
+              ? AppointmentStatus.AWAITING_PAYMENT
+              : AppointmentStatus.BOOKED,
+            consultationMethod: covered ? 'MEMBERSHIP' : paymentChoice,
+            consultationReference: needsStk
+              ? CONSULTATION_REFERENCE_PREFIX + randomBytes(12).toString('hex')
+              : undefined,
             memberNotes: draft.rawDateMentioned
               ? `Bot booking (phone ${senderPhone}) | Raw date: "${draft.rawDateMentioned}"`
               : `Bot booking (phone ${senderPhone})`,
-            events: {
-              create: {
-                type: 'BOOKED',
-                actor: AppointmentActor.SYSTEM,
-                actorId: draft.memberId,
-                toScheduledAt: scheduledAt,
-              },
-            },
+            events: needsStk
+              ? undefined
+              : {
+                  create: {
+                    type: 'BOOKED',
+                    actor: AppointmentActor.SYSTEM,
+                    actorId: draft.memberId,
+                    toScheduledAt: scheduledAt,
+                  },
+                },
           },
         });
         await tx.botBookingDraft.delete({ where: { id: draft.id } });
@@ -984,6 +1079,32 @@ export class BookingService {
 
         return appt;
       });
+
+      if (appointment.consultationReference) {
+        const dispatch = await this.consultationPayments.sendPrompt(
+          appointment.id,
+          appointment.consultationReference,
+          senderPhone,
+        );
+        if (dispatch === 'rejected') {
+          return {
+            reply:
+              lang === 'sw'
+                ? 'Ombi la M-Pesa halikutumwa. Unaweza kujaribu kupanga miadi tena.'
+                : 'The M-Pesa prompt could not be sent. You can try booking again.',
+            triageFlag: false,
+          };
+        }
+        const reply =
+          dispatch === 'sent'
+            ? lang === 'sw'
+              ? 'Ombi la M-Pesa la KES 500 limetumwa. Miadi itathibitishwa baada ya malipo kupokelewa.'
+              : 'I’ve sent the KES 500 M-Pesa prompt to this number. Your appointment will be confirmed once payment is received.'
+            : lang === 'sw'
+              ? 'Sijaweza kuthibitisha kama ombi la M-Pesa limetumwa. Tafadhali wasiliana na kliniki kabla ya kujaribu tena.'
+              : 'I couldn’t confirm the M-Pesa prompt was sent. Please contact the clinic before trying another payment.';
+        return { reply, triageFlag: false };
+      }
 
       // Best-effort push to the doctor's/clinic's connected external calendar.
       try {
@@ -1024,6 +1145,23 @@ export class BookingService {
         triageFlag: false,
       };
     } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'CHOOSE_PAYMENT') {
+        return {
+          reply: (
+            await this.membershipBookingNote(draft.memberId, lang)
+          ).trim(),
+          triageFlag: false,
+        };
+      }
+      if (err instanceof Error && err.message === 'PAYMENT_PENDING') {
+        return {
+          reply:
+            lang === 'sw'
+              ? 'Tunasubiri malipo ya miadi yako. Tafadhali wasiliana na kliniki kabla ya kulipa tena.'
+              : 'A consultation payment is already pending. Please check your phone or contact the clinic before paying again.',
+          triageFlag: false,
+        };
+      }
       const isConflict =
         (err instanceof Error && err.message === 'SLOT_CONFLICT') ||
         (typeof err === 'object' &&
@@ -1249,7 +1387,11 @@ export class BookingService {
       clinicId,
       scheduledAt: { gte: windowStart, lt: windowEnd },
       status: {
-        in: [AppointmentStatus.BOOKED, AppointmentStatus.RESCHEDULED],
+        in: [
+          AppointmentStatus.BOOKED,
+          AppointmentStatus.RESCHEDULED,
+          AppointmentStatus.AWAITING_PAYMENT,
+        ],
       },
     };
     if (doctorId) internalWhere.doctorId = doctorId;
