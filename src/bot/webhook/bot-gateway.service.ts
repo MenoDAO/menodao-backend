@@ -11,7 +11,7 @@ import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotChatService } from '../chat/bot-chat.service';
-import { BotMembershipPaymentService, matchMembershipConfirmation, type MembershipPaymentScope } from '../account/bot-membership-payment.service';
+import { BotMembershipPaymentService, matchMembershipConfirmation, paymentQuoteReference, type MembershipPaymentScope } from '../account/bot-membership-payment.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FieldDataService } from '../field-data/field-data.service';
@@ -597,9 +597,14 @@ export class BotGatewayService {
       this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
 
     const confirmation = matchMembershipConfirmation(trimmed);
-    if (confirmation || (/^confirm[.!]?$/i.test(trimmed) &&
-        /reply “confirm m-pesa/i.test(await this.chatService.latestSentReply(chatContext) ?? ''))) {
-      const reply = await this.membershipPayments.confirm(member.id, confirmation?.[1], restartPayment);
+    const shortConfirmation = /^(?:please )?(?:pay|proceed|confirm)(?: please)?[.!]?$/i.test(trimmed);
+    const latestQuote = (shortConfirmation || (confirmation && !confirmation[1]))
+      ? paymentQuoteReference(await this.chatService.latestSentReply(chatContext))
+      : null;
+    if (confirmation || (shortConfirmation && latestQuote)) {
+      const reply = await this.membershipPayments.confirm(
+        member.id, confirmation?.[1] ?? latestQuote?.code, restartPayment,
+      );
       await this.sendTextSafely(member.phoneNumber, reply, chatContext);
       return;
     }
@@ -613,7 +618,7 @@ export class BotGatewayService {
     if (this.membershipPayments.isPlanFollowUp(trimmed)) {
       const quote = await this.membershipPayments.paymentPromptReply(member.id);
       if (quote) {
-        await this.sendTextSafely(member.phoneNumber, quote);
+        await this.sendTextSafely(member.phoneNumber, quote, chatContext);
         return;
       }
     }
@@ -623,7 +628,7 @@ export class BotGatewayService {
     const alternative = await this.membershipPayments.acceptPayerReply(member.id, trimmed, restartPayment);
     if (payer || alternative) {
       const reply = alternative ?? await this.membershipPayments.changePayer(member.id, payer?.[1] ?? '');
-      await this.sendTextSafely(member.phoneNumber, reply);
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
       return;
     }
 
@@ -631,11 +636,11 @@ export class BotGatewayService {
       const quote = await this.membershipPayments.paymentPromptReply(member.id);
       const previous = quote ? null : await this.membershipPayments.recentPaymentRequest(member.id);
       if (quote) {
-        await this.sendTextSafely(member.phoneNumber, quote);
+        await this.sendTextSafely(member.phoneNumber, quote, chatContext);
         return;
       }
       if (previous) {
-        await this.sendTextSafely(member.phoneNumber, await restartPayment(previous));
+        await this.sendTextSafely(member.phoneNumber, await restartPayment(previous), chatContext);
         return;
       }
       if (/\b(?:stk|m-?pesa)\b/i.test(trimmed)) {

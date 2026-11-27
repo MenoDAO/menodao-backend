@@ -11,6 +11,13 @@ export function matchMembershipConfirmation(message: string) {
   return /^(?:please )?confirm (?:m[ ‐‑–-]?pesa(?: (?:payment|quote))?|(?:my |the )?(?:membership )?(?:payment|quote))(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(message.trim());
 }
 
+export function paymentQuoteReference(reply: string | null) {
+  if (!reply) return null;
+  const current = /^Quote reference: ([a-f0-9]{6}|current)$/im.exec(reply);
+  const legacy = /^Reply “confirm M-Pesa(?: ([a-f0-9]{6}))?” while your SMS verification is valid/im.exec(reply);
+  return current || legacy ? { code: current?.[1] === 'current' ? undefined : current?.[1] ?? legacy?.[1] } : null;
+}
+
 export type MembershipPaymentScope =
   | 'MEMBERSHIP_STATUS'
   | 'MEMBERSHIP_PAY'
@@ -266,10 +273,10 @@ export class BotMembershipPaymentService {
     const changeNumber =
       'To use another number with the payer’s consent, type “pay from” followed by their mobile number.';
     if (!payer) return `${description}\n\n${changeNumber}`;
-    const confirmation = code ? `confirm M-Pesa ${code}` : 'confirm M-Pesa';
     return [
       `${description}\nM-Pesa number ending in ${payer.slice(-4)}`,
-      `Reply “${confirmation}” while your SMS verification is valid (up to 15 minutes). Enter the M-Pesa PIN only on the payer’s phone.`,
+      'Reply *pay*, *proceed*, or *confirm* to send the M-Pesa prompt. Enter the PIN only on the payer’s phone.',
+      code ? `Quote reference: ${code}` : 'Quote reference: current',
       changeNumber,
     ].join('\n\n');
   }
@@ -399,7 +406,7 @@ export class BotMembershipPaymentService {
       create: {
         id,
         memberId,
-        scope: [scope, payer].join('|'),
+        scope: [scope, payer, randomBytes(3).toString('hex').toUpperCase()].join('|'),
         status: 'PAYMENT_QUOTED',
         expiresAt,
       },
