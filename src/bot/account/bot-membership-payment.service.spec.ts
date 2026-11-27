@@ -109,7 +109,7 @@ describe('BotMembershipPaymentService', () => {
       '+254712345678',
     );
     expect(reply).toContain('KES 500');
-    expect(reply).toContain('confirm M-Pesa');
+    expect(reply).toContain('Reply *pay*');
     expect(subscriptions.subscribe).not.toHaveBeenCalled();
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
 
@@ -144,7 +144,7 @@ describe('BotMembershipPaymentService', () => {
     expect(reply).toContain('KES 8,000');
     expect(reply).toContain('ending in 6789');
     expect(reply).not.toContain('0123456789');
-    const code = /confirm M-Pesa ([A-F0-9]{6})/.exec(reply)?.[1];
+    const code = /Quote reference: ([A-F0-9]{6})/.exec(reply)?.[1];
     expect(code).toBeDefined();
     const updateData = update.mock.calls[0][0] as { data: { scope: string } };
     prisma.botDataAccessSession.findFirst.mockResolvedValue({
@@ -152,7 +152,7 @@ describe('BotMembershipPaymentService', () => {
       ...updateData.data,
     });
     await expect(service.confirm('member')).resolves.toContain(
-      'confirm M-Pesa',
+      'Reply *pay*',
     );
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
 
@@ -291,7 +291,7 @@ describe('BotMembershipPaymentService', () => {
       '+254712345678',
     );
 
-    expect(reply).toMatch(/confirm M-Pesa [A-F0-9]{6}/);
+    expect(reply).toMatch(/Quote reference: [A-F0-9]{6}/);
     expect(prisma.botDataAccessSession.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: 'PAYMENT_QUOTED' }),

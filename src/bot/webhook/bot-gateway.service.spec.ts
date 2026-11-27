@@ -70,7 +70,7 @@ function build(env: Record<string, string> = {}) {
     }
   ).generateReplyText.bind(service) as (params: ReplyParams) => Promise<string>;
 
-  return { generateReplyText, processTextPipeline, service, sendTextMessage, voucher, latestSentReply, handleRequest, pendingPaymentVerificationReply };
+  return { membershipPayments, generateReplyText, processTextPipeline, service, sendTextMessage, voucher, latestSentReply, handleRequest, pendingPaymentVerificationReply };
 }
 
 const params: ReplyParams = {
@@ -81,6 +81,16 @@ const params: ReplyParams = {
 };
 
 describe('BotGatewayService fallback replies', () => {
+  it.each(['pay', 'proceed', 'confirm'])('uses the current payment quote when the member replies %s', async (message) => {
+    const { service, latestSentReply, membershipPayments } = build();
+    latestSentReply.mockResolvedValue('Reply *pay*, *proceed*, or *confirm*.\n\nQuote reference: A1B2C3');
+    const confirm = jest.spyOn(membershipPayments, 'confirm').mockResolvedValue('Prompt sent.');
+    await (service as any).handleUserTextMessage({
+      senderId: '254712345678', fallbackPhone: '254712345678', messageId: 'message', messageText: message,
+    });
+    expect(confirm).toHaveBeenCalledWith(expect.any(String), 'A1B2C3', expect.any(Function));
+  });
+
   it('answers with a holding message when the AI pipeline fails', async () => {
     const { generateReplyText, processTextPipeline } = build();
     processTextPipeline.mockRejectedValue(
