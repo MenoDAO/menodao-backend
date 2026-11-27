@@ -19,7 +19,7 @@ export interface SasaPayC2BRequest {
   TransactionDesc: string;
   AccountReference: string;
   Currency: string;
-  Amount: number;
+  Amount: string;
   CallBackURL: string;
 }
 
@@ -254,7 +254,12 @@ export class SasaPayService {
   }
 
   verifyStkCallback(reference: string, token: string): boolean {
-    if (!this.clientSecret || !/^menodao_[a-z0-9]+$/i.test(reference) || !/^[a-f0-9]{64}$/i.test(token)) return false;
+    if (
+      !this.clientSecret ||
+      !/^menodao_[a-z0-9]+$/i.test(reference) ||
+      !/^[a-f0-9]{64}$/i.test(token)
+    )
+      return false;
     return timingSafeEqual(
       Buffer.from(this.stkCallbackToken(reference), 'hex'),
       Buffer.from(token, 'hex'),
@@ -281,7 +286,7 @@ export class SasaPayService {
       TransactionDesc: description,
       AccountReference: accountReference,
       Currency: 'KES',
-      Amount: Math.round(amount),
+      Amount: amount.toFixed(2),
       CallBackURL: callbackUrl,
     };
 
@@ -310,9 +315,7 @@ export class SasaPayService {
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
         const errorData = error.response.data as Record<string, any>;
-        this.logger.error(
-          `C2B request failed [${error.response.status}]`,
-        );
+        this.logger.error(`C2B request failed [${error.response.status}]`);
         return {
           status: false,
           detail:

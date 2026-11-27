@@ -7,6 +7,9 @@ export class LoggerMiddleware implements NestMiddleware {
 
   use(request: Request, response: Response, next: NextFunction): void {
     const { ip, method, originalUrl } = request;
+    const url = /^\/contributions\/callback\/stk(?:\/|\?|$)/i.test(originalUrl)
+      ? '/contributions/callback/stk/[redacted]'
+      : originalUrl;
     const userAgent = request.get('user-agent') || '';
 
     response.on('finish', () => {
@@ -14,7 +17,7 @@ export class LoggerMiddleware implements NestMiddleware {
       const contentLength = response.get('content-length');
 
       this.logger.log(
-        `${method} ${originalUrl} ${statusCode} ${contentLength} - ${userAgent} ${ip}`,
+        `${method} ${url} ${statusCode} ${contentLength} - ${userAgent} ${ip}`,
       );
     });
 
