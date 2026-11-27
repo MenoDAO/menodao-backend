@@ -5,6 +5,12 @@ import { ContributionsService } from '../../contributions/contributions.service'
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionsService } from '../../subscriptions/subscriptions.service';
 
+const QUOTE_WINDOW_MS = 15 * 60_000;
+
+export function matchMembershipConfirmation(message: string) {
+  return /^(?:please )?confirm (?:m[ ‐‑–-]?pesa(?: (?:payment|quote))?|(?:my |the )?(?:membership )?(?:payment|quote))(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(message.trim());
+}
+
 export type MembershipPaymentScope =
   | 'MEMBERSHIP_STATUS'
   | 'MEMBERSHIP_PAY'
@@ -263,7 +269,7 @@ export class BotMembershipPaymentService {
     const confirmation = code ? `confirm M-Pesa ${code}` : 'confirm M-Pesa';
     return [
       `${description}\nM-Pesa number ending in ${payer.slice(-4)}`,
-      `Reply “${confirmation}” before the quote expires. The payer enters their PIN only on their phone.`,
+      `Reply “${confirmation}” while your SMS verification is valid (up to 15 minutes). Enter the M-Pesa PIN only on the payer’s phone.`,
       changeNumber,
     ].join('\n\n');
   }
@@ -386,7 +392,7 @@ export class BotMembershipPaymentService {
     const payer = this.normalizePayerPhone(registeredPhone) ?? '';
     const id = `membership-quote:${verifiedSessionId}`;
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 5 * 60_000);
+    const expiresAt = new Date(now.getTime() + QUOTE_WINDOW_MS);
     let quote = await this.prisma.botDataAccessSession.upsert({
       where: { id },
       update: {},
@@ -427,11 +433,18 @@ export class BotMembershipPaymentService {
     return this.quoteReply(tier, frequency, amount, stored[5] ?? '', stored[6]);
   }
 
-  async confirm(memberId: string, confirmationCode?: string): Promise<string> {
+  async confirm(
+    memberId: string,
+    confirmationCode?: string,
+    restart?: (scope: MembershipPaymentScope) => Promise<string>,
+  ): Promise<string> {
     const now = new Date();
     const quote = await this.findOpenQuote(memberId, now);
-    if (!quote)
+    if (!quote) {
+      const scope = restart ? await this.recentPaymentRequest(memberId) : null;
+      if (scope && restart) return restart(scope);
       return 'There’s no open payment quote. Type “pay membership” to get started.';
+    }
 
     const verification = await this.prisma.botDataAccessSession.findUnique({
       where: {
@@ -443,6 +456,10 @@ export class BotMembershipPaymentService {
       select: { id: true },
     });
     if (!verification) {
+      const scope = quote.scope.split('|')[0];
+      if (restart && isMembershipPaymentScope(scope) && scope !== 'MEMBERSHIP_STATUS') {
+        return restart(scope);
+      }
       return 'Your SMS verification has expired. Please verify again before confirming a payment.';
     }
 
@@ -460,7 +477,7 @@ export class BotMembershipPaymentService {
       return 'Choose a mobile number first. Type “pay from” followed by the M-Pesa number.';
     }
     if (code !== confirmationCode?.toUpperCase()) {
-      return 'Please use the exact confirmation phrase in your latest M-Pesa quote.';
+      return this.quoteReply(tier, frequency, Number(amountText), payer, code);
     }
     const amount = Number(amountText);
     const join = request.startsWith('MEMBERSHIP_JOIN:');

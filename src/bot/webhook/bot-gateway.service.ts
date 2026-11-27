@@ -11,7 +11,7 @@ import { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
 import { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import { BotIdentityService } from '../identity/bot-identity.service';
 import { BotChatService } from '../chat/bot-chat.service';
-import { BotMembershipPaymentService, type MembershipPaymentScope } from '../account/bot-membership-payment.service';
+import { BotMembershipPaymentService, matchMembershipConfirmation, type MembershipPaymentScope } from '../account/bot-membership-payment.service';
 import { BotMemberDataService } from '../account/bot-member-data.service';
 import { AdminWhatsappAccessService } from '../admin/admin-whatsapp-access.service';
 import { FieldDataService } from '../field-data/field-data.service';
@@ -593,6 +593,17 @@ export class BotGatewayService {
       return;
     }
 
+    const restartPayment = (scope: MembershipPaymentScope) =>
+      this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
+
+    const confirmation = matchMembershipConfirmation(trimmed);
+    if (confirmation || (/^confirm[.!]?$/i.test(trimmed) &&
+        /reply “confirm m-pesa/i.test(await this.chatService.latestSentReply(chatContext) ?? ''))) {
+      const reply = await this.membershipPayments.confirm(member.id, confirmation?.[1], restartPayment);
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
     const waitingForVerification = await this.memberDataService.pendingPaymentVerificationReply(member.id, trimmed);
     if (waitingForVerification) {
       await this.sendTextSafely(member.phoneNumber, waitingForVerification, chatContext);
@@ -606,9 +617,6 @@ export class BotGatewayService {
         return;
       }
     }
-
-    const restartPayment = (scope: MembershipPaymentScope) =>
-      this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
 
     // Payer numbers and confirmation codes are kept out of the chat archive.
     const payer = /^pay from(?:\s+(.+))?$/i.exec(trimmed);
@@ -637,13 +645,6 @@ export class BotGatewayService {
         );
         return;
       }
-    }
-
-    const confirmation = /^confirm m-?pesa(?:\s+([a-f0-9]{6}))?[.!]?$/i.exec(trimmed);
-    if (confirmation) {
-      const reply = await this.membershipPayments.confirm(member.id, confirmation[1]);
-      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
-      return;
     }
 
     // Persist the member's side of the conversation before we reply, so a
