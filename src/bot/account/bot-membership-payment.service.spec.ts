@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { BotMembershipPaymentService } from './bot-membership-payment.service';
+import { BotMembershipPaymentService, matchMembershipConfirmation } from './bot-membership-payment.service';
 
 function build() {
   const quote = {
@@ -53,6 +53,13 @@ function build() {
 }
 
 describe('BotMembershipPaymentService', () => {
+  it('recognises explicit payment confirmations without treating yes or booking as consent', () => {
+    expect(matchMembershipConfirmation('Confirm payment')).not.toBeNull();
+    expect(matchMembershipConfirmation('Confirm M‑Pesa A1B2C3')?.[1]).toBe('A1B2C3');
+    expect(matchMembershipConfirmation('Confirm my booking')).toBeNull();
+    expect(matchMembershipConfirmation('yes')).toBeNull();
+  });
+
   it('quotes the configured billing period and submits a quote only once', async () => {
     const { service, contributions } = build();
     await expect(
@@ -145,7 +152,7 @@ describe('BotMembershipPaymentService', () => {
       ...updateData.data,
     });
     await expect(service.confirm('member')).resolves.toContain(
-      'exact confirmation phrase',
+      'confirm M-Pesa',
     );
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
 
@@ -290,6 +297,17 @@ describe('BotMembershipPaymentService', () => {
         where: expect.objectContaining({ status: 'PAYMENT_QUOTED' }),
       }),
     );
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it('recovers the previous membership selection after quote expiry without initiating payment', async () => {
+    const { service, prisma, contributions } = build();
+    prisma.botDataAccessSession.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      scope: 'MEMBERSHIP_JOIN:BRONZE:MONTHLY|BRONZE|MONTHLY|350|new|254712345678',
+    });
+    const restart = jest.fn().mockResolvedValue('Please enter the SMS code.');
+    await expect(service.confirm('member', undefined, restart)).resolves.toBe('Please enter the SMS code.');
+    expect(restart).toHaveBeenCalledWith('MEMBERSHIP_JOIN:BRONZE:MONTHLY');
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 
