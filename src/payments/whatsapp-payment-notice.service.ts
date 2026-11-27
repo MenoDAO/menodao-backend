@@ -13,8 +13,8 @@ type PaymentNoticeKind =
 
 const messages: Record<PaymentNoticeKind, [string, string]> = {
   MEMBERSHIP_FAILED: [
-    'Your M-Pesa membership payment did not go through. Check your balance or M-Pesa message, then reply *pay membership* to try again.',
-    'Malipo yako ya uanachama kwa M-Pesa hayakufaulu. Angalia salio au ujumbe wako wa M-Pesa, kisha jibu *pay membership* kujaribu tena.',
+    'Your M-Pesa membership payment did not go through. Check your balance or M-Pesa message, then reply *retry payment* to try again.',
+    'Malipo yako ya uanachama kwa M-Pesa hayakufaulu. Angalia salio au ujumbe wako wa M-Pesa, kisha jibu *retry payment* kujaribu tena.',
   ],
   MEMBERSHIP_PAID: [
     'Your M-Pesa membership payment was received. Reply *my plan* to check your membership.',

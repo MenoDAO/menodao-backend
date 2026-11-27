@@ -602,6 +602,12 @@ export class BotGatewayService {
     const restartPayment = (scope: MembershipPaymentScope) =>
       this.memberDataService.handleRequest({ id: member.id, phoneNumber: member.phoneNumber }, scope);
 
+    if (/^(?:please )?(?:retry(?: (?:my |the )?payment)?|try (?:the )?payment again)[.!]?$/i.test(trimmed)) {
+      const reply = await this.membershipPayments.retry(member.id, restartPayment);
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
     const confirmation = matchMembershipConfirmation(trimmed);
     const shortConfirmation = /^(?:please )?(?:pay|proceed|confirm)(?: please)?[.!]?$/i.test(trimmed);
     const latestQuote = (shortConfirmation || (confirmation && !confirmation[1]))
