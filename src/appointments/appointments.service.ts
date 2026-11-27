@@ -13,9 +13,16 @@ import {
   AppointmentStatus,
   CareEventType,
   CarePrivacyClass,
+  Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SmsService } from '../sms/sms.service';
+import { CalendarSyncService } from '../calendar/calendar-sync.service';
+import {
+  hasReservationConflict,
+  lockAppointmentReservation,
+  OCCUPIED_APPOINTMENT_STATUSES,
+} from './appointment-reservation';
 import { EmailService } from './email.service';
 import { CareEventsService } from '../care-intelligence/care-events.service';
 import {
@@ -32,7 +39,6 @@ import {
   isAfter10am,
   isBookableTime,
   isNoShowDue,
-  isOnClinicGrid,
   overlaps,
   SLOT_MINUTES,
 } from './appointment-slots';
@@ -51,10 +57,14 @@ export class AppointmentsService {
     private sms: SmsService,
     private email: EmailService,
     @Optional() private careEvents?: CareEventsService,
+    @Optional() private calendar?: CalendarSyncService,
   ) {}
 
-  async getClinicForBooking(clinicId: string) {
-    const clinic = await this.prisma.clinic.findFirst({
+  async getClinicForBooking(
+    clinicId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ) {
+    const clinic = await db.clinic.findFirst({
       where: { id: clinicId, status: 'APPROVED' },
       select: {
         id: true,
@@ -63,6 +73,7 @@ export class AppointmentsService {
         physicalLocation: true,
         operatingHours: true,
         operatesOnWeekends: true,
+        operatingSchedule: true,
         leadDentistName: true,
         whatsappNumber: true,
         googleMapsLink: true,
@@ -80,7 +91,11 @@ export class AppointmentsService {
       throw new BadRequestException('date must be YYYY-MM-DD');
     }
     const clinic = await this.getClinicForBooking(clinicId);
-    const candidates = generateDaySlots(date, clinic.operatesOnWeekends);
+    const candidates = generateDaySlots(
+      date,
+      clinic.operatesOnWeekends,
+      clinic.operatingSchedule,
+    );
     const dayStart = candidates[0];
     const dayEnd = candidates.length
       ? new Date(
@@ -92,23 +107,36 @@ export class AppointmentsService {
         ? await this.prisma.appointment.findMany({
             where: {
               clinicId,
-              status: { in: OPEN },
+              status: { in: OCCUPIED_APPOINTMENT_STATUSES },
               scheduledAt: { gte: dayStart, lt: dayEnd },
             },
             select: { scheduledAt: true, durationMinutes: true },
           })
         : [];
     const chairs = Math.max(clinic.activeDentalChairs || 1, 1);
+    const busy =
+      dayStart && dayEnd
+        ? ((await this.calendar?.getBookingBusyIntervals(
+            clinicId,
+            null,
+            dayStart,
+            dayEnd,
+          )) ?? [])
+        : [];
     const now = new Date();
     const slots = candidates.map((start) => {
       const taken = existing.filter((row) =>
         overlaps(start, SLOT_MINUTES, row.scheduledAt, row.durationMinutes),
       ).length;
       const tooSoon = isBookableTime(start, now);
+      const end = new Date(start.getTime() + SLOT_MINUTES * 60_000);
+      const externalConflict = busy.some(
+        (interval) => interval.start < end && interval.end > start,
+      );
       return {
         scheduledAt: start.toISOString(),
         label: formatEat(start),
-        available: !tooSoon && taken < chairs,
+        available: !tooSoon && !externalConflict && taken < chairs,
       };
     });
     return {
@@ -142,48 +170,69 @@ export class AppointmentsService {
     }
 
     const clinic = await this.getClinicForBooking(dto.clinicId);
-    this.assertOnGrid(scheduledAt, clinic.operatesOnWeekends);
-    await this.assertSlotFree(
-      clinic.id,
-      scheduledAt,
-      clinic.activeDentalChairs || 1,
-    );
-
-    const existingOpen = await this.prisma.appointment.findFirst({
-      where: {
-        memberId,
-        status: { in: OPEN },
-        scheduledAt: { gte: new Date() },
-      },
-    });
-    if (existingOpen) {
-      throw new BadRequestException(
-        'You already have an upcoming appointment. Cancel or reschedule it first.',
-      );
-    }
-
-    const appointment = await this.prisma.appointment.create({
-      data: {
-        memberId,
-        clinicId: clinic.id,
+    this.assertOnGrid(scheduledAt, clinic);
+    if (
+      await this.calendar?.hasBookingConflict(
+        clinic.id,
+        null,
         scheduledAt,
-        intakeReason: dto.intakeReason.trim(),
-        painLevel: dto.painLevel,
-        allergies: dto.allergies?.trim() || null,
-        currentMedications: dto.currentMedications?.trim() || null,
-        medicalConditions: dto.medicalConditions?.trim() || null,
-        memberNotes: dto.memberNotes?.trim() || null,
-        hasConsent: true,
-        events: {
-          create: {
-            type: 'BOOKED',
-            actor: AppointmentActor.MEMBER,
-            actorId: memberId,
-            toScheduledAt: scheduledAt,
+        SLOT_MINUTES,
+      )
+    ) {
+      throw new BadRequestException('That time is no longer available.');
+    }
+    const appointment = await this.prisma.$transaction(async (tx) => {
+      await lockAppointmentReservation(tx, memberId, clinic.id);
+      const currentClinic = await this.getClinicForBooking(clinic.id, tx);
+      this.assertOnGrid(scheduledAt, currentClinic);
+      if (
+        await hasReservationConflict(tx, {
+          clinicId: clinic.id,
+          scheduledAt,
+          durationMinutes: SLOT_MINUTES,
+          chairs: currentClinic.activeDentalChairs || 1,
+        })
+      )
+        throw new BadRequestException('That time is no longer available.');
+      const existingOpen = await tx.appointment.findFirst({
+        where: {
+          memberId,
+          status: { in: OCCUPIED_APPOINTMENT_STATUSES },
+          scheduledAt: { gte: new Date() },
+        },
+      });
+      if (existingOpen) {
+        throw new BadRequestException(
+          'You already have an upcoming appointment. Cancel or reschedule it first.',
+        );
+      }
+
+      return tx.appointment.create({
+        data: {
+          memberId,
+          clinicId: clinic.id,
+          scheduledAt,
+          intakeReason: dto.intakeReason.trim(),
+          painLevel: dto.painLevel,
+          allergies: dto.allergies?.trim() || null,
+          currentMedications: dto.currentMedications?.trim() || null,
+          medicalConditions: dto.medicalConditions?.trim() || null,
+          memberNotes: dto.memberNotes?.trim() || null,
+          hasConsent: true,
+          events: {
+            create: {
+              type: 'BOOKED',
+              actor: AppointmentActor.MEMBER,
+              actorId: memberId,
+              toScheduledAt: scheduledAt,
+            },
           },
         },
-      },
-      include: this.detailInclude(),
+        include: this.detailInclude(),
+      });
+    });
+    await this.calendar?.createAppointmentEvent(appointment).catch(() => {
+      this.logger.warn('External calendar sync failed after booking.');
     });
 
     void this.careEvents?.track({
@@ -233,6 +282,7 @@ export class AppointmentsService {
       memberId,
       reason,
     );
+    await this.tryDeleteCalendarEvent(updated.id);
     await this.notifyCancellation(updated, 'member');
     void this.careEvents?.track({
       type: CareEventType.APPOINTMENT_CANCELLED,
@@ -296,6 +346,7 @@ export class AppointmentsService {
       staffId,
       reason,
     );
+    await this.tryDeleteCalendarEvent(updated.id);
     await this.notifyCancellation(updated, 'clinic');
     void this.careEvents?.track({
       type: CareEventType.APPOINTMENT_CANCELLED,
@@ -517,6 +568,8 @@ export class AppointmentsService {
       memberId: string;
       clinicId: string;
       scheduledAt: Date;
+      doctorId: string | null;
+      durationMinutes: number;
     },
     dto: RescheduleAppointmentDto,
     actor: AppointmentActor,
@@ -526,34 +579,100 @@ export class AppointmentsService {
     const timing = isBookableTime(scheduledAt);
     if (timing) throw new BadRequestException(timing);
     const clinic = await this.getClinicForBooking(appointment.clinicId);
-    this.assertOnGrid(scheduledAt, clinic.operatesOnWeekends);
-    await this.assertSlotFree(
-      clinic.id,
-      scheduledAt,
-      clinic.activeDentalChairs || 1,
-      appointment.id,
-    );
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointment.id },
-      data: {
+    this.assertOnGrid(scheduledAt, clinic);
+    if (
+      await this.calendar?.hasBookingConflict(
+        clinic.id,
+        appointment.doctorId,
         scheduledAt,
-        status: AppointmentStatus.RESCHEDULED,
-        rescheduleReason: dto.reason,
-        dayBeforeReminderSentAt: null,
-        hourBeforeReminderSentAt: null,
-        events: {
-          create: {
-            type: 'RESCHEDULED',
-            actor,
-            actorId,
-            reason: dto.reason,
-            fromScheduledAt: appointment.scheduledAt,
-            toScheduledAt: scheduledAt,
+        appointment.durationMinutes,
+      )
+    )
+      throw new BadRequestException('That time is no longer available.');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await lockAppointmentReservation(tx, appointment.memberId, clinic.id);
+      const currentClinic = await this.getClinicForBooking(clinic.id, tx);
+      this.assertOnGrid(scheduledAt, currentClinic);
+      await tx.$queryRaw`SELECT id FROM "Appointment" WHERE id = ${appointment.id} FOR UPDATE`;
+      const current = await tx.appointment.findUnique({
+        where: { id: appointment.id },
+      });
+      if (!current || !OPEN.includes(current.status))
+        throw new BadRequestException('This appointment is no longer open.');
+      if (
+        current.scheduledAt.getTime() !== appointment.scheduledAt.getTime() ||
+        current.doctorId !== appointment.doctorId
+      )
+        throw new BadRequestException(
+          'The appointment changed. Refresh it and try again.',
+        );
+      if (current.doctorId) {
+        const doctor = await tx.clinicDoctor.findFirst({
+          where: { id: current.doctorId, clinicId: clinic.id, isActive: true },
+          include: { availability: true },
+        });
+        const start = new Date(scheduledAt.getTime() + 3 * 60 * 60_000);
+        const finish = new Date(
+          start.getTime() + current.durationMinutes * 60_000,
+        );
+        const clock = (date: Date) => date.toISOString().slice(11, 16);
+        if (
+          !doctor ||
+          (doctor.availability.length &&
+            !doctor.availability.some(
+              (window) =>
+                window.isActive &&
+                window.dayOfWeek === start.getUTCDay() &&
+                clock(start) >= window.startTime &&
+                clock(finish) <= window.endTime &&
+                start.getUTCDate() === finish.getUTCDate(),
+            ))
+        )
+          throw new BadRequestException(
+            'The doctor is unavailable at that time.',
+          );
+      }
+      if (
+        await hasReservationConflict(tx, {
+          clinicId: clinic.id,
+          doctorId: current.doctorId,
+          scheduledAt,
+          durationMinutes: current.durationMinutes,
+          chairs: currentClinic.activeDentalChairs || 1,
+          ignoreId: current.id,
+        })
+      )
+        throw new BadRequestException('That time is no longer available.');
+      return tx.appointment.update({
+        where: { id: appointment.id },
+        data: {
+          scheduledAt,
+          status: AppointmentStatus.RESCHEDULED,
+          rescheduleReason: dto.reason,
+          dayBeforeReminderSentAt: null,
+          hourBeforeReminderSentAt: null,
+          events: {
+            create: {
+              type: 'RESCHEDULED',
+              actor,
+              actorId,
+              reason: dto.reason,
+              fromScheduledAt: current.scheduledAt,
+              toScheduledAt: scheduledAt,
+            },
           },
         },
-      },
-      include: this.detailInclude(),
+        include: this.detailInclude(),
+      });
     });
+    await this.calendar
+      ?.updateAppointmentEvent(updated.id, {
+        ...updated,
+        externalCalendarProvider: updated.externalCalendarProvider || 'NONE',
+      })
+      .catch(() => {
+        this.logger.warn('External calendar sync failed after rescheduling.');
+      });
     void this.careEvents?.track({
       type: CareEventType.APPOINTMENT_RESCHEDULED,
       memberId: appointment.memberId,
@@ -667,36 +786,19 @@ export class AppointmentsService {
     }
   }
 
-  private assertOnGrid(scheduledAt: Date, operatesOnWeekends: boolean) {
-    if (!isOnClinicGrid(scheduledAt, operatesOnWeekends)) {
+  private assertOnGrid(
+    scheduledAt: Date,
+    clinic: Awaited<ReturnType<AppointmentsService['getClinicForBooking']>>,
+  ) {
+    const slots = generateDaySlots(
+      eatDateStr(scheduledAt),
+      clinic.operatesOnWeekends,
+      clinic.operatingSchedule,
+    );
+    if (!slots.some((slot) => slot.getTime() === scheduledAt.getTime())) {
       throw new BadRequestException(
         'Choose a listed clinic slot. Appointments are 30 minutes in Nairobi time.',
       );
-    }
-  }
-
-  private async assertSlotFree(
-    clinicId: string,
-    scheduledAt: Date,
-    chairs: number,
-    ignoreId?: string,
-  ) {
-    const windowStart = new Date(scheduledAt.getTime() - SLOT_MINUTES * 60_000);
-    const windowEnd = new Date(scheduledAt.getTime() + SLOT_MINUTES * 60_000);
-    const existing = await this.prisma.appointment.findMany({
-      where: {
-        clinicId,
-        status: { in: OPEN },
-        scheduledAt: { gte: windowStart, lt: windowEnd },
-        ...(ignoreId ? { id: { not: ignoreId } } : {}),
-      },
-      select: { scheduledAt: true, durationMinutes: true },
-    });
-    const taken = existing.filter((row) =>
-      overlaps(scheduledAt, SLOT_MINUTES, row.scheduledAt, row.durationMinutes),
-    ).length;
-    if (taken >= chairs) {
-      throw new BadRequestException('That time is no longer available.');
     }
   }
 
@@ -773,6 +875,12 @@ export class AppointmentsService {
         ].join('\n'),
       );
     }
+  }
+
+  private async tryDeleteCalendarEvent(appointmentId: string) {
+    await this.calendar?.deleteAppointmentEvent(appointmentId).catch(() => {
+      this.logger.warn('External calendar sync failed after cancellation.');
+    });
   }
 
   private async notifyCancellation(

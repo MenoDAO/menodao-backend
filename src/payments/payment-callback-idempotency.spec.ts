@@ -45,6 +45,7 @@ function build() {
       }),
       update: jest.fn(),
     },
+    appointment: { findFirst: jest.fn().mockResolvedValue(null) },
     subscription: {
       findUnique: jest.fn().mockResolvedValue(subscription),
       update: jest

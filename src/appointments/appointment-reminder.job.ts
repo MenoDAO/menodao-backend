@@ -1,12 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { PrismaService } from '../prisma/prisma.service';
+import { CONSULTATION_HOLD_MS } from './consultation-payment.service';
 import { AppointmentsService } from './appointments.service';
 
 @Injectable()
 export class AppointmentReminderJob {
   private readonly logger = new Logger(AppointmentReminderJob.name);
 
-  constructor(private readonly appointments: AppointmentsService) {}
+  constructor(
+    private readonly appointments: AppointmentsService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  @Cron('* * * * *')
+  async releaseExpiredPaymentHolds() {
+    await this.prisma.appointment.updateMany({
+      where: {
+        status: 'AWAITING_PAYMENT',
+        createdAt: { lte: new Date(Date.now() - CONSULTATION_HOLD_MS) },
+      },
+      data: { status: 'PAYMENT_FAILED' },
+    });
+  }
 
   @Cron('*/10 * * * *')
   async reminders() {

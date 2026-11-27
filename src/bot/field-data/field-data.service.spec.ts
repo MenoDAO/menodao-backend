@@ -1,19 +1,23 @@
 import { ConfigService } from '@nestjs/config';
 import { FieldDataService, normalizeFieldPhone } from './field-data.service';
 
-function build(overrides: {
-  contributor?: unknown;
-  llmReply?: string;
-  llmError?: Error;
-} = {}) {
+function build(
+  overrides: {
+    contributor?: unknown;
+    llmReply?: string;
+    llmError?: Error;
+  } = {},
+) {
   const submissions = new Map<string, any>();
   const prisma = {
     fieldContributor: {
-      findFirst: jest.fn().mockResolvedValue(
-        overrides.contributor === undefined
-          ? { id: 'c1', phoneNumber: '254712345678', role: 'DOCTOR' }
-          : overrides.contributor,
-      ),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(
+          overrides.contributor === undefined
+            ? { id: 'c1', phoneNumber: '254712345678', role: 'DOCTOR' }
+            : overrides.contributor,
+        ),
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(),
       upsert: jest.fn(),
@@ -37,9 +41,12 @@ function build(overrides: {
         return Promise.resolve(row);
       }),
       findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockImplementation(({ where }) =>
-        Promise.resolve(submissions.get(where.id) ?? null),
-      ),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest
+        .fn()
+        .mockImplementation(({ where }) =>
+          Promise.resolve(submissions.get(where.id) ?? null),
+        ),
       delete: jest.fn(),
     },
   };
@@ -90,6 +97,61 @@ describe('FieldDataService', () => {
     expect(result.accepted).toBe(false);
     expect(result.reply).toContain('authorised');
     expect(storage.save).not.toHaveBeenCalled();
+    expect(llm.generateCompletion).not.toHaveBeenCalled();
+  });
+
+  it('waits for a label before using an uncaptioned attachment', async () => {
+    const { service, llm } = build();
+    const result = await service.ingestMedia({ ...imageInput, caption: '  ' });
+    expect(result.reply).toContain('What is this attachment about?');
+    expect(result.status).toBe('PENDING');
+    expect(llm.generateCompletion).not.toHaveBeenCalled();
+  });
+
+  it('ties a follow-up caption to the original author and attachment', async () => {
+    const { service, prisma, llm, storage } = build();
+    prisma.fieldSubmission.findMany.mockResolvedValue([
+      {
+        id: '1234abcd-0000-0000-0000-000000000000',
+        fileKey: 'private',
+        kind: 'IMAGE',
+        mimeType: 'image/jpeg',
+      },
+    ]);
+    storage.read.mockResolvedValue({ body: Buffer.from('photo') });
+    await service.addCaption(
+      ['254712345678'],
+      '254712345678',
+      'Caption 1234abcd outreach register',
+    );
+    expect(prisma.fieldSubmission.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contributorId: 'c1',
+          whatsappId: '254712345678',
+        }),
+      }),
+    );
+    expect(prisma.fieldSubmission.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { caption: 'outreach register', captionRequestedAt: null },
+      }),
+    );
+    expect(llm.generateCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes clinical imagery to authorised human review without model processing', async () => {
+    const { service, llm, prisma } = build();
+    const result = await service.ingestMedia({
+      ...imageInput,
+      caption: 'X-ray: lower molar',
+    });
+    expect(result.status).toBe('NEEDS_REVIEW');
+    expect(prisma.fieldSubmission.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { clinicalImage: true },
+      }),
+    );
     expect(llm.generateCompletion).not.toHaveBeenCalled();
   });
 
@@ -196,11 +258,17 @@ describe('FieldDataService', () => {
     'extracts a PDF sent as %s through the same review workflow as images',
     async (mimeType) => {
       const { service, llm } = build({
-        llmReply: JSON.stringify({ summary: 'Synthetic report', confidence: 0.95 }),
+        llmReply: JSON.stringify({
+          summary: 'Synthetic report',
+          confidence: 0.95,
+        }),
       });
       const buffer = Buffer.from('%PDF-1.7 synthetic report');
       const result = await service.ingestMedia({
-        ...imageInput, kind: 'DOCUMENT', mimeType, buffer,
+        ...imageInput,
+        kind: 'DOCUMENT',
+        mimeType,
+        buffer,
       });
       expect(result.status).toBe('PARSED');
       expect(llm.generateCompletion).toHaveBeenCalledWith(
@@ -209,7 +277,7 @@ describe('FieldDataService', () => {
     },
   );
 
-  it('keeps video in admin review',  async () => {
+  it('keeps video in admin review', async () => {
     const { service, llm } = build();
     const result = await service.ingestMedia({
       ...imageInput,

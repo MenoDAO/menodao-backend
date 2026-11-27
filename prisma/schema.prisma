@@ -25,6 +25,8 @@ model Member {
   // an existing member — no separate bot signup is required for known numbers.
   whatsappId      String?  @unique
   whatsappLinkedAt DateTime?
+  whatsappRenewalOptIn Boolean @default(false)
+  whatsappRenewalPeriod String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -804,6 +806,9 @@ model ClinicPaymentConfig {
 }
 
 enum AppointmentStatus {
+  AWAITING_PAYMENT
+  PAYMENT_FAILED
+  PAYMENT_REVIEW
   BOOKED
   RESCHEDULED
   CANCELLED_BY_MEMBER
@@ -839,6 +844,10 @@ model Appointment {
   durationMinutes            Int               @default(20)
   status                     AppointmentStatus @default(BOOKED)
   intakeReason               String
+  consultationMethod         String?
+  consultationReference      String?           @unique
+  consultationCheckoutId     String?
+  consultationReceipt        String?
   painLevel                  Int?
   allergies                  String?
   currentMedications         String?
@@ -1373,6 +1382,8 @@ model FieldSubmission {
   fileSize          Int
   originalFilename  String?
   caption           String?              @db.Text
+  captionRequestedAt DateTime?
+  clinicalImage     Boolean              @default(false)
   status            FieldSubmissionStatus @default(PENDING)
   confidence        Float?
   extracted         Json?

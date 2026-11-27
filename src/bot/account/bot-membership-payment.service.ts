@@ -522,7 +522,10 @@ export class BotMembershipPaymentService {
         { tier, amount },
         'WHATSAPP',
       );
-      return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches.\n\nThe payment is pending until M-Pesa confirms it.`;
+      return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches.\n\nThe payment is pending until M-Pesa confirms it.` +
+        (tier === 'BRONZE' && frequency === 'MONTHLY'
+          ? '\n\nFor a WhatsApp reminder when your next payment is due, reply *Renewal reminders on*.'
+          : '');
     } catch {
       this.logger.warn(
         'WhatsApp membership payment could not be confirmed as initiated.',
