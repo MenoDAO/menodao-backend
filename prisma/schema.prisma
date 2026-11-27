@@ -26,6 +26,7 @@ model Member {
   whatsappId      String?  @unique
   whatsappLinkedAt DateTime?
   whatsappRenewalOptIn Boolean @default(false)
+  whatsappUnsubscribedAt DateTime?
   whatsappRenewalPeriod String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -62,6 +63,7 @@ model Member {
   botChatThreads    BotChatThread[]
   botDataAccessSessions BotDataAccessSession[]
   fieldSubmissions  FieldSubmission[]
+  whatsappPaymentNotices WhatsappPaymentNotice[]
 
   @@index([referralCode])
   @@index([referredBy])
@@ -1806,4 +1808,18 @@ model Voucher {
   @@index([status, createdAt])
   @@index([batchId])
   @@index([code])
+}
+
+model WhatsappPaymentNotice {
+  id          String    @id
+  memberId    String
+  member      Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  kind        String
+  sourceId    String
+  createdAt   DateTime  @default(now())
+  nextAttempt DateTime  @default(now())
+  attempts    Int       @default(0)
+  finishedAt  DateTime?
+
+  @@index([finishedAt, nextAttempt])
 }

@@ -62,12 +62,15 @@ function build() {
   };
   const proof = { reference: 'menodao_reference', token: 'callback-token' };
   const provider = { verifyStkCallback: jest.fn().mockReturnValue(true) };
+  const notices = { enqueue: jest.fn().mockResolvedValue(undefined) };
   const service = new PaymentService(
     new ConfigService(),
     prisma as never,
     provider as never,
     sms as never,
     referrals as never,
+    undefined,
+    notices as never,
   );
   return {
     service,
@@ -76,14 +79,30 @@ function build() {
     callback,
     sms,
     referrals,
+    notices,
     provider,
     proof,
   };
 }
 
 describe('SasaPay settlement', () => {
+  it('queues the failed payment update inside settlement', async () => {
+    const { service, prisma, callback, proof, notices } = build();
+    await expect(
+      service.processCallback({ ...callback, ResultCode: 'SP01002' }, proof),
+    ).resolves.toMatchObject({ success: true });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(notices.enqueue).toHaveBeenCalledWith(
+      prisma,
+      'beneficiary',
+      'contribution',
+      'MEMBERSHIP_FAILED',
+    );
+  });
+
   it('credits the original beneficiary and quoted tier exactly once, even with a different payer phone', async () => {
-    const { service, prisma, callback, sms, referrals, proof } = build();
+    const { service, prisma, callback, sms, referrals, proof, notices } =
+      build();
 
     await expect(
       service.processCallback(callback, proof),
@@ -119,6 +138,13 @@ describe('SasaPay settlement', () => {
       }),
     );
     expect(referrals.creditCommission).toHaveBeenCalledTimes(1);
+    expect(notices.enqueue).toHaveBeenCalledTimes(1);
+    expect(notices.enqueue).toHaveBeenCalledWith(
+      prisma,
+      'beneficiary',
+      'contribution',
+      'MEMBERSHIP_PAID',
+    );
     expect(sms.sendSms).toHaveBeenCalledWith(
       '+254712345678',
       expect.stringContaining('MenoBronze'),

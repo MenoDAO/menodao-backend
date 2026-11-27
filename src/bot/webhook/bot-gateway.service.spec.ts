@@ -10,7 +10,7 @@ import type { IWhatsappClient } from '../whatsapp-clients/whatsapp-provider.inte
 import type { WhatsappApiClient } from '../whatsapp-clients/whatsapp-api.client';
 import type { FlaresendApiClient } from '../whatsapp-clients/flaresend-api.client';
 import type { WaboxappApiClient } from '../whatsapp-clients/waboxapp-api.client';
-import { BotGatewayService } from './bot-gateway.service';
+import { BotGatewayService, isWhatsappStopRequest } from './bot-gateway.service';
 
 interface ReplyParams {
   memberId: string;
@@ -81,6 +81,16 @@ const params: ReplyParams = {
 };
 
 describe('BotGatewayService fallback replies', () => {
+  it.each(['stop', 'Stop sending me this.', 'please stop texting me', 'Don’t contact me again'])(
+    'recognises %s as an unsubscribe request',
+    (text) => expect(isWhatsappStopRequest(text)).toBe(true),
+  );
+
+  it.each(['Can I stop the pain?', 'stop my booking', 'how do I stop notifications?'])(
+    'does not unsubscribe on an unrelated request: %s',
+    (text) => expect(isWhatsappStopRequest(text)).toBe(false),
+  );
+
   it.each(['pay', 'proceed', 'confirm'])('uses the current payment quote when the member replies %s', async (message) => {
     const { service, latestSentReply, membershipPayments } = build();
     latestSentReply.mockResolvedValue('Reply *pay*, *proceed*, or *confirm*.\n\nQuote reference: A1B2C3');

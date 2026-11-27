@@ -22,6 +22,8 @@ export interface PaymentResult {
 
 // Re-export SasaPay callback type for backward compatibility
 export type PaymentCallbackData = SasaPayC2BCallbackData;
+import { WhatsappPaymentNoticeService } from './whatsapp-payment-notice.service';
+
 export interface StkCallbackProof {
   reference: string;
   token: string;
@@ -39,6 +41,7 @@ export class PaymentService {
     private smsService: SmsService,
     private referralService: ReferralService,
     @Optional() private careEvents?: CareEventsService,
+    @Optional() private notices?: WhatsappPaymentNoticeService,
   ) {
     this.isDevEnvironment =
       this.configService.get('NODE_ENV') === 'development';
@@ -305,17 +308,28 @@ export class PaymentService {
       const now = new Date();
 
       if (isFailure) {
-        const failed = await this.prisma.contribution.updateMany({
-          where: { id: contribution.id, status: 'PENDING' },
-          data: {
-            status: 'FAILED',
-            metadata: {
-              ...metadata,
-              failedAt: now.toISOString(),
-              resultCode: data.ResultCode,
-              resultDesc: data.ResultDesc,
+        const failed = await this.prisma.$transaction(async (tx) => {
+          const updated = await tx.contribution.updateMany({
+            where: { id: contribution.id, status: 'PENDING' },
+            data: {
+              status: 'FAILED',
+              metadata: {
+                ...metadata,
+                failedAt: now.toISOString(),
+                resultCode: data.ResultCode,
+                resultDesc: data.ResultDesc,
+              },
             },
-          },
+          });
+          if (updated.count && metadata?.stkSource === 'WHATSAPP') {
+            await this.notices?.enqueue(
+              tx,
+              contribution.memberId,
+              contribution.id,
+              'MEMBERSHIP_FAILED',
+            );
+          }
+          return updated;
         });
         if (failed.count) {
           void this.careEvents?.track({
@@ -385,6 +399,14 @@ export class PaymentService {
           },
         });
         if (!completed.count) return null;
+        if (metadata?.stkSource === 'WHATSAPP') {
+          await this.notices?.enqueue(
+            tx,
+            contribution.memberId,
+            contribution.id,
+            'MEMBERSHIP_PAID',
+          );
+        }
 
         // Serialise entitlement updates across different payments by one member.
         await tx.$queryRaw`SELECT id FROM "Subscription" WHERE "memberId" = ${contribution.memberId} FOR UPDATE`;

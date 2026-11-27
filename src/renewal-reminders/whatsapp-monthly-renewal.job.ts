@@ -23,7 +23,7 @@ export class WhatsappMonthlyRenewalJob {
     const start = local.startOf('month').toJSDate();
     const period = local.toFormat('yyyy-MM');
     const eligibility: Prisma.MemberWhereInput = {
-      whatsappRenewalOptIn: true,
+      whatsappUnsubscribedAt: null,
       whatsappLinkedAt: { not: null },
       OR: [
         { whatsappRenewalPeriod: null },
@@ -61,8 +61,8 @@ export class WhatsappMonthlyRenewalJob {
         try {
           const message =
             member.preferredLanguage === 'sw'
-              ? 'Kikumbusho cha MenoDAO: malipo yako ya Bronze ya KES 350 ya mwezi huu yanahitajika. Kujadiliana kuhusu malipo, jibu *Pay Bronze monthly*. Kusitisha vikumbusho, jibu *Renewal reminders off*.'
-              : 'A MenoDAO reminder: your KES 350 Bronze payment is due this month. Reply *Pay Bronze monthly* to pay by M-Pesa, or *Renewal reminders off* to stop these messages.';
+              ? 'Kikumbusho cha MenoDAO: malipo yako ya Bronze ya KES 350 ya mwezi huu yanahitajika. Kujadiliana kuhusu malipo, jibu *Pay Bronze monthly*. Kusitisha vikumbusho, jibu *Stop*.'
+              : 'A MenoDAO reminder: your KES 350 Bronze payment is due this month. Reply *Pay Bronze monthly* to pay by M-Pesa, or *Stop* to stop these messages.';
           await this.whatsapp.sendTextMessage(member.phoneNumber, message);
         } catch {
           // A provider timeout can mean the message sent. Keep the claim so
