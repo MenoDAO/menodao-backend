@@ -41,6 +41,7 @@ export class ContributionsService {
     paymentFrequency?: PaymentFrequency,
     expectedCharge?: { tier: PackageTier; amount: number },
     stkSource: 'WEB' | 'WHATSAPP' = 'WEB',
+    botQuote?: { id: string; attempt: string },
   ) {
     // Verify member exists and has subscription
     const member = await this.prisma.member.findUnique({
@@ -149,6 +150,7 @@ export class ContributionsService {
             ? { isUpgrade: true, newTier: normalizedNewTier }
             : {}),
           stkSource,
+          ...(botQuote ? { botQuoteId: botQuote.id, botQuoteAttempt: botQuote.attempt } : {}),
           purchasedTier,
           purchasedMonthlyAmount: purchasedPlan.monthlyPrice,
           purchasedAnnualCap: purchasedPlan.annualCap,

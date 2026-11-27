@@ -80,6 +80,7 @@ describe('BotMembershipPaymentService', () => {
       'ANNUAL',
       { tier: 'SILVER', amount: 8000 },
       'WHATSAPP',
+      { id: 'membership-quote:verified', attempt: expect.stringMatching(/^[A-F0-9]{6}$/) },
     );
   });
 
@@ -131,6 +132,7 @@ describe('BotMembershipPaymentService', () => {
       'MONTHLY',
       { tier: 'BRONZE', amount: 500 },
       'WHATSAPP',
+      { id: 'membership-quote:verified', attempt: expect.stringMatching(/^[A-F0-9]{6}$/) },
     );
   });
 
@@ -169,6 +171,7 @@ describe('BotMembershipPaymentService', () => {
       'ANNUAL',
       { tier: 'SILVER', amount: 8000 },
       'WHATSAPP',
+      { id: 'membership-quote:verified', attempt: expect.stringMatching(/^[A-F0-9]{6}$/) },
     );
   });
 
@@ -297,6 +300,34 @@ describe('BotMembershipPaymentService', () => {
         where: expect.objectContaining({ status: 'PAYMENT_QUOTED' }),
       }),
     );
+    expect(contributions.initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it('retries a provider-confirmed failure once with the same payer and verified session', async () => {
+    const { service, prisma, contributions, quote } = build();
+    prisma.botDataAccessSession.findFirst.mockResolvedValue({
+      ...quote, status: 'PAYMENT_SUBMITTED', scope: quote.scope + '|ABC123',
+    });
+    prisma.contribution.findFirst.mockImplementation(async (args) =>
+      args.where.status === 'FAILED' ? { metadata: { failedAt: new Date().toISOString() } } : null,
+    );
+    const restart = jest.fn();
+    await Promise.all([service.retry('member', restart), service.retry('member', restart)]);
+    expect(restart).not.toHaveBeenCalled();
+    expect(contributions.initiatePayment).toHaveBeenCalledTimes(1);
+    expect(contributions.initiatePayment.mock.calls[0]).toEqual([
+      'member', 8000, 'MPESA', '254712345678', false, undefined, 'ANNUAL',
+      { tier: 'SILVER', amount: 8000 }, 'WHATSAPP',
+      { id: quote.id, attempt: expect.not.stringMatching(/^ABC123$/) },
+    ]);
+  });
+
+  it('does not retry a payment with no terminal failure', async () => {
+    const { service, prisma, quote, contributions } = build();
+    prisma.botDataAccessSession.findFirst.mockResolvedValue({
+      ...quote, status: 'PAYMENT_SUBMITTED', scope: quote.scope + '|ABC123',
+    });
+    await expect(service.retry('member', jest.fn())).resolves.toContain('hasn’t confirmed a failed payment');
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });
 

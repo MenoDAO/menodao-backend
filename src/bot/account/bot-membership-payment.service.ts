@@ -440,6 +440,43 @@ export class BotMembershipPaymentService {
     return this.quoteReply(tier, frequency, amount, stored[5] ?? '', stored[6]);
   }
 
+  async retry(
+    memberId: string,
+    restart: (scope: MembershipPaymentScope) => Promise<string>,
+  ): Promise<string> {
+    const quote = await this.prisma.botDataAccessSession.findFirst({
+      where: {
+        memberId,
+        status: 'PAYMENT_SUBMITTED',
+        id: { startsWith: 'membership-quote:' },
+        createdAt: { gt: new Date(Date.now() - 60 * 60_000) },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    const attempt = quote?.scope.split('|')[6];
+    if (!quote || !attempt) {
+      return 'There’s no recent payment I can retry. Reply with your plan and billing period for a new quote.';
+    }
+    const failed = await this.prisma.contribution.findFirst({
+      where: {
+        memberId,
+        status: 'FAILED',
+        checkoutRequestId: { not: null },
+        AND: [
+          { metadata: { path: ['botQuoteId'], equals: quote.id } },
+          { metadata: { path: ['botQuoteAttempt'], equals: attempt } },
+          { metadata: { path: ['stkSource'], equals: 'WHATSAPP' } },
+        ],
+      },
+      select: { metadata: true },
+    });
+    const details = failed?.metadata as { failedAt?: string } | null;
+    if (!details?.failedAt) {
+      return 'M-Pesa hasn’t confirmed a failed payment for this quote. Check your phone or ask for your payment status.';
+    }
+    return this.submitQuote(quote, memberId, attempt, restart, true);
+  }
+
   async confirm(
     memberId: string,
     confirmationCode?: string,
@@ -453,6 +490,17 @@ export class BotMembershipPaymentService {
       return 'There’s no open payment quote. Type “pay membership” to get started.';
     }
 
+    return this.submitQuote(quote, memberId, confirmationCode, restart);
+  }
+
+  private async submitQuote(
+    quote: { id: string; scope: string; expiresAt: Date },
+    memberId: string,
+    confirmationCode?: string,
+    restart?: (scope: MembershipPaymentScope) => Promise<string>,
+    retry = false,
+  ): Promise<string> {
+    const now = new Date();
     const verification = await this.prisma.botDataAccessSession.findUnique({
       where: {
         id: quote.id.slice('membership-quote:'.length),
@@ -462,7 +510,7 @@ export class BotMembershipPaymentService {
       },
       select: { id: true },
     });
-    if (!verification) {
+    if (!verification || quote.expiresAt <= now) {
       const scope = quote.scope.split('|')[0];
       if (restart && isMembershipPaymentScope(scope) && scope !== 'MEMBERSHIP_STATUS') {
         return restart(scope);
@@ -494,10 +542,10 @@ export class BotMembershipPaymentService {
     if (
       !isMembershipPaymentScope(request) ||
       request === 'MEMBERSHIP_STATUS' ||
-      (subscription?.id ?? 'new') !== subscriptionId ||
+      ((subscription?.id ?? 'new') !== subscriptionId && !(retry && join && subscriptionId === 'new')) ||
       this.price(tier, frequency) !== amount ||
       (join
-        ? subscription?.isActive
+        ? subscription?.isActive || (retry && (subscription?.tier !== tier || subscription.paymentFrequency !== frequency))
         : subscription?.tier !== tier ||
           subscription.paymentFrequency !== frequency)
     ) {
@@ -514,21 +562,22 @@ export class BotMembershipPaymentService {
     if (pending)
       return 'A recent payment is still pending. Check your M-Pesa prompt or ask for your payment status.';
 
+    const nextAttempt = retry || !code ? randomBytes(3).toString('hex').toUpperCase() : code;
     const claimed = await this.prisma.botDataAccessSession.updateMany({
       where: {
         id: quote.id,
         memberId,
         scope: quote.scope,
-        status: 'PAYMENT_QUOTED',
+        status: retry ? 'PAYMENT_SUBMITTED' : 'PAYMENT_QUOTED',
         expiresAt: { gt: now },
       },
-      data: { status: 'PAYMENT_SUBMITTED' },
+      data: { status: 'PAYMENT_SUBMITTED', scope: [request, tier, frequency, amountText, subscriptionId, payer, nextAttempt].join('|') },
     });
     if (claimed.count !== 1)
       return 'That payment quote has already been used or expired.';
 
     try {
-      if (join) {
+      if (join && !retry) {
         await this.subscriptions.checkPaymentFrequencyRestriction(
           memberId,
           frequency,
@@ -545,6 +594,7 @@ export class BotMembershipPaymentService {
         frequency,
         { tier, amount },
         'WHATSAPP',
+        { id: quote.id, attempt: nextAttempt },
       );
       return `M-Pesa prompt sent to the number ending in ${payer.slice(-4)}. Approve it on that phone if the amount is correct. Payment is pending until M-Pesa confirms it.`;
     } catch {
