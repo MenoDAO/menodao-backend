@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { AppointmentActor, AppointmentStatus, Prisma } from '@prisma/client';
 import { DateTime } from 'luxon';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,6 +8,8 @@ import {
   SasaPayC2BCallbackData,
   SasaPayService,
 } from '../sasapay/sasapay.service';
+
+import { WhatsappPaymentNoticeService } from '../payments/whatsapp-payment-notice.service';
 
 export const CONSULTATION_FEE_KES = 500;
 export const CONSULTATION_HOLD_MS = 10 * 60_000;
@@ -22,6 +24,7 @@ export class ConsultationPaymentService {
     private readonly sasaPay: SasaPayService,
     private readonly sms: SmsService,
     private readonly calendar: CalendarSyncService,
+    @Optional() private readonly notices?: WhatsappPaymentNoticeService,
   ) {}
 
   async options(memberId: string, db: Prisma.TransactionClient = this.prisma) {
@@ -108,12 +111,21 @@ export class ConsultationPaymentService {
       return { success: false };
     if (code !== '0' && payload.Paid !== true) {
       if (code == null && payload.Paid !== false) return { success: false };
-      await this.prisma.appointment.updateMany({
-        where: {
-          id: appointment.id,
-          status: AppointmentStatus.AWAITING_PAYMENT,
-        },
-        data: { status: AppointmentStatus.PAYMENT_FAILED },
+      await this.prisma.$transaction(async (tx) => {
+        const changed = await tx.appointment.updateMany({
+          where: {
+            id: appointment.id,
+            status: AppointmentStatus.AWAITING_PAYMENT,
+          },
+          data: { status: AppointmentStatus.PAYMENT_FAILED },
+        });
+        if (changed.count)
+          await this.notices?.enqueue(
+            tx,
+            appointment.memberId,
+            appointment.id,
+            'CONSULTATION_FAILED',
+          );
       });
       return { success: true };
     }
@@ -171,6 +183,12 @@ export class ConsultationPaymentService {
             status: AppointmentStatus.PAYMENT_REVIEW,
           },
         });
+        await this.notices?.enqueue(
+          tx,
+          current.memberId,
+          current.id,
+          'CONSULTATION_REVIEW',
+        );
         return 'review';
       }
       await tx.appointment.update({
@@ -187,6 +205,12 @@ export class ConsultationPaymentService {
           },
         },
       });
+      await this.notices?.enqueue(
+        tx,
+        current.memberId,
+        current.id,
+        'CONSULTATION_PAID',
+      );
       return 'confirmed';
     });
     if (result === 'review') {

@@ -364,7 +364,7 @@ export class BotMembershipPaymentService {
     const tier = requestedTier ?? subscription?.tier;
     const frequency = requestedFrequency ?? subscription?.paymentFrequency;
     if ((!subscription?.isActive && !requestedTier) || !tier || !frequency) {
-      return `I couldn’t find an active membership. You can choose a tier and make your first payment right here.\n\n${this.describePlans()}`;
+      return `You don’t have an active membership. You can choose a tier and make your first payment right here.\n\n${this.describePlans()}`;
     }
 
     try {
@@ -388,7 +388,7 @@ export class BotMembershipPaymentService {
     }
     const amount = this.price(tier, frequency);
     if (!amount)
-      return 'I couldn’t check the price right now. Please try again shortly.';
+      return 'The price is unavailable right now. Try again shortly.';
     const scope = [
       paymentRequest,
       tier,
@@ -546,15 +546,12 @@ export class BotMembershipPaymentService {
         { tier, amount },
         'WHATSAPP',
       );
-      return `I sent the M-Pesa prompt to the number ending in ${payer.slice(-4)}. The payer should approve it on their phone if the amount matches.\n\nThe payment is pending until M-Pesa confirms it.` +
-        (tier === 'BRONZE' && frequency === 'MONTHLY'
-          ? '\n\nFor a WhatsApp reminder when your next payment is due, reply *Renewal reminders on*.'
-          : '');
+      return `M-Pesa prompt sent to the number ending in ${payer.slice(-4)}. Approve it on that phone if the amount is correct. Payment is pending until M-Pesa confirms it.`;
     } catch {
       this.logger.warn(
         'WhatsApp membership payment could not be confirmed as initiated.',
       );
-      return 'I couldn’t confirm that the M-Pesa prompt was sent. Check your phone or ask for your payment status before trying again.';
+      return 'M-Pesa has not confirmed sending the prompt. Check your phone or ask for your payment status before trying again.';
     }
   }
 }

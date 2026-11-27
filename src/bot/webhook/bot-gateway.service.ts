@@ -53,6 +53,11 @@ interface ChatContext {
  * /whatsapp/webhook (signature-guarded) unless explicitly routed through
  * BOT_META_WEBHOOK_ENABLED.
  */
+export function isWhatsappStopRequest(message: string): boolean {
+  const text = message.trim().toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '');
+  return /^(?:(?:no[,]? )?please[,]? )?(?:stop|unsubscribe|renewal reminders off|leave me alone|(?:stop|quit) (?:texting|messaging|contacting) me(?: (?:again|now|please))?|(?:stop|quit) sending (?:me|these|this)(?: .*)?|(?:do not|don't) (?:text|message|contact|send me)\b.*|no more (?:messages|texts|reminders)|acha kunitumia ujumbe|usinitumie ujumbe tena)(?:,? please)?$/.test(text);
+}
+
 @Injectable()
 export class BotGatewayService {
   private readonly logger = new Logger(BotGatewayService.name);
@@ -551,17 +556,18 @@ export class BotGatewayService {
       instanceProviderId,
     };
 
-    const reminderPreference = /^renewal reminders (on|off)[.!]?$/i.exec(messageText.trim());
-    if (reminderPreference) {
-      const enabled = reminderPreference[1].toLowerCase() === 'on';
-      await this.prisma.member.update({
-        where: { id: member.id },
-        data: { whatsappRenewalOptIn: enabled },
+    const stop = isWhatsappStopRequest(messageText);
+    const resume = /^renewal reminders on[.!]?$/i.test(messageText.trim());
+    if (stop || resume) {
+      const changed = await this.prisma.member.updateMany({
+        where: { id: member.id, whatsappUnsubscribedAt: stop ? null : { not: null } },
+        data: { whatsappUnsubscribedAt: stop ? new Date() : null },
       });
+      if (stop && !changed.count) return;
       const sw = member.preferredLanguage === 'sw';
-      const reply = enabled
-        ? (sw ? 'Nitakutumia kikumbusho cha malipo ya kila mwezi ya Bronze.' : 'I’ll send a WhatsApp reminder when your monthly Bronze payment is due.')
-        : (sw ? 'Nimezima vikumbusho vya malipo ya uanachama.' : 'I’ve turned off WhatsApp renewal reminders.');
+      const reply = stop
+        ? (sw ? 'Nimesitisha ujumbe wa kiotomatiki wa WhatsApp.' : 'I’ve stopped automated WhatsApp messages.')
+        : (sw ? 'Ujumbe wa kiotomatiki wa WhatsApp umewashwa.' : 'Automated WhatsApp messages are on.');
       await this.sendTextSafely(member.phoneNumber, reply, chatContext);
       return;
     }
