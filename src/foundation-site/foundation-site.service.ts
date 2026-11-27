@@ -523,7 +523,7 @@ export class FoundationSiteService {
           where: { referredBy: { not: null } },
         }),
         this.prisma.fieldSubmission.findMany({
-          where: { status: { in: ['PARSED', 'PROCESSED'] } },
+          where: { status: { in: ['PARSED', 'PROCESSED'] }, clinicalImage: false, captionRequestedAt: null },
           select: { extracted: true },
         }),
       ]);

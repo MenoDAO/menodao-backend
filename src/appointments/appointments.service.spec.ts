@@ -16,6 +16,8 @@ describe('AppointmentsService', () => {
   let service: AppointmentsService;
 
   const mockPrisma = {
+    $queryRaw: jest.fn().mockResolvedValue([{ taken: 0, doctorBusy: false }]),
+    $transaction: jest.fn((run) => run(mockPrisma)),
     clinic: { findFirst: jest.fn() },
     member: { findUnique: jest.fn() },
     staffUser: { findUnique: jest.fn() },

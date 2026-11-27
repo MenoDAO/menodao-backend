@@ -12,7 +12,12 @@ import type { ILlmProvider } from '../ai/interfaces/llm-provider.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FieldMediaStorageService } from './field-media-storage.service';
 
-export const FIELD_MEDIA_KINDS = ['IMAGE', 'VIDEO', 'DOCUMENT', 'AUDIO'] as const;
+export const FIELD_MEDIA_KINDS = [
+  'IMAGE',
+  'VIDEO',
+  'DOCUMENT',
+  'AUDIO',
+] as const;
 export type FieldMediaKind = (typeof FIELD_MEDIA_KINDS)[number];
 
 export const FIELD_SUBMISSION_STATUSES = [
@@ -73,6 +78,10 @@ interface ParsedFieldDocument {
   [key: string]: unknown;
 }
 
+function isClinicalImageLabel(caption: string) {
+  return /\b(?:clinical|x[ -]?ray|radiograph|opg)\b/i.test(caption);
+}
+
 const SYSTEM_PROMPT = [
   'You extract structured field and clinical notes from an image or PDF uploaded by an authorised health worker.',
   'Return ONLY one JSON object. Never invent facts. If text is illegible or ambiguous, put the uncertain item in "unclear" and lower "confidence".',
@@ -92,7 +101,8 @@ export function normalizeFieldPhone(value: string): string | null {
   const digits = stripNonDigits(value);
   if (!digits) return null;
   if (digits.startsWith('254') && digits.length === 12) return digits;
-  if (digits.startsWith('0') && digits.length === 10) return `254${digits.slice(1)}`;
+  if (digits.startsWith('0') && digits.length === 10)
+    return `254${digits.slice(1)}`;
   if (digits.startsWith('7') && digits.length === 9) return `254${digits}`;
   if (digits.length >= 9 && digits.length <= 15) return digits;
   return null;
@@ -203,6 +213,22 @@ export class FieldDataService {
       };
     }
 
+    const caption = input.caption?.trim().slice(0, 500) || null;
+    if (input.providerMessageId) {
+      const existing = await this.prisma.fieldSubmission.findUnique({
+        where: { providerMessageId: input.providerMessageId },
+      });
+      if (existing?.contributorId === contributor.id) {
+        return existing.captionRequestedAt
+          ? this.askForCaption(existing.id)
+          : {
+              accepted: true,
+              submissionId: existing.id,
+              status: existing.status,
+              reply: this.replyFor(existing.status),
+            };
+      }
+    }
     const submissionId = this.storage.newSubmissionId();
     let stored;
     try {
@@ -236,16 +262,104 @@ export class FieldDataService {
         fileKey: stored.key,
         fileSize: input.buffer.length,
         originalFilename: input.originalFilename ?? null,
-        caption: input.caption ?? null,
+        caption,
+        captionRequestedAt: caption ? null : new Date(),
         status: 'PENDING',
       },
     });
 
-    const isImage = input.kind === 'IMAGE' && input.mimeType.startsWith('image/');
+    if (!caption) return this.askForCaption(created.id);
+    return this.parseStoredMedia(
+      created,
+      input.buffer,
+      caption,
+      contributor.role,
+    );
+  }
+
+  private askForCaption(id: string): IngestFieldMediaResult {
+    return {
+      accepted: true,
+      submissionId: id,
+      status: 'PENDING',
+      reply:
+        'What is this attachment about? Reply *Caption ' +
+        id.slice(0, 8) +
+        ' your description*. Start the description with *Clinical* or *X-ray* for clinical images. Please leave patient names out.',
+    };
+  }
+
+  async addCaption(
+    phoneCandidates: IngestFieldMediaInput['phoneCandidates'],
+    whatsappId: string,
+    message: string,
+  ): Promise<string | null> {
+    const match = /^caption\s+([a-f0-9]{8})\s+([\s\S]+)$/i.exec(message.trim());
+    if (!match) return null;
+    const contributor = await this.resolveContributor(phoneCandidates);
+    if (!contributor)
+      return 'Only the authorised sender can label this upload.';
+    const matches = await this.prisma.fieldSubmission.findMany({
+      where: {
+        contributorId: contributor.id,
+        whatsappId,
+        id: { startsWith: match[1].toLowerCase() },
+        captionRequestedAt: { not: null },
+        status: 'PENDING',
+      },
+      take: 2,
+    });
+    if (matches.length !== 1)
+      return 'I couldn’t find an unlabelled upload with that reference. Please check the reference in my message.';
+    const submission = matches[0];
+    const caption = match[2].trim().slice(0, 500);
+    if (!caption) return this.askForCaption(submission.id).reply;
+    const data = await this.storage.read(submission.fileKey);
+    const claimed = await this.prisma.fieldSubmission.updateMany({
+      where: {
+        id: submission.id,
+        captionRequestedAt: { not: null },
+        status: 'PENDING',
+      },
+      data: { caption, captionRequestedAt: null },
+    });
+    if (!claimed.count) return 'That upload already has a caption.';
+    return (
+      await this.parseStoredMedia(
+        submission,
+        data.body,
+        caption,
+        contributor.role,
+      )
+    ).reply;
+  }
+
+  private async parseStoredMedia(
+    created: { id: string; kind: FieldMediaKind; mimeType: string },
+    buffer: Buffer,
+    caption: string,
+    role: FieldContributorRole,
+  ): Promise<IngestFieldMediaResult> {
+    if (isClinicalImageLabel(caption)) {
+      await this.prisma.fieldSubmission.update({
+        where: { id: created.id },
+        data: { clinicalImage: true },
+      });
+      return this.markNeedsReview(
+        created.id,
+        role === 'DOCTOR' || role === 'PHYSICIAN'
+          ? 'Clinical upload queued for authorised clinician review.'
+          : 'Clinical upload requires verification by an authorised clinician.',
+      );
+    }
+    const isImage =
+      created.kind === 'IMAGE' && created.mimeType.startsWith('image/');
     const isPdf =
-      input.kind === 'DOCUMENT' &&
-      ['application/pdf', 'application/octet-stream'].includes(input.mimeType) &&
-      input.buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+      created.kind === 'DOCUMENT' &&
+      ['application/pdf', 'application/octet-stream'].includes(
+        created.mimeType,
+      ) &&
+      buffer.subarray(0, 5).toString('ascii') === '%PDF-';
     if (!isImage && !isPdf) {
       return this.markNeedsReview(
         created.id,
@@ -258,7 +372,7 @@ export class FieldDataService {
         systemPrompt: SYSTEM_PROMPT,
         userPrompt: [
           'Extract all legible structured data from this field/clinical report.',
-          input.caption ? `Caption from sender: ${input.caption}` : '',
+          `Caption from sender: ${caption}`,
           'Respond with JSON only.',
         ]
           .filter(Boolean)
@@ -266,8 +380,15 @@ export class FieldDataService {
         responseFormat: 'json',
         operation: 'field_data.parse',
         ...(isPdf
-          ? { pdfBase64: input.buffer.toString('base64') }
-          : { images: [{ mimeType: input.mimeType, base64: input.buffer.toString('base64') }] }),
+          ? { pdfBase64: buffer.toString('base64') }
+          : {
+              images: [
+                {
+                  mimeType: created.mimeType,
+                  base64: buffer.toString('base64'),
+                },
+              ],
+            }),
       });
       const parsed = parseJsonObject(raw) as ParsedFieldDocument | null;
       if (!parsed) {
@@ -318,7 +439,9 @@ export class FieldDataService {
           status,
           confidence,
           extracted,
-          summary: parsed.summary ? String(parsed.summary).slice(0, 4000) : null,
+          summary: parsed.summary
+            ? String(parsed.summary).slice(0, 4000)
+            : null,
           missingFields,
           needsAdminReview: needsReview,
           parseError: needsReview
@@ -382,7 +505,8 @@ export class FieldDataService {
     const phone = normalizeFieldPhone(input.phoneNumber);
     if (!phone) throw new BadRequestException('Enter a valid phone number.');
     const displayName = input.displayName.trim();
-    if (!displayName) throw new BadRequestException('Display name is required.');
+    if (!displayName)
+      throw new BadRequestException('Display name is required.');
     return this.prisma.fieldContributor.upsert({
       where: { phoneNumber: phone },
       create: {
@@ -447,7 +571,9 @@ export class FieldDataService {
     return this.prisma.fieldSubmission.findMany({
       where: {
         ...(params.status ? { status: params.status } : {}),
-        ...(params.contributorId ? { contributorId: params.contributorId } : {}),
+        ...(params.contributorId
+          ? { contributorId: params.contributorId }
+          : {}),
       },
       include: { contributor: true },
       orderBy: { createdAt: 'desc' },
@@ -491,7 +617,9 @@ export class FieldDataService {
       data: {
         status: input.status,
         reviewNotes: input.reviewNotes?.trim() || null,
-        ...(input.extracted !== undefined ? { extracted: input.extracted } : {}),
+        ...(input.extracted !== undefined
+          ? { extracted: input.extracted }
+          : {}),
         needsAdminReview: input.status === 'NEEDS_REVIEW',
         reviewedAt: new Date(),
         reviewerAdminId: input.reviewerAdminId,
@@ -502,14 +630,29 @@ export class FieldDataService {
 
   async reparseSubmission(id: string) {
     const submission = await this.getSubmission(id);
+    if (
+      submission.clinicalImage ||
+      (submission.caption && isClinicalImageLabel(submission.caption))
+    ) {
+      throw new BadRequestException(
+        'Clinical imagery requires clinician review.',
+      );
+    }
+    if (!submission.caption?.trim())
+      throw new BadRequestException('Label this upload before re-parsing it.');
     const media = await this.getMedia(id);
-    const isImage = submission.kind === 'IMAGE' && submission.mimeType.startsWith('image/');
+    const isImage =
+      submission.kind === 'IMAGE' && submission.mimeType.startsWith('image/');
     const isPdf =
       submission.kind === 'DOCUMENT' &&
-      ['application/pdf', 'application/octet-stream'].includes(submission.mimeType) &&
+      ['application/pdf', 'application/octet-stream'].includes(
+        submission.mimeType,
+      ) &&
       media.body.subarray(0, 5).toString('ascii') === '%PDF-';
     if (!isImage && !isPdf) {
-      throw new BadRequestException('Only image and PDF submissions can be re-parsed.');
+      throw new BadRequestException(
+        'Only image and PDF submissions can be re-parsed.',
+      );
     }
     const result = await this.ingestMedia({
       phoneCandidates: [submission.contributor.phoneNumber],
@@ -529,7 +672,9 @@ export class FieldDataService {
     // after the replacement has been parsed successfully.
     const replacement = await this.getSubmission(result.submissionId);
     if (replacement.status !== 'NEEDS_REVIEW') {
-      await this.prisma.fieldSubmission.delete({ where: { id } }).catch(() => undefined);
+      await this.prisma.fieldSubmission
+        .delete({ where: { id } })
+        .catch(() => undefined);
     }
     return replacement;
   }

@@ -76,7 +76,8 @@ function mimeFrom(value: Record<string, any>, kind: FlaresendMediaKind): string 
 }
 
 function captionFrom(value: Record<string, any>): string | null {
-  const caption = value.caption ?? value.title ?? value.text;
+  const caption = value.caption ?? value.text;
+  if (typeof caption === 'string' && caption.trim() === filenameFrom(value)) return null;
   return typeof caption === 'string' && caption.trim() ? caption.trim() : null;
 }
 

@@ -14,6 +14,11 @@ import { isDirectConsultationRequest } from '../intents/intent-fallback';
  *   unverified stub members; staff verify later) — the REST path in
  *   AppointmentsService keeps the strict active-subscription guard.
  */
+import {
+  hasReservationConflict,
+  lockAppointmentReservation,
+  OCCUPIED_APPOINTMENT_STATUSES,
+} from '../../appointments/appointment-reservation';
 import { randomBytes } from 'node:crypto';
 import {
   ConsultationPaymentService,
@@ -260,32 +265,27 @@ export class BookingService {
     isoWeekday: number,
     doctorId?: string | null,
   ): Array<{ open: string; close: string }> {
-    // Doctor availability takes precedence when any doctor has schedule for the day.
-    const doctors = doctorId
-      ? (clinic?.doctors ?? []).filter((d) => d.id === doctorId)
-      : (clinic?.doctors ?? []);
-    if (doctors.length > 0) {
-      const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
-      const windows: Array<{ open: string; close: string }> = [];
-      for (const doc of doctors) {
-        for (const a of doc.availability) {
-          if (a.isActive && a.dayOfWeek === jsDay) {
-            windows.push({ open: a.startTime, close: a.endTime });
-          }
-        }
-      }
-      if (windows.length > 0) return windows;
-    }
-    // Clinic operating schedule
     const jsDay = isoWeekday === 7 ? 0 : isoWeekday;
-    const row = clinic?.operatingSchedule?.find((r) => r.dayOfWeek === jsDay);
-    if (row) {
-      if (row.isClosed || !row.openTime || !row.closeTime) return [];
-      return [{ open: row.openTime, close: row.closeTime }];
-    }
-    // Kenyan medic default: Mon-Sat 08:00-17:00, Sun closed
-    if (isoWeekday === 7) return [];
-    return [{ open: this.cfg.openTime, close: this.cfg.closeTime }];
+    const row = clinic?.operatingSchedule?.find(
+      (entry) => entry.dayOfWeek === jsDay,
+    );
+    if (row?.isClosed || (row && (!row.openTime || !row.closeTime))) return [];
+    if (!row && jsDay === 0) return [];
+    const open = row?.openTime ?? this.cfg.openTime;
+    const close = row?.closeTime ?? this.cfg.closeTime;
+    if (!doctorId) return [{ open, close }];
+    const doctor = clinic?.doctors?.find(
+      (candidate) => candidate.id === doctorId,
+    );
+    if (!doctor) return [];
+    if (!doctor.availability.length) return [{ open, close }];
+    return doctor.availability
+      .filter((entry) => entry.isActive && entry.dayOfWeek === jsDay)
+      .map((entry) => ({
+        open: entry.startTime > open ? entry.startTime : open,
+        close: entry.endTime < close ? entry.endTime : close,
+      }))
+      .filter((window) => window.open < window.close);
   }
 
   private isClinicOpenOnDay(
@@ -944,6 +944,16 @@ export class BookingService {
     const durationMinutes = this.getServiceDurationMinutes(draft.service);
 
     try {
+      if (
+        draft.clinicId &&
+        (await this.calendarSync.hasBookingConflict(
+          draft.clinicId,
+          doctorId,
+          scheduledAt,
+          durationMinutes,
+        ))
+      )
+        throw new Error('SLOT_CONFLICT');
       const appointment = await this.prisma.$transaction(async (tx) => {
         // clinicId is mandatory on Appointment; the draft state machine
         // requires it before confirmation, so this is a defensive guard.
@@ -953,9 +963,10 @@ export class BookingService {
           draft.time!,
           nairobiNow(this.cfg),
           clinic,
+          doctorId,
         );
         if (validation !== 'OK') throw new Error('SLOT_CONFLICT');
-        await tx.$queryRaw`SELECT id FROM "Member" WHERE id = ${draft.memberId} FOR UPDATE`;
+        await lockAppointmentReservation(tx, draft.memberId, draft.clinicId);
         const currentDraft = await tx.botBookingDraft.findUnique({
           where: { id: draft.id },
         });
@@ -980,65 +991,33 @@ export class BookingService {
         const existing = await tx.appointment.findFirst({
           where: {
             memberId: draft.memberId,
-            status: { in: [AppointmentStatus.AWAITING_PAYMENT] },
+            status: { in: OCCUPIED_APPOINTMENT_STATUSES },
             scheduledAt: { gt: new Date() },
           },
-          select: { id: true },
+          select: { id: true, status: true },
         });
-        if (existing) throw new Error('PAYMENT_PENDING');
-        await tx.$queryRaw`SELECT id FROM "Clinic" WHERE id = ${draft.clinicId} FOR UPDATE`;
+        if (existing)
+          throw new Error(
+            existing.status === AppointmentStatus.AWAITING_PAYMENT
+              ? 'PAYMENT_PENDING'
+              : 'ALREADY_BOOKED',
+          );
 
-        // Match AppointmentsService capacity semantics: count overlapping
-        // appointments against the clinic's active chairs, not "any booking
-        // blocks the slot" (clinics can run several chairs in parallel).
-        const clinicRow = await tx.clinic.findUnique({
-          where: { id: draft.clinicId },
+        const clinicRow = await tx.clinic.findFirst({
+          where: { id: draft.clinicId, status: 'APPROVED' },
           select: { activeDentalChairs: true },
         });
         if (!clinicRow) throw new Error('MISSING_CLINIC');
-        const chairs = Math.max(clinicRow.activeDentalChairs || 1, 1);
-        const windowStart = new Date(
-          scheduledAt.getTime() - this.cfg.slotMinutes * 60_000,
-        );
-        const windowEnd = new Date(
-          scheduledAt.getTime() + this.cfg.slotMinutes * 60_000,
-        );
-        const nearby = await tx.appointment.findMany({
-          where: {
+        if (
+          await hasReservationConflict(tx, {
             clinicId: draft.clinicId,
-            scheduledAt: { gte: windowStart, lt: windowEnd },
-            status: {
-              in: [
-                AppointmentStatus.BOOKED,
-                AppointmentStatus.RESCHEDULED,
-                AppointmentStatus.AWAITING_PAYMENT,
-              ],
-            },
-          },
-          select: { scheduledAt: true, durationMinutes: true },
-        });
-        const taken = nearby.filter((row) =>
-          this.overlaps(
+            doctorId,
             scheduledAt,
             durationMinutes,
-            row.scheduledAt,
-            row.durationMinutes,
-          ),
-        ).length;
-        if (doctorId) {
-          const doctorConflict = nearby.some(
-            (row) =>
-              scheduledAt.getTime() <
-                new Date(
-                  row.scheduledAt.getTime() + row.durationMinutes * 60_000,
-                ).getTime() &&
-              new Date(row.scheduledAt).getTime() <
-                scheduledAt.getTime() + durationMinutes * 60_000,
-          );
-          if (doctorConflict) throw new Error('SLOT_CONFLICT');
-        } else if (taken >= chairs) {
+            chairs: clinicRow.activeDentalChairs || 1,
+          })
+        )
           throw new Error('SLOT_CONFLICT');
-        }
 
         const appt = await tx.appointment.create({
           data: {
@@ -1098,8 +1077,8 @@ export class BookingService {
         const reply =
           dispatch === 'sent'
             ? lang === 'sw'
-              ? 'Ombi la M-Pesa la KES 500 limetumwa. Miadi itathibitishwa baada ya malipo kupokelewa.'
-              : 'I’ve sent the KES 500 M-Pesa prompt to this number. Your appointment will be confirmed once payment is received.'
+              ? 'Ombi la M-Pesa la KES 500 limetumwa. Tumeshikilia muda wako kwa dakika 10. Miadi itathibitishwa baada ya malipo kupokelewa.'
+              : 'I’ve sent the KES 500 M-Pesa prompt to this number. I’ll hold the slot for 10 minutes and confirm the appointment once payment arrives.'
             : lang === 'sw'
               ? 'Sijaweza kuthibitisha kama ombi la M-Pesa limetumwa. Tafadhali wasiliana na kliniki kabla ya kujaribu tena.'
               : 'I couldn’t confirm the M-Pesa prompt was sent. Please contact the clinic before trying another payment.';
@@ -1150,6 +1129,15 @@ export class BookingService {
           reply: (
             await this.membershipBookingNote(draft.memberId, lang)
           ).trim(),
+          triageFlag: false,
+        };
+      }
+      if (err instanceof Error && err.message === 'ALREADY_BOOKED') {
+        return {
+          reply:
+            lang === 'sw'
+              ? 'Tayari una miadi ijayo. Badilisha au ghairi miadi hiyo kwanza.'
+              : 'You already have an upcoming appointment. You can reschedule it if you need another time.',
           triageFlag: false,
         };
       }
@@ -1373,90 +1361,25 @@ export class BookingService {
     doctorId: string | null = null,
     durationMinutes: number = this.cfg.slotMinutes,
   ): Promise<boolean> {
-    const start = scheduledAt;
-    const end = new Date(scheduledAt.getTime() + durationMinutes * 60_000);
-    const windowStart = new Date(start.getTime() - durationMinutes * 60_000);
-    const windowEnd = new Date(end.getTime() + durationMinutes * 60_000);
-
-    const internalWhere: {
-      clinicId: string;
-      scheduledAt: { gte: Date; lt: Date };
-      status: { in: AppointmentStatus[] };
-      doctorId?: string;
-    } = {
-      clinicId,
-      scheduledAt: { gte: windowStart, lt: windowEnd },
-      status: {
-        in: [
-          AppointmentStatus.BOOKED,
-          AppointmentStatus.RESCHEDULED,
-          AppointmentStatus.AWAITING_PAYMENT,
-        ],
-      },
-    };
-    if (doctorId) internalWhere.doctorId = doctorId;
-
-    const internal = await this.prisma.appointment.findMany({
-      where: internalWhere as never,
-      select: { scheduledAt: true, durationMinutes: true },
-    });
-    const internalOverlap = internal.some(
-      (row) =>
-        start.getTime() <
-          new Date(
-            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
-          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
-    );
-
-    const externalBusy = doctorId
-      ? await this.getCalendarBusy('DOCTOR', doctorId, {
-          from: windowStart,
-          to: windowEnd,
-        })
-      : await this.getCalendarBusy('CLINIC', clinicId, {
-          from: windowStart,
-          to: windowEnd,
-        });
-    const externalOverlap = externalBusy.some(
-      (busy) =>
-        start.getTime() < busy.end.getTime() &&
-        busy.start.getTime() < end.getTime(),
-    );
-
-    if (doctorId) {
-      // Single-doctor booking: any overlap (internal or external) blocks the slot.
-      return internalOverlap || externalOverlap;
-    }
-
-    // Clinic-level booking: keep the chair-capacity semantics, and stay safe
-    // when an external calendar already occupies a doctor inside the window.
     const clinic = await this.prisma.clinic.findUnique({
       where: { id: clinicId },
       select: { activeDentalChairs: true },
     });
-    const chairs = Math.max(clinic?.activeDentalChairs || 1, 1);
-    const internalOverlaps = internal.filter(
-      (row) =>
-        start.getTime() <
-          new Date(
-            row.scheduledAt.getTime() + row.durationMinutes * 60_000,
-          ).getTime() && new Date(row.scheduledAt).getTime() < end.getTime(),
-    ).length;
-    if (externalOverlap) return true;
-    return internalOverlaps >= chairs;
-  }
-
-  private async getCalendarBusy(
-    ownerType: 'DOCTOR' | 'CLINIC',
-    ownerId: string,
-    window: { from: Date; to: Date },
-  ): Promise<{ start: Date; end: Date }[]> {
-    const busy = await this.calendarSync.getBusyIntervals(ownerType, ownerId, {
-      from: window.from,
-      to: window.to,
-      timeZone: this.cfg.timezone,
-    });
-    return busy;
+    return (
+      (await hasReservationConflict(this.prisma, {
+        clinicId,
+        doctorId,
+        scheduledAt,
+        durationMinutes,
+        chairs: clinic?.activeDentalChairs || 1,
+      })) ||
+      (await this.calendarSync.hasBookingConflict(
+        clinicId,
+        doctorId,
+        scheduledAt,
+        durationMinutes,
+      ))
+    );
   }
 
   async nextFreeSlots(
@@ -1549,16 +1472,6 @@ export class BookingService {
   }
 
   /** Same overlap rule as AppointmentsService.assertSlotFree. */
-  private overlaps(
-    startA: Date,
-    durationA: number,
-    startB: Date,
-    durationB: number,
-  ): boolean {
-    const endA = startA.getTime() + durationA * 60_000;
-    const endB = startB.getTime() + durationB * 60_000;
-    return startA.getTime() < endB && startB.getTime() < endA;
-  }
 
   async bookFromTranscript(
     transcript: string,

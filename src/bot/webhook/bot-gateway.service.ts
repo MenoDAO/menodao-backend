@@ -551,6 +551,33 @@ export class BotGatewayService {
       instanceProviderId,
     };
 
+    const reminderPreference = /^renewal reminders (on|off)[.!]?$/i.exec(messageText.trim());
+    if (reminderPreference) {
+      const enabled = reminderPreference[1].toLowerCase() === 'on';
+      await this.prisma.member.update({
+        where: { id: member.id },
+        data: { whatsappRenewalOptIn: enabled },
+      });
+      const sw = member.preferredLanguage === 'sw';
+      const reply = enabled
+        ? (sw ? 'Nitakutumia kikumbusho cha malipo ya kila mwezi ya Bronze.' : 'I’ll send a WhatsApp reminder when your monthly Bronze payment is due.')
+        : (sw ? 'Nimezima vikumbusho vya malipo ya uanachama.' : 'I’ve turned off WhatsApp renewal reminders.');
+      await this.sendTextSafely(member.phoneNumber, reply, chatContext);
+      return;
+    }
+
+    if (/^caption\s/i.test(messageText.trim())) {
+      const reply = await this.fieldDataService.addCaption(
+        [senderId, fallbackPhone, member.phoneNumber],
+        senderId,
+        messageText,
+      );
+      if (reply) {
+        await this.sendTextSafely(member.phoneNumber, reply);
+        return;
+      }
+    }
+
     // Sensitive personal records are OTP-gated. A 6-digit reply is treated as a
     // verification code only while a pending challenge exists for this member.
     const trimmed = (messageText || '').trim();

@@ -56,12 +56,40 @@ export function overlaps(
 export function generateDaySlots(
   dateStr: string,
   operatesOnWeekends: boolean,
+  operatingSchedule: Array<{
+    dayOfWeek: number;
+    isClosed: boolean;
+    openTime: string | null;
+    closeTime: string | null;
+  }> = [],
 ): Date[] {
   const start = eatDateStart(dateStr);
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
     weekday: 'short',
   }).format(start);
+
+  const dayOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+    weekday,
+  );
+  const configured = operatingSchedule.find(
+    (row) => row.dayOfWeek === dayOfWeek,
+  );
+  if (configured) {
+    if (configured.isClosed || !configured.openTime || !configured.closeTime)
+      return [];
+    const open = new Date(
+      `${dateStr}T${configured.openTime}:00${EAT}`,
+    ).getTime();
+    const close = new Date(
+      `${dateStr}T${configured.closeTime}:00${EAT}`,
+    ).getTime();
+    const slots: Date[] = [];
+    const duration = SLOT_MINUTES * 60_000;
+    for (let time = open; time + duration <= close; time += duration)
+      slots.push(new Date(time));
+    return slots;
+  }
 
   if (weekday === 'Sun' && !operatesOnWeekends) return [];
   const endHour =

@@ -126,6 +126,57 @@ export class CalendarSyncService {
     });
   }
 
+  async hasBookingConflict(
+    clinicId: string,
+    doctorId: string | null,
+    scheduledAt: Date,
+    durationMinutes: number,
+  ): Promise<boolean> {
+    const end = new Date(scheduledAt.getTime() + durationMinutes * 60_000);
+    const intervals = await this.getBookingBusyIntervals(
+      clinicId,
+      doctorId,
+      scheduledAt,
+      end,
+    );
+    return intervals.some(
+      (interval) => interval.start < end && interval.end > scheduledAt,
+    );
+  }
+
+  async getBookingBusyIntervals(
+    clinicId: string,
+    doctorId: string | null,
+    from: Date,
+    to: Date,
+  ) {
+    const owners = await this.prisma.calendarConnection.findMany({
+      where: {
+        OR: [
+          { ownerType: 'CLINIC', ownerId: clinicId },
+          ...(doctorId
+            ? [{ ownerType: 'DOCTOR' as const, ownerId: doctorId }]
+            : []),
+        ],
+      },
+      select: { ownerType: true, ownerId: true, provider: true },
+    });
+    const intervals = await Promise.all(
+      owners.map((owner) =>
+        this.getBusyIntervals(
+          owner.ownerType === 'DOCTOR' ? 'DOCTOR' : 'CLINIC',
+          owner.ownerId,
+          {
+            provider: owner.provider,
+            from,
+            to,
+          },
+        ),
+      ),
+    );
+    return intervals.flat();
+  }
+
   async createAppointmentEvent(appointment: {
     id: string;
     scheduledAt: Date;
@@ -134,16 +185,23 @@ export class CalendarSyncService {
     clinicId: string;
     externalCalendarProvider: string | null;
   }): Promise<{ ok: boolean; eventId?: string }> {
-    const provider = this.getProvider(appointment.externalCalendarProvider);
-    if (!provider) return { ok: false };
     const ownerType: CalendarOwnerKind = appointment.doctorId
       ? 'DOCTOR'
       : 'CLINIC';
     const ownerId = appointment.doctorId ?? appointment.clinicId;
+    const configured = appointment.externalCalendarProvider;
     const connection = await this.prisma.calendarConnection.findFirst({
-      where: { ownerType, ownerId, provider: provider.provider as string },
+      where: {
+        ownerType,
+        ownerId,
+        ...(configured && configured !== 'NONE'
+          ? { provider: configured }
+          : {}),
+      },
+      orderBy: { connectedAt: 'desc' },
     });
     if (!connection) return { ok: false };
+    const provider = this.getProvider(connection.provider);
     const token = await this.getOAuthToken(connection);
     if (!token) return { ok: false };
     const event: CalendarEventInput = {

@@ -10,6 +10,7 @@ import {
 } from '../sasapay/sasapay.service';
 
 export const CONSULTATION_FEE_KES = 500;
+export const CONSULTATION_HOLD_MS = 10 * 60_000;
 export const CONSULTATION_REFERENCE_PREFIX = 'menodao_apt';
 
 @Injectable()
@@ -130,6 +131,7 @@ export class ConsultationPaymentService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${receipt}, 0))`;
+      await tx.$queryRaw`SELECT id FROM "Appointment" WHERE id = ${appointment.id} FOR UPDATE`;
       const current = await tx.appointment.findUniqueOrThrow({
         where: { id: appointment.id },
       });
@@ -159,13 +161,14 @@ export class ConsultationPaymentService {
       // Record late payments for staff reconciliation without booking a past visit.
       if (
         current.status === AppointmentStatus.PAYMENT_FAILED ||
-        current.scheduledAt <= new Date()
+        current.scheduledAt <= new Date() ||
+        current.createdAt.getTime() + CONSULTATION_HOLD_MS <= Date.now()
       ) {
         await tx.appointment.update({
           where: { id: current.id },
           data: {
             consultationReceipt: receipt,
-            status: AppointmentStatus.PAYMENT_FAILED,
+            status: AppointmentStatus.PAYMENT_REVIEW,
           },
         });
         return 'review';
@@ -186,10 +189,23 @@ export class ConsultationPaymentService {
       });
       return 'confirmed';
     });
-    if (result === 'review')
+    if (result === 'review') {
       this.logger.warn(
         `Late consultation payment requires staff review for appointment ${appointment.id}.`,
       );
+      const reference = appointment.id.slice(0, 8).toUpperCase();
+      const memberMessage =
+        appointment.member.preferredLanguage === 'sw'
+          ? `Malipo yako yamepokelewa baada ya muda wa kuhifadhi miadi kuisha. Tafadhali wasiliana na kliniki ukitumia rejea ${reference} kabla ya kulipa tena.`
+          : `Your payment arrived after the appointment hold expired. Please contact the clinic with reference ${reference} before making another payment.`;
+      await Promise.allSettled([
+        this.sms.sendSms(appointment.member.phoneNumber, memberMessage),
+        this.sms.sendSms(
+          appointment.clinic.ownerPhone,
+          `MenoDAO: a late appointment payment needs review. Open the staff schedule and look for ${reference}.`,
+        ),
+      ]);
+    }
     if (result === 'confirmed') {
       const when = DateTime.fromJSDate(appointment.scheduledAt, {
         zone: 'Africa/Nairobi',

@@ -8,8 +8,9 @@ function setup() {
     consultationCheckoutId: 'checkout',
     consultationReceipt: null,
     status: AppointmentStatus.AWAITING_PAYMENT,
+    createdAt: new Date(),
     scheduledAt: new Date(Date.now() + 86_400_000),
-    clinic: { name: 'Dental Clinic' },
+    clinic: { name: 'Dental Clinic', ownerPhone: '254711111111' },
     member: { phoneNumber: '254712345678', preferredLanguage: 'en' },
   };
   const provider = { verifyStkCallback: jest.fn().mockReturnValue(true) };
@@ -105,6 +106,24 @@ describe('Consultation payments', () => {
       }),
     );
     expect(sms.sendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a late payment for review without rebooking a released slot', async () => {
+    const { service, db, payload, appointment, calendar, sms } = setup();
+    db.appointment.findUniqueOrThrow.mockResolvedValue({
+      ...appointment,
+      createdAt: new Date(Date.now() - 11 * 60_000),
+    });
+    await expect(service.settle('booking', 'proof', payload)).resolves.toEqual({
+      success: true,
+    });
+    expect(db.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: 'PAYMENT_REVIEW', consultationReceipt: 'RECEIPT' },
+      }),
+    );
+    expect(sms.sendSms).toHaveBeenCalledTimes(2);
+    expect(calendar.createAppointmentEvent).not.toHaveBeenCalled();
   });
 
   it('rejects a receipt already used for a membership', async () => {

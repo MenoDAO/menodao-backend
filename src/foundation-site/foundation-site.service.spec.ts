@@ -183,7 +183,7 @@ describe('FoundationSiteService content', () => {
       'campsConducted',
     ]);
     expect(prisma.fieldSubmission.findMany).toHaveBeenCalledWith({
-      where: { status: { in: ['PARSED', 'PROCESSED'] } },
+      where: { status: { in: ['PARSED', 'PROCESSED'] }, clinicalImage: false, captionRequestedAt: null },
       select: { extracted: true },
     });
     expect(prisma.member.count).toHaveBeenCalledWith({
