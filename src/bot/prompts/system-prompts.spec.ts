@@ -19,6 +19,19 @@ describe('Dr. Papi system prompt', () => {
     expect(prompt).toContain('A clinician must assess the patient before giving individual treatment advice');
   });
 
+  it('omits branding filler even when retrieved context includes it', () => {
+    const prompt = buildDrPapiSystemPrompt({
+      clinicContext: '',
+      insuranceContext: '',
+      contextDocuments: 'Example community motto',
+    });
+
+    expect(prompt).toContain("Answer the member's actual question first");
+    expect(prompt).toContain('Do not add slogans, mottos, taglines');
+    expect(prompt).toContain('Omit them even when they appear in the retrieved guide or earlier replies');
+    expect(prompt).toContain('Ask at most one focused follow-up after answering');
+  });
+
   it('writes Swahili naturally and bans the known "kariba" typo', () => {
     const prompt = buildDrPapiSystemPrompt({
       clinicContext: '',

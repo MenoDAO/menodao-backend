@@ -243,7 +243,7 @@ describe('BotMembershipPaymentService', () => {
     );
     await expect(
       service.offer('member', 'MEMBERSHIP_PAY', 'verified', '+254712345678'),
-    ).resolves.toContain('Nothing extra is due right now');
+    ).resolves.toContain('Your membership payments are up to date.');
     expect(prisma.botDataAccessSession.upsert).not.toHaveBeenCalled();
     expect(contributions.initiatePayment).not.toHaveBeenCalled();
   });

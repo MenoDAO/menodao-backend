@@ -367,7 +367,7 @@ export class BotMembershipPaymentService {
             error.message,
           )
         ) {
-          return 'You’re all caught up on your membership payments. Thanks for being part of MenoDAO! Nothing extra is due right now.\n\nIf you’d like to support the Foundation separately, you can ask about donating.';
+          return 'Your membership payments are up to date.';
         }
         return error.message;
       }
