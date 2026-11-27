@@ -250,9 +250,6 @@ export class PaymentService {
       );
       if (!contribution)
         return { success: false, message: 'Transaction not found' };
-      if (contribution.status === 'COMPLETED') {
-        return { success: true, message: 'Payment already processed' };
-      }
 
       const metadata = contribution.metadata as {
         isUpgrade?: boolean;
@@ -266,17 +263,43 @@ export class PaymentService {
       const isDevelopmentMock =
         this.isDevEnvironment &&
         contribution.checkoutRequestId?.startsWith('MOCK_CHECKOUT_');
-      if (metadata?.stkSource && !isDevelopmentMock && !proof) {
+      if (!isDevelopmentMock && !proof) {
         return {
           success: false,
           message: 'Missing payment callback verification',
         };
       }
+      if (contribution.status === 'COMPLETED') {
+        return { success: true, message: 'Payment already processed' };
+      }
+      if (proof) {
+        const checkoutId = this.callbackIdentifier(data.CheckoutRequestID);
+        const recordedCheckout =
+          contribution.checkoutRequestId ??
+          (contribution.metadata as { checkoutRequestId?: string } | null)
+            ?.checkoutRequestId;
+        if (!checkoutId) {
+          return { success: false, message: 'Missing provider checkout ID' };
+        }
+        if (!recordedCheckout) {
+          return {
+            success: false,
+            retryable: true,
+            message: 'Provider checkout ID has not been saved yet',
+          };
+        }
+      }
+      const resultCode = this.callbackIdentifier(data.ResultCode);
+      if (
+        (resultCode === '0' && data.Paid === false) ||
+        (resultCode && resultCode !== '0' && data.Paid === true)
+      ) {
+        return { success: false, message: 'Conflicting payment result' };
+      }
       const isSuccess =
-        String(data.ResultCode) === '0' ||
-        (data.ResultCode == null && data.Paid === true);
+        resultCode === '0' || (!resultCode && data.Paid === true);
       const isFailure =
-        !isSuccess && (data.ResultCode != null || data.Paid === false);
+        !isSuccess && (Boolean(resultCode) || data.Paid === false);
       if (!isSuccess && !isFailure)
         return { success: false, message: 'Missing final payment result' };
       const now = new Date();
@@ -308,9 +331,15 @@ export class PaymentService {
         return { success: true, message: 'Payment failure recorded' };
       }
 
-      const amount = Number(data.Amount ?? data.TransAmount);
-      const receipt =
-        data.MpesaReceiptNumber || data.TransactionCode || data.TransID;
+      const rawAmount = data.TransAmount ?? data.Amount;
+      const amount =
+        typeof rawAmount === 'number' ||
+        (typeof rawAmount === 'string' && /^\d+(?:\.\d+)?$/.test(rawAmount))
+          ? Number(rawAmount)
+          : NaN;
+      const receipt = this.callbackIdentifier(
+        data.MpesaReceiptNumber || data.TransactionCode || data.TransID,
+      )?.toUpperCase();
       if (amount !== contribution.amount || !receipt) {
         this.logger.warn(
           'Rejected a payment callback with an invalid amount or missing receipt.',
@@ -322,6 +351,18 @@ export class PaymentService {
       }
 
       const outcome = await this.prisma.$transaction(async (tx) => {
+        // Lock the receipt before checking for reuse across concurrent checkouts.
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${receipt}, 0))`;
+        const usedReceipt = await tx.contribution.findFirst({
+          where: {
+            id: { not: contribution.id },
+            status: 'COMPLETED',
+            mpesaReceiptNumber: { equals: receipt, mode: 'insensitive' },
+          },
+          select: { id: true },
+        });
+        if (usedReceipt) return 'receipt-in-use' as const;
+
         const completed = await tx.contribution.updateMany({
           where: { id: contribution.id, status: { in: ['PENDING', 'FAILED'] } },
           data: {
@@ -393,6 +434,9 @@ export class PaymentService {
           sendNotice: !subscription.isActive || tier !== subscription.tier,
         };
       });
+      if (outcome === 'receipt-in-use') {
+        return { success: false, message: 'Payment receipt already used' };
+      }
       if (!outcome)
         return { success: true, message: 'Payment already processed' };
 
@@ -448,12 +492,19 @@ export class PaymentService {
     }
   }
 
+  private callbackIdentifier(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isSafeInteger(value)) {
+      return String(value);
+    }
+    return typeof value === 'string' ? value.trim() || undefined : undefined;
+  }
+
   private async findContributionByCallback(
     data: PaymentCallbackData,
     verifiedReference?: string,
   ) {
-    const checkoutId = data.CheckoutRequestID?.trim();
-    const merchantId = data.MerchantRequestID?.trim();
+    const checkoutId = this.callbackIdentifier(data.CheckoutRequestID);
+    const merchantId = this.callbackIdentifier(data.MerchantRequestID);
     const references = [
       data.BillRefNumber,
       data.ThirdPartyTransID,
@@ -485,6 +536,7 @@ export class PaymentService {
             : []),
           ...(references.length ? [{ paymentRef: { in: references } }] : []),
         ],
+        paymentMethod: 'MPESA',
       },
       take: 2,
     });

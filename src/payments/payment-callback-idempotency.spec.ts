@@ -68,7 +68,16 @@ function build() {
     sms as never,
     referrals as never,
   );
-  return { service, prisma, callback, sms, referrals, provider, proof };
+  return {
+    service,
+    prisma,
+    contribution,
+    callback,
+    sms,
+    referrals,
+    provider,
+    proof,
+  };
 }
 
 describe('SasaPay settlement', () => {
@@ -145,9 +154,57 @@ describe('SasaPay settlement', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('requires proof even for a contribution without source metadata', async () => {
+    const { service, prisma, contribution, callback } = build();
+    prisma.contribution.findMany.mockResolvedValue([
+      { ...contribution, metadata: null },
+    ]);
+    await expect(service.processCallback(callback)).resolves.toMatchObject({
+      success: false,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('retries a signed callback that precedes saving the provider checkout ID', async () => {
+    const { service, prisma, contribution, callback, proof } = build();
+    prisma.contribution.findMany.mockResolvedValue([
+      { ...contribution, checkoutRequestId: null },
+    ]);
+    await expect(
+      service.processCallback(callback, proof),
+    ).resolves.toMatchObject({
+      success: false,
+      retryable: true,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects conflicting outcomes and reused receipts', async () => {
+    const { service, prisma, callback, proof } = build();
+    await expect(
+      service.processCallback({ ...callback, Paid: false }, proof),
+    ).resolves.toMatchObject({
+      success: false,
+      message: 'Conflicting payment result',
+    });
+    prisma.contribution.findFirst.mockResolvedValueOnce({
+      id: 'other-payment',
+    });
+    await expect(
+      service.processCallback(callback, proof),
+    ).resolves.toMatchObject({
+      success: false,
+      message: 'Payment receipt already used',
+    });
+    expect(prisma.contribution.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
   it('does not let an older payment replace a newer settled membership', async () => {
     const { service, prisma, callback, proof } = build();
-    prisma.contribution.findFirst.mockResolvedValue({ id: 'newer' });
+    prisma.contribution.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'newer' });
     await expect(
       service.processCallback(callback, proof),
     ).resolves.toMatchObject({
